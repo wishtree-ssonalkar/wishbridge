@@ -27,6 +27,10 @@ def build_plan(cfg: ProjectConfig) -> list[tuple[TableMapping, list[str]]]:
         raise SqlError("No tables listed under data.tables in project.yml")
     plan = []
     for t in cfg.tables:
+        if not t.load:
+            # Compare-only table (an ETL job's output): never copied; emptied in overwrite mode so a re-run starts clean
+            plan.append((t, [f"TRUNCATE TABLE {t.target}"] if cfg.load_mode == "overwrite" else []))
+            continue
         stmts = []
         if cfg.load_mode == "overwrite":
             stmts.append(f"TRUNCATE TABLE {t.target}")
@@ -53,7 +57,8 @@ def run_load(cfg: ProjectConfig, execute: bool = False, allow_prod: bool = False
         + "\n\n".join(f"-- {t.source} -> {t.target}\n" + ";\n".join(s) + ";" for t, s in plan) + "\n",
         encoding="utf-8",
     )
-    tables = [{"source": t.source, "target": t.target, "statements": s, "status": "planned"} for t, s in plan]
+    tables = [{"source": t.source, "target": t.target, "statements": s, "status": "planned", "compare_only": not t.load}
+              for t, s in plan]
 
     if execute:
         bad = [t.target for t, _ in plan if looks_like_prod(t.target)]
@@ -68,7 +73,10 @@ def run_load(cfg: ProjectConfig, execute: bool = False, allow_prod: bool = False
                     if res.rows and res.columns:
                         rec = dict(zip(res.columns, res.rows[0]))
                         rows = rec.get("num_inserted_rows") or rec.get("num_affected_rows") or rows
-                entry.update(status="loaded", rows=int(rows) if rows is not None else None)
+                if entry["compare_only"]:
+                    entry.update(status="reset" if entry["statements"] else "compare only")
+                else:
+                    entry.update(status="loaded", rows=int(rows) if rows is not None else None)
             except SqlError as e:
                 entry.update(status="failed", error=str(e).splitlines()[0][:400])
 
@@ -78,9 +86,10 @@ def run_load(cfg: ProjectConfig, execute: bool = False, allow_prod: bool = False
         "plan_file": str(script),
         "tables": tables,
         "summary": {
-            "tables": len(tables),
+            "tables": sum(not t["compare_only"] for t in tables),
             "loaded": sum(t["status"] == "loaded" for t in tables),
             "failed": sum(t["status"] == "failed" for t in tables),
+            "compare_only": sum(t["compare_only"] for t in tables),
         },
     }
     save_step(cfg, "load", result)

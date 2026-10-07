@@ -1,0 +1,24 @@
+# WishBridge example: Amazon Redshift -> Databricks. Paths are relative to this file.
+name: redshift-demo
+source: redshift
+input: input
+output: output
+
+databricks:
+  profile: DEFAULT
+  warehouse_id: ""          # blank = first running SQL warehouse
+  catalog: workspace        # default catalog on newer workspaces (older ones use `main`)
+  schema: wishbridge_redshift
+
+schema_map:
+  sales: workspace.wishbridge_redshift
+
+# Demo source: workspace.wishbridge_redshift_src, created by `wishbridge sql setup_demo_source.sql`.
+# In a real project source_catalog is a Lakehouse Federation catalog pointing at the Amazon Redshift database.
+data:
+  method: federation
+  source_catalog: workspace
+  mode: overwrite
+  tables:
+    - {source: wishbridge_redshift_src.customers, target: workspace.wishbridge_redshift.customers}
+    - {source: wishbridge_redshift_src.orders, target: workspace.wishbridge_redshift.orders}

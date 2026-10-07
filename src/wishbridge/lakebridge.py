@@ -66,8 +66,7 @@ def analyze(cfg: ProjectConfig, report_file: Path) -> str:
 
 def transpile(cfg: ProjectConfig, output_folder: Path, error_file: Path) -> str:
     """Transpile; parse errors in individual statements are not fatal - they are reported per file."""
-    out = run(
-        cfg,
+    args = [
         "transpile",
         "--transpiler-config-path", str(transpiler_config_path(cfg.transpiler)),
         "--source-dialect", cfg.source.dialect,
@@ -75,8 +74,10 @@ def transpile(cfg: ProjectConfig, output_folder: Path, error_file: Path) -> str:
         "--output-folder", str(output_folder),
         "--error-file-path", str(error_file),
         "--skip-validation", "true",
-        strict=False,
-    )
+    ]
+    if cfg.target_technology:
+        args += ["--target-technology", cfg.target_technology]
+    out = run(cfg, *args, strict=False)
     if not output_folder.exists() or not any(p.is_file() for p in output_folder.rglob("*")):
         raise _fail("transpile", out)
     return out

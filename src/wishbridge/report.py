@@ -163,6 +163,17 @@ def build_report(cfg: ProjectConfig) -> Path:
     else:
         parts.append('<p class="skip">Not run — <code>wishbridge load</code></p>')
 
+    # 4b. ETL notebooks (only for sources that convert to notebooks)
+    ex = state.get("execute")
+    if ex:
+        parts.append("<h2>ETL notebooks</h2>")
+        parts.append('<p class="muted">Converted ETL jobs run as Databricks notebook jobs; their output tables are '
+                     'compared with the legacy ETL output in the reconciliation below.</p>')
+        parts.append(_table(["Notebook", "Result", "Details"], [
+            [f'<code>{escape(x["file"])}</code>', _pill("loaded" if x["status"] == "succeeded" else "failed"),
+             (f'<a href="{escape(x["url"])}">run</a> ' if x.get("url") else "") + escape(x.get("error", ""))]
+            for x in ex["runs"]]))
+
     # 5. Reconciliation
     parts.append("<h2>5. Reconciliation</h2>")
     if r and r.get("mode") == "quick":

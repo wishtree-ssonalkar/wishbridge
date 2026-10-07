@@ -121,7 +121,9 @@ def test_reconcile_match_and_mismatch(cfg):
     t = run_reconcile(cfg, wh=wh)["tables"][0]
     assert t["status"] == "match"
     assert [c["check"] for c in t["checks"]] == ["row_count", "sum(id)", "sum(amt)", "row_checksum(3 columns)"]
-    assert "xxhash64(CAST(`id` AS STRING), CAST(`amt` AS STRING), CAST(`name` AS STRING))" in wh.calls[-1]
+    # numbers are hashed by value, so INT 10 (source) and BIGINT 10 (target) hash the same
+    assert ("xxhash64(CAST(CAST(`id` AS DECIMAL(38, 6)) AS STRING), CAST(CAST(`amt` AS DECIMAL(38, 6)) AS STRING), "
+            "CAST(`name` AS STRING))") in wh.calls[-1]
 
     wh = FakeWarehouse(tables={"main.dev.Orders": (9, TGT_COLS, 123), "fed.dbo.Orders": (10, SRC_COLS, 123)})
     t = run_reconcile(cfg, wh=wh)["tables"][0]

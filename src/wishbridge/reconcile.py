@@ -38,7 +38,10 @@ def _profile_sql(table: str, numeric: list[str], shared: list[str]) -> str:
     sums = "".join(f", SUM(CAST(`{c}` AS DECIMAL(38, 6)))" for c in numeric)
     checksum = ""
     if shared:
-        args = ", ".join(f"CAST(`{c}` AS STRING)" for c in shared)
+        # Numbers are hashed by value (INT 1 and DECIMAL 1.00 are equal), so a type change during the
+        # migration does not show as a mismatch; everything else is compared as text.
+        args = ", ".join(f"CAST(CAST(`{c}` AS DECIMAL(38, 6)) AS STRING)" if c in numeric else f"CAST(`{c}` AS STRING)"
+                         for c in shared)
         checksum = f", SUM(CAST(xxhash64({args}) AS DECIMAL(38, 0)))"
     return f"SELECT COUNT(*){sums}{checksum} FROM {table}"
 

@@ -1,0 +1,12 @@
+-- Manual fix (WishBridge override): SEL TOP 3 -> SELECT ... LIMIT 3.
+SELECT c.CUSTOMER_ID, c.FULL_NAME, SUM(o.AMOUNT) AS TOTAL_SPEND
+FROM workspace.wishbridge_teradata.CUSTOMERS c
+INNER JOIN workspace.wishbridge_teradata.ORDERS o ON o.CUSTOMER_ID = c.CUSTOMER_ID
+WHERE o.STATUS <> 'Cancelled'
+GROUP BY 1, 2
+ORDER BY 3 DESC
+LIMIT 3;
+
+SELECT CUSTOMER_ID, ORDER_ID, AMOUNT
+FROM workspace.wishbridge_teradata.ORDERS
+QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTOMER_ID ORDER BY ORDER_DATE DESC) = 1;

@@ -1,11 +1,24 @@
-# WishBridge example: Snowflake -> Databricks
+# WishBridge example: Snowflake -> Databricks. Paths are relative to this file.
 name: snowflake-demo
 source: snowflake
 input: input
 output: output
+
 databricks:
   profile: DEFAULT
-  catalog: workspace
-  schema: wishbridge_snowflake_demo
+  warehouse_id: ""          # blank = first running SQL warehouse
+  catalog: workspace        # default catalog on newer workspaces (older ones use `main`)
+  schema: wishbridge_snowflake
+
 schema_map:
-  ANALYTICS: workspace.wishbridge_snowflake_demo
+  SALES: workspace.wishbridge_snowflake
+
+# Demo source: workspace.wishbridge_snowflake_src, created by `wishbridge sql setup_demo_source.sql`.
+# In a real project source_catalog is a Lakehouse Federation catalog pointing at the Snowflake database.
+data:
+  method: federation
+  source_catalog: workspace
+  mode: overwrite
+  tables:
+    - {source: wishbridge_snowflake_src.CUSTOMERS, target: workspace.wishbridge_snowflake.CUSTOMERS}
+    - {source: wishbridge_snowflake_src.ORDERS, target: workspace.wishbridge_snowflake.ORDERS}

@@ -1,11 +1,24 @@
-# WishBridge example: Oracle -> Databricks
+# WishBridge example: Oracle -> Databricks. Paths are relative to this file.
 name: oracle-demo
 source: oracle
 input: input
 output: output
+
 databricks:
   profile: DEFAULT
-  catalog: workspace
-  schema: wishbridge_oracle_demo
+  warehouse_id: ""          # blank = first running SQL warehouse
+  catalog: workspace        # default catalog on newer workspaces (older ones use `main`)
+  schema: wishbridge_oracle
+
 schema_map:
-  HR: workspace.wishbridge_oracle_demo
+  SALES: workspace.wishbridge_oracle
+
+# Demo source: workspace.wishbridge_oracle_src, created by `wishbridge sql setup_demo_source.sql`.
+# In a real project source_catalog is a Lakehouse Federation catalog pointing at the Oracle database.
+data:
+  method: federation
+  source_catalog: workspace
+  mode: overwrite
+  tables:
+    - {source: wishbridge_oracle_src.CUSTOMERS, target: workspace.wishbridge_oracle.CUSTOMERS}
+    - {source: wishbridge_oracle_src.ORDERS, target: workspace.wishbridge_oracle.ORDERS}

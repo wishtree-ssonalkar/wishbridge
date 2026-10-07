@@ -1,0 +1,24 @@
+# WishBridge example: Google BigQuery -> Databricks. Paths are relative to this file.
+name: bigquery-demo
+source: bigquery
+input: input
+output: output
+
+databricks:
+  profile: DEFAULT
+  warehouse_id: ""          # blank = first running SQL warehouse
+  catalog: workspace        # default catalog on newer workspaces (older ones use `main`)
+  schema: wishbridge_bigquery
+
+schema_map:
+  sales: workspace.wishbridge_bigquery
+
+# Demo source: workspace.wishbridge_bigquery_src, created by `wishbridge sql setup_demo_source.sql`.
+# In a real project source_catalog is a Lakehouse Federation catalog pointing at the Google BigQuery database.
+data:
+  method: federation
+  source_catalog: workspace
+  mode: overwrite
+  tables:
+    - {source: wishbridge_bigquery_src.customers, target: workspace.wishbridge_bigquery.customers}
+    - {source: wishbridge_bigquery_src.orders, target: workspace.wishbridge_bigquery.orders}

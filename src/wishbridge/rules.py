@@ -13,7 +13,7 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Callable
 
-from .sqltext import comments, line_of, mask
+from .sqltext import comments, line_of, mask, split_statements
 
 ERROR, WARNING, INFO = "error", "warning", "info"
 
@@ -21,6 +21,7 @@ TSQL = frozenset({"mssql", "synapse"})
 SNOWFLAKE = frozenset({"snowflake"})
 ORACLE = frozenset({"oracle"})
 TERADATA = frozenset({"teradata"})
+NETEZZA = frozenset({"netezza"})
 ALL = None  # rule applies to every source dialect
 
 I, M, S = re.IGNORECASE, re.MULTILINE, re.DOTALL
@@ -105,6 +106,8 @@ _SIMPLE_FIXES: list[tuple[str, frozenset | None, re.Pattern, str, str]] = [
      "Removed SET NOCOUNT (no row-count messages in Databricks)"),
     ("go-separator", TSQL, re.compile(r"^[ \t]*GO[ \t]*$", I | M), "",
      "Removed GO batch separator"),
+    ("count-big", TSQL, re.compile(r"\bCOUNT_BIG\s*\(", I), "COUNT(",
+     "Replaced COUNT_BIG with COUNT (Databricks COUNT already returns BIGINT)"),
     ("snowflake-max-varchar", SNOWFLAKE, re.compile(r"\bVARCHAR\s*\(\s*16777216\s*\)", I), "STRING",
      "Replaced VARCHAR(16777216) (Snowflake's default max length) with STRING"),
     ("missing-semicolon", ALL, re.compile(r"\)(?=[ \t]*CREATE\s+(?:OR\s+REPLACE\s+)?(?:PROCEDURE|TABLE|VIEW|FUNCTION)\b)", I), ");\n",
@@ -122,6 +125,30 @@ def _fix_dangling_comment(sql: str) -> tuple[str, list[Finding]]:
     new, hits = _sub_raw_anchored(
         sql, _DANGLING_COMMENT, lambda m: f"AS {m.group(2)}{m.group(3).rstrip()} {m.group(1)}", "AS")
     return new, [Finding("dangling-comment", INFO, line_of(sql, h), "Moved comment that split a column alias", True) for h in hits]
+
+
+# Column definitions: Databricks rejects an explicit `NULL` (nullable is the default); keep NOT NULL / DEFAULT NULL / IS NULL.
+_CREATE_TABLE = re.compile(r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?TABLE\b", I)
+_EXPLICIT_NULL = re.compile(r"(?<=[\w)])(?<!\bNOT)(?<!\bDEFAULT)(?<!\bIS)\s+NULL\b(?=\s*[,)])", I)
+
+
+def _fix_explicit_null(sql: str) -> tuple[str, list[Finding]]:
+    findings, out, pos = [], [], 0
+    for stmt in split_statements(sql):
+        start = sql.find(stmt, pos)
+        if start < 0:
+            continue
+        out.append(sql[pos:start])
+        new = stmt
+        if _CREATE_TABLE.match(mask(stmt)):
+            new, hits = _sub_code(stmt, _EXPLICIT_NULL, "")
+            if hits:
+                findings.append(Finding("explicit-null", INFO, line_of(sql, start + hits[0]),
+                                        f"Removed explicit NULL from {len(hits)} column definition(s) (Databricks rejects it)", True))
+        out.append(new)
+        pos = start + len(stmt)
+    out.append(sql[pos:])
+    return "".join(out), findings
 
 
 def _fix_empty_create(sql: str) -> tuple[str, list[Finding]]:
@@ -191,7 +218,20 @@ _DETECTORS: list[Detector] = [
              "COLLECT STATISTICS: use ANALYZE TABLE ... COMPUTE STATISTICS, or rely on predictive optimisation."),
     Detector("sel-abbrev", ERROR, TERADATA, re.compile(r"^[ \t]*SEL\b", I | M),
              "Unconverted SEL abbreviation: use SELECT."),
+    # Netezza
+    Detector("netezza-groom", ERROR, NETEZZA, re.compile(r"\bGROOM\s+TABLE\b", I),
+             "GROOM TABLE: run OPTIMIZE on the Delta table instead (or rely on predictive optimisation)."),
+    Detector("netezza-stats", WARNING, NETEZZA, re.compile(r"\bGENERATE\s+(?:EXPRESS\s+)?STATISTICS\b", I),
+             "GENERATE STATISTICS: use ANALYZE TABLE ... COMPUTE STATISTICS."),
+    Detector("netezza-age", ERROR, NETEZZA, re.compile(r"\bAGE\s*\(", I),
+             "AGE() does not exist in Databricks: use datediff() or months_between()."),
     # All sources
+    Detector("partition-expression", ERROR, ALL, re.compile(r"\bPARTITIONED\s+BY\s*\([^()]*\(", I),
+             "Delta tables partition by columns only: add a generated column (e.g. order_day DATE GENERATED ALWAYS AS "
+             "(CAST(order_date AS DATE))) and partition by it, or use CLUSTER BY instead."),
+    Detector("date-minus-number", WARNING, ALL,
+             re.compile(r"\b(?:CURRENT_TIMESTAMP|CURRENT_DATE|NOW)\s*(?:\(\s*\))?\s*-\s*\d+\b(?!\s*(?:DAYS?|HOURS?|MINUTES?|SECONDS?|MONTHS?|YEARS?)\b)", I),
+             "Date arithmetic with a bare number ({m}): use INTERVAL n DAYS or date_sub() in Databricks."),
     Detector("merge-into-alias", ERROR, ALL,
              re.compile(r"\bMERGE\s+INTO\s+`?(\w+)`?\s+USING\b(?:(?!\bMERGE\b).){0,4000}?\bAS\s+`?\1`?(?!\w)", I | S),
              "MERGE target {m1} is a table alias, not a table: an UPDATE ... FROM ... JOIN was mis-converted. "
@@ -223,6 +263,8 @@ BLOCKING_NOTES = re.compile(
 
 # Databricks guidance appended to transpiler notes about untranslatable features.
 GUIDANCE: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\bUNLOAD\b", I), "write the query result with INSERT OVERWRITE DIRECTORY, or from a notebook to a volume"),
+    (re.compile(r"\bVACUUM\b", I), "run OPTIMIZE on the Delta table (Delta's VACUUM only removes old files)"),
     (re.compile(r"\bSTREAM\b", I), "use Delta Change Data Feed (delta.enableChangeDataFeed) and table_changes()"),
     (re.compile(r"\bTASK\b", I), "schedule the statement as a Databricks Job (Lakeflow Jobs)"),
     (re.compile(r"\bCOPY INTO\b|\bstage\b", I), "load with COPY INTO from a Unity Catalog volume, or Auto Loader"),
@@ -246,6 +288,46 @@ def note_finding(note: str, line: int) -> Finding:
             note = f"{note} -> Databricks: {advice}"
             break
     return Finding("transpiler-note", ERROR if BLOCKING_NOTES.search(note) else WARNING, line, note)
+
+
+_UNCONVERTED = re.compile(r"\A\s*--\s*internal error\b", I)
+
+
+def structural_checks(sql: str) -> list[Finding]:
+    """Problems with the shape of the converted file rather than any one construct."""
+    findings = []
+    if _UNCONVERTED.match(sql):
+        findings.append(Finding("unconverted-file", ERROR, 1,
+                                "The converter failed on this file and copied it unchanged: it is still source-dialect "
+                                "SQL. Rewrite it by hand in overrides/."))
+    pos = 0
+    for stmt in split_statements(sql):
+        start = sql.find(stmt, pos)
+        pos = start + len(stmt) if start >= 0 else pos
+        code = mask(stmt)
+        if code.count("(") != code.count(")"):
+            findings.append(Finding("unbalanced-parentheses", ERROR, line_of(sql, max(start, 0)),
+                                    "Unbalanced parentheses: the converter left broken syntax in this statement."))
+    return findings
+
+
+def count_statements(sql: str) -> int:
+    """Statements at any depth (so wrapping statements in BEGIN ... END does not hide or invent a drop):
+    one per ';' in code, plus a final statement without one. Comments and strings are ignored."""
+    code = mask(sql)
+    tail = code.rsplit(";", 1)[-1]
+    return code.count(";") + (1 if tail.strip() else 0)
+
+
+def dropped_statement_check(source_sql: str, converted_sql: str, findings: list[Finding]) -> Finding | None:
+    """Warn when the converted file has fewer statements than the source and the gap is not explained by notes."""
+    notes = sum(1 for f in findings if f.rule in ("transpiler-note", "empty-create"))
+    missing = count_statements(source_sql) - count_statements(converted_sql) - notes
+    if missing > 0:
+        return Finding("dropped-statements", WARNING, 1,
+                       f"{missing} statement(s) from the source file are missing from the converted file without any "
+                       "note - check that nothing was silently dropped.")
+    return None
 
 
 def _dedupe(findings: list[Finding]) -> list[Finding]:
@@ -282,6 +364,7 @@ def detect(sql: str, dialect: str | None = None) -> list[Finding]:
         if hit:
             note = (hit.group(2) or "").strip().rstrip("*/").strip()
             findings.append(note_finding(note, line_of(sql, off)))
+    findings += structural_checks(sql)
     # A local-variable hit inside a system-variable hit (@@X) is the same issue.
     sys_lines = {f.line for f in findings if f.rule == "system-variable"}
     findings = [f for f in findings if not (f.rule == "local-variable" and f.line in sys_lines)]
@@ -299,7 +382,7 @@ def apply_rules(sql: str, schema_map: dict[str, str] | None = None, dialect: str
         sql, hits = _sub_code(sql, pat, repl)
         if hits and sql != before:
             findings.append(Finding(rule, INFO, line_of(before, hits[0]), f"{msg} ({len(hits)}x)", True))
-    for fixer in (_fix_dangling_comment, _fix_empty_create):
+    for fixer in (_fix_dangling_comment, _fix_empty_create, _fix_explicit_null):
         sql, f = fixer(sql)
         findings += f
     sql = re.sub(r"\n{3,}", "\n\n", sql)

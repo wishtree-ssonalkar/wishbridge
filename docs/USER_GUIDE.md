@@ -263,6 +263,26 @@ wishbridge load               # writes the plan to output\data\load_plan.sql - r
 wishbridge load --execute     # copies the data
 ```
 
+**ETL tools (Informatica, DataStage, SSIS).** These convert to Databricks notebooks (PySpark) instead of SQL.
+`wishbridge deploy` uploads them to your workspace folder (`/Workspace/Users/<you>/wishbridge/<project>`), and
+
+```powershell
+wishbridge execute            # runs each converted notebook as a one-time Databricks job
+```
+
+runs them after the input tables are loaded. To prove the migrated job produces the same result as the old one,
+list the job's output table with `load: false` and its legacy output as the source:
+
+```yaml
+  tables:
+    - dbo.Orders                                                          # input: copied
+    - {source: legacy_out.ORDERS_CLEAN, target: main.sales.ORDERS_CLEAN, load: false}   # output: compared only
+```
+
+`load` never copies a `load: false` table (in `overwrite` mode it empties it so a re-run starts clean), and
+`reconcile` compares it with the legacy output. ETL exports contain no table definitions, so put the
+`CREATE TABLE` statements for the job's tables in `overrides\` as an extra file (e.g. `00_tables.sql`).
+
 ### C8. Check the data matches
 
 ```powershell
@@ -296,6 +316,7 @@ reconciliation.
 | `wishbridge convert [--ai]` | Convert and check |
 | `wishbridge deploy [--recreate]` | Create objects in the test schema |
 | `wishbridge load [--execute]` | Plan / copy the data |
+| `wishbridge execute` | Run converted ETL notebooks as a Databricks job |
 | `wishbridge reconcile` | Compare old vs new data |
 | `wishbridge report` | Rebuild the HTML report |
 | `wishbridge sql FILE` | Run a SQL file on the warehouse |

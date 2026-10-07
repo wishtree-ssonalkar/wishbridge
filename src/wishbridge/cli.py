@@ -155,6 +155,25 @@ def load(config_path: str, execute: bool, allow_prod: bool) -> None:
 
 @main.command()
 @config_option
+@click.option("--allow-prod", is_flag=True, help="Allow a target schema whose name contains 'prod'.")
+def execute(config_path: str, allow_prod: bool) -> None:
+    """Run the converted ETL notebooks on Databricks (after deploy and load)."""
+    from .execute import run_execute
+
+    cfg = _load(config_path)
+    click.echo("Running converted notebooks as a Databricks job (this can take a few minutes) ...")
+    res = _guard(run_execute, cfg, allow_prod)
+    s = res["summary"]
+    _ok(f"{s['succeeded']}/{s['notebooks']} notebooks succeeded")
+    for r in res["runs"]:
+        colour = "green" if r["status"] == "succeeded" else "red"
+        click.secho(f"  {r['status']:<9} {r['file']}" + (f"  {r.get('url')}" if r.get("url") else ""), fg=colour)
+        if r.get("error"):
+            click.secho(f"      {r['error']}", fg="red")
+
+
+@main.command()
+@config_option
 @click.option("--full", is_flag=True, help="Use LakeBridge reconcile (row/column level) instead of quick checks.")
 def reconcile(config_path: str, full: bool) -> None:
     """Compare source and target data."""
@@ -245,6 +264,10 @@ def run(ctx: click.Context, config_path: str, ai: bool | None, with_deploy: bool
         ctx.invoke(deploy, config_path=config_path, execute_dml=False, allow_prod=False, recreate=False)
     if with_load:
         ctx.invoke(load, config_path=config_path, execute=True, allow_prod=False)
+        from .execute import notebooks_to_run
+
+        if notebooks_to_run(_load(config_path)):
+            ctx.invoke(execute, config_path=config_path, allow_prod=False)
         ctx.invoke(reconcile, config_path=config_path, full=False)
     ctx.invoke(report, config_path=config_path)
 

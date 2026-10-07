@@ -1,0 +1,17 @@
+-- Manual fix (WishBridge override): the converter mangled DISTRIBUTE ON / ORGANIZE ON;
+-- distribution is not needed on Delta, ORGANIZE ON -> CLUSTER BY.
+CREATE TABLE workspace.wishbridge_netezza.CUSTOMERS (
+    CUSTOMER_ID INTEGER NOT NULL,
+    FULL_NAME STRING NOT NULL,
+    EMAIL STRING,
+    CREATED_AT TIMESTAMP
+);
+
+CREATE TABLE workspace.wishbridge_netezza.ORDERS (
+    ORDER_ID INTEGER NOT NULL,
+    CUSTOMER_ID INTEGER NOT NULL,
+    ORDER_DATE TIMESTAMP NOT NULL,
+    AMOUNT DECIMAL(12,2) NOT NULL,
+    STATUS STRING
+)
+CLUSTER BY (ORDER_DATE);

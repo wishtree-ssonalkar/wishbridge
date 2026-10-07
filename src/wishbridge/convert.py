@@ -9,7 +9,7 @@ from typing import Any
 
 from . import lakebridge
 from .config import ProjectConfig
-from .rules import ERROR, WARNING, Finding, apply_rules, detect
+from .rules import ERROR, INFO, WARNING, Finding, apply_rules, detect, dropped_statement_check
 from .state import save_step
 
 # One TranspileError(...) record; messages can span several lines.
@@ -33,6 +33,20 @@ def _transpile_notes(error_log: Path) -> dict[str, list[str]]:
         notes.setdefault(name, []).insert(0, f"LakeBridge could not parse {len(errs)} part(s) of this file, which were "
                                              f"left as comments - rewrite them manually (e.g. {examples})")
     return notes
+
+
+NOTEBOOK_NOTES = {
+    "notebook": "Databricks notebook (PySpark) generated from the ETL job: `wishbridge deploy` uploads it and "
+                "`wishbridge execute` runs it on Databricks.",
+    "python": "Python helper module used by the converted notebooks; `wishbridge deploy` uploads it next to them.",
+}
+
+
+def file_kind(rel: Path, text: str) -> str:
+    """sql, notebook (Databricks notebook source) or python (helper module)."""
+    if rel.suffix.lower() == ".py":
+        return "notebook" if text.lstrip().startswith("# Databricks notebook source") else "python"
+    return "sql"
 
 
 def file_status(findings: list[Finding]) -> str:
@@ -64,24 +78,38 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
     tnotes = _transpile_notes(error_log)
 
     files: list[dict[str, Any]] = []
-    for src in sorted(p for p in raw_dir.rglob("*") if p.is_file()):
-        rel = src.relative_to(raw_dir)
-        text = src.read_text(encoding="utf-8-sig", errors="replace")
-        fixed, findings = apply_rules(text, cfg.schema_map, cfg.source.key)
-        added: set[str] = set()
-        for msg in tnotes.get(rel.name, []):
-            # Most transpiler warnings are also written into the code as FIXME comments (possibly with guidance added).
-            if msg in added or any(msg in f.message for f in findings):
-                continue
-            added.add(msg)
-            findings.append(Finding("transpile-error", ERROR, 1, msg))
+    converted = sorted(p.relative_to(raw_dir) for p in raw_dir.rglob("*") if p.is_file())
+    # Hand-written files in overrides/ with no converted counterpart are added too (e.g. target tables for an ETL job).
+    extra = sorted(p.relative_to(cfg.overrides_dir) for p in cfg.overrides_dir.rglob("*")
+                   if p.is_file() and p.relative_to(cfg.overrides_dir) not in converted) if cfg.overrides_dir and cfg.overrides_dir.exists() else []
+    for rel in sorted(converted + extra):
+        src = raw_dir / rel
+        text = src.read_text(encoding="utf-8-sig", errors="replace") if src.exists() else ""
+        kind = file_kind(rel, text)
+        if kind == "sql":
+            fixed, findings = apply_rules(text, cfg.schema_map, cfg.source.key)
+            added: set[str] = set()
+            for msg in tnotes.get(rel.name, []):
+                # Most transpiler warnings are also written into the code as FIXME comments (possibly with guidance added).
+                if msg in added or any(msg in f.message for f in findings):
+                    continue
+                added.add(msg)
+                findings.append(Finding("transpile-error", ERROR, 1, msg))
+            source_file = cfg.input_dir / rel
+            if src.exists() and source_file.is_file() and source_file.suffix.lower() == ".sql":
+                dropped = dropped_statement_check(source_file.read_text(encoding="utf-8-sig", errors="replace"), text, findings)
+                if dropped:
+                    findings.append(dropped)
+        else:
+            fixed, findings = text, [Finding("notebook", INFO, 1, NOTEBOOK_NOTES[kind])]
 
         # A hand-fixed file in overrides/ replaces the converted one; it is still checked, never rewritten.
         override = cfg.overrides_dir / rel if cfg.overrides_dir else None
         manual = override is not None and override.is_file()
         if manual:
             fixed = override.read_text(encoding="utf-8-sig", errors="replace")
-            findings = detect(fixed, cfg.source.key)
+            kind = file_kind(rel, fixed)
+            findings = detect(fixed, cfg.source.key) if kind == "sql" else [Finding("notebook", INFO, 1, NOTEBOOK_NOTES[kind])]
 
         dest = final_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -89,16 +117,17 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
 
         entry: dict[str, Any] = {
             "file": rel.as_posix(),
+            "kind": kind,
             "input": str(cfg.input_dir / rel),
-            "converted": str(src),
+            "converted": str(src) if src.exists() else "",
             "final": str(dest),
             "manual_override": manual,
-            "status": file_status(findings),
+            "status": "review" if kind == "notebook" else file_status(findings),
             "fixed": sum(1 for f in findings if f.fixed),
             "findings": [f.to_dict() for f in findings],
         }
 
-        if use_ai and not manual and entry["status"] != "ready":
+        if use_ai and not manual and kind == "sql" and entry["status"] != "ready":
             from .ai import suggest_fix
 
             original_path = cfg.input_dir / rel

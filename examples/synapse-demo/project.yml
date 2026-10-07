@@ -1,0 +1,24 @@
+# WishBridge example: Azure Synapse -> Databricks. Paths are relative to this file.
+name: synapse-demo
+source: synapse
+input: input
+output: output
+
+databricks:
+  profile: DEFAULT
+  warehouse_id: ""          # blank = first running SQL warehouse
+  catalog: workspace        # default catalog on newer workspaces (older ones use `main`)
+  schema: wishbridge_synapse
+
+schema_map:
+  dbo: workspace.wishbridge_synapse
+
+# Demo source: workspace.wishbridge_synapse_src, created by `wishbridge sql setup_demo_source.sql`.
+# In a real project source_catalog is a Lakehouse Federation catalog pointing at the Azure Synapse database.
+data:
+  method: federation
+  source_catalog: workspace
+  mode: overwrite
+  tables:
+    - {source: wishbridge_synapse_src.Customers, target: workspace.wishbridge_synapse.Customers}
+    - {source: wishbridge_synapse_src.Orders, target: workspace.wishbridge_synapse.Orders}

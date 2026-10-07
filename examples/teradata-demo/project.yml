@@ -1,0 +1,24 @@
+# WishBridge example: Teradata -> Databricks. Paths are relative to this file.
+name: teradata-demo
+source: teradata
+input: input
+output: output
+
+databricks:
+  profile: DEFAULT
+  warehouse_id: ""          # blank = first running SQL warehouse
+  catalog: workspace        # default catalog on newer workspaces (older ones use `main`)
+  schema: wishbridge_teradata
+
+schema_map:
+  SALES: workspace.wishbridge_teradata
+
+# Demo source: workspace.wishbridge_teradata_src, created by `wishbridge sql setup_demo_source.sql`.
+# In a real project source_catalog is a Lakehouse Federation catalog pointing at the Teradata database.
+data:
+  method: federation
+  source_catalog: workspace
+  mode: overwrite
+  tables:
+    - {source: wishbridge_teradata_src.CUSTOMERS, target: workspace.wishbridge_teradata.CUSTOMERS}
+    - {source: wishbridge_teradata_src.ORDERS, target: workspace.wishbridge_teradata.ORDERS}

@@ -30,7 +30,8 @@ SOURCES: dict[str, Source] = {
         Source("synapse", "Synapse", "morph", "synapse"),
         Source("snowflake", "Snowflake", "morph", "snowflake"),
         Source("oracle", "Oracle", "morph", "oracle"),
-        Source("teradata", "Teradata", "morph", "teradata"),
+        # BladeBridge: in testing Morph failed to parse plain Teradata DDL and SEL / TOP queries
+        Source("teradata", "Teradata", "bladebridge", "teradata"),
         Source("redshift", "Redshift", "morph", "redshift"),
         Source("bigquery", "BigQuery", "morph", "bigquery"),
         Source("netezza", "Netezza", "bladebridge", "netezza"),
@@ -42,6 +43,9 @@ SOURCES: dict[str, Source] = {
 }
 
 TRANSPILER_DIRS = {"morph": "databricks-morph-plugin", "bladebridge": "bladebridge"}
+
+# ETL tools: BladeBridge asks which code to generate; WishBridge defaults to SPARKSQL.
+ETL_SOURCES = frozenset({"datastage", "informatica", "informatica-cloud", "ssis"})
 
 DEFAULT_HOURS_PER_FILE = {"LOW": 0.5, "MEDIUM": 2.0, "HIGH": 6.0, "VERY HIGH": 12.0}
 
@@ -56,6 +60,7 @@ def looks_like_prod(name: str) -> bool:
 class TableMapping:
     source: str
     target: str
+    load: bool = True  # False = compare only (e.g. an ETL job's output, produced by `wishbridge execute`)
 
 
 @dataclass
@@ -66,6 +71,7 @@ class ProjectConfig:
     transpiler: str
     input_dir: Path
     output_dir: Path
+    target_technology: str = ""  # BladeBridge ETL sources: SPARKSQL or PYSPARK
     overrides_dir: Path | None = None  # hand-fixed files that replace converted output
     profile: str = "DEFAULT"
     host: str = ""  # workspace this project belongs to; WishBridge refuses to run against another
@@ -131,6 +137,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         name=raw.get("name") or base.name,
         source=source,
         transpiler=transpiler,
+        target_technology=str(raw.get("target_technology") or ("SPARKSQL" if source.key in ETL_SOURCES else "")).upper(),
         input_dir=(base / raw.get("input", "input")).resolve(),
         output_dir=(base / raw.get("output", "output")).resolve(),
         overrides_dir=(base / raw.get("overrides", "overrides")).resolve(),
@@ -157,7 +164,8 @@ def load_config(path: str | Path) -> ProjectConfig:
     for t in data.get("tables") or []:
         if isinstance(t, str):
             t = {"source": t}
-        cfg.tables.append(TableMapping(source=t["source"], target=t.get("target") or cfg.map_table(t["source"])))
+        cfg.tables.append(TableMapping(source=t["source"], target=t.get("target") or cfg.map_table(t["source"]),
+                                       load=bool(t.get("load", True))))
     return cfg
 
 
