@@ -79,8 +79,11 @@ def build_report(cfg: ProjectConfig) -> Path:
         cards.append(_card(len(a["programs"]), "source files analysed"))
     if c:
         s = c["summary"]
-        cards.append(_card(f'{round(100 * s["ready"] / s["files"]) if s["files"] else 0}%', "files ready without manual work"))
+        automatic = sum(1 for f in c["files"] if f["status"] == "ready" and not f.get("manual_override"))
+        cards.append(_card(f'{round(100 * automatic / s["files"]) if s["files"] else 0}%', "files ready without manual work"))
         cards.append(_card(s["auto_fixed"], "issues auto-fixed by WishBridge"))
+        if s.get("manual_overrides"):
+            cards.append(_card(s["manual_overrides"], "files fixed by hand (overrides/)"))
         cards.append(_card(s["open_errors"] + s["open_warnings"], "open items for review"))
     if e:
         cards.append(_card(f'{e["baseline"]} h', "manual rewrite estimate"))
@@ -113,7 +116,9 @@ def build_report(cfg: ProjectConfig) -> Path:
         parts.append(f'<p class="muted">Transpiler: {escape(c["transpiler"])} (Databricks Labs LakeBridge) + WishBridge rules. '
                      f'Converted code: <code>{escape(_rel(c["final_dir"], base))}</code></p>')
         parts.append(_table(["File", "Status", "Auto-fixed", "Open errors", "Open warnings", "AI suggestion"], [
-            [f'<code>{escape(f["file"])}</code>', _pill(f["status"]), str(f["fixed"]),
+            [f'<code>{escape(f["file"])}</code>',
+             _pill(f["status"]) + (' <span class="pill muted">manual fix</span>' if f.get("manual_override") else ""),
+             str(f["fixed"]),
              str(sum(1 for x in f["findings"] if not x["fixed"] and x["severity"] == "error")),
              str(sum(1 for x in f["findings"] if not x["fixed"] and x["severity"] == "warning")),
              escape(f.get("ai", {}).get("status", "—"))]
@@ -140,8 +145,10 @@ def build_report(cfg: ProjectConfig) -> Path:
         rows = []
         for f in d["files"]:
             errs = "<br>".join(f'#{x["n"]} {escape(x["error"])}' for x in f["results"] if not x["ok"])
+            kept = sum(1 for x in f["results"] if x.get("action") == "exists")
+            note = f'<span class="muted">{kept} existing object(s) kept</span>' if kept else ""
             rows.append([f'<code>{escape(f["file"])}</code>', _pill("ready" if f["ok"] else "failed"),
-                         f'{f["passed"]}/{f["statements"]}', errs or "—"])
+                         f'{f["passed"]}/{f["statements"]}', errs or note or "—"])
         parts.append(_table(["File", "Result", "Statements OK", "Errors"], rows))
     else:
         parts.append('<p class="skip">Not run — <code>wishbridge deploy</code></p>')
@@ -159,11 +166,22 @@ def build_report(cfg: ProjectConfig) -> Path:
     # 5. Reconciliation
     parts.append("<h2>5. Reconciliation</h2>")
     if r and r.get("mode") == "quick":
+        parts.append('<p class="muted">Source vs target: row count, sum of every numeric column, and a checksum over '
+                     'every shared column (catches changed text, dates and numbers).</p>')
         rows = []
         for t in r["tables"]:
-            detail = t.get("error") or ", ".join(
-                f'{escape(ch["check"])}: {escape(str(ch["source"]))} → {escape(str(ch["target"]))}'
-                for ch in t.get("checks", []) if not ch["match"]) or "all checks equal"
+            checks = t.get("checks", [])
+            if t.get("error"):
+                detail = escape(t["error"])
+            else:
+                failed = [f'{escape(ch["check"])}: {escape(str(ch["source"]))} → {escape(str(ch["target"]))}'
+                          for ch in checks if not ch["match"]]
+                detail = "<br>".join(failed) or f'{len(checks)} checks equal'
+                diff = t.get("column_differences")
+                if diff:
+                    for side, label in (("only_in_source", "only in source"), ("only_in_target", "only in target")):
+                        if diff.get(side):
+                            detail += f'<br><span class="warn">Columns {label}: {escape(", ".join(diff[side]))}</span>'
             rows.append([f'<code>{escape(t["target"])}</code>', _pill(t["status"]), detail])
         parts.append(_table(["Table", "Result", "Details"], rows))
     elif r:

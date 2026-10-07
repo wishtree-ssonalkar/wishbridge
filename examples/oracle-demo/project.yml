@@ -1,0 +1,11 @@
+# WishBridge example: Oracle -> Databricks
+name: oracle-demo
+source: oracle
+input: input
+output: output
+databricks:
+  profile: DEFAULT
+  catalog: workspace
+  schema: wishbridge_oracle_demo
+schema_map:
+  HR: workspace.wishbridge_oracle_demo

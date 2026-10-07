@@ -13,17 +13,19 @@ the Databricks Partner Portal before you plan dates.
 | Partner status | Registered Databricks Consulting & SI partner, at a tier that allows Brickbuilder submissions | ☐ Confirm with Partner Manager |
 | Certified people | Databricks-certified engineers/architects on the team delivering the solution | ☐ Check counts in Partner Portal |
 | Customer proof | Real customer implementations of the solution, with referenceable outcomes (time saved, objects migrated) | ☐ None yet. **This is the main gap** |
-| Repeatable solution | Documented method + accelerators that make the delivery faster and lower-risk | ☑ WishBridge v0.1 (this repo) |
-| Technical validation | Databricks reviews architecture and a working demo on Databricks | ◐ Local pipeline works; deploy/load/reconcile need a run on a real workspace |
+| Repeatable solution | Documented method + accelerators that make the delivery faster and lower-risk | ☑ WishBridge v1.0 (this repo) |
+| Technical validation | Databricks reviews architecture and a working demo on Databricks | ☑ Full pipeline demonstrated on a Databricks workspace (deploy, CALL of migrated procedures, load, reconcile); ◐ not yet against a live SQL Server through Lakehouse Federation |
 | Go-to-market assets | Solution brief, architecture diagram, demo video, pricing/packaging of the offer | ☐ To create |
 
 ## Gap plan
 
 ### 0–30 days: make the product solid
-- [ ] Run `wishbridge deploy`, `load --execute` and `reconcile` end-to-end on a dev workspace with a real SQL Server
-      source over Lakehouse Federation; fix what breaks.
+- [x] Run `wishbridge deploy`, `load --execute` and `reconcile` end-to-end on a dev workspace (done with a
+      stand-in source schema; see the README "Tested end to end").
+- [ ] Repeat with a real SQL Server source over Lakehouse Federation.
 - [ ] Grow the rule set from real customer code (every manual fix you make → a rule + a test).
-- [ ] Add rules for the next priority source (Snowflake or Oracle).
+- [x] Add rules for Snowflake, Oracle and Teradata.
+- [ ] Try `wishbridge convert --ai` with a Claude API key on real code and review the suggestions.
 - [ ] Do a trademark search on the name "WishBridge" before using it publicly; rename if it conflicts.
 - [ ] Decide the licence for WishBridge itself (internal-only, or source-available to customers).
 

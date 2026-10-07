@@ -27,6 +27,12 @@ def test_template_schema_map_only_for_tsql(tmp_path):
     assert load_config(write(tmp_path, render_template("x", "snowflake"))).schema_map == {}
 
 
+def test_project_file_saved_with_bom(tmp_path):
+    p = tmp_path / "project.yml"
+    p.write_bytes("﻿source: mssql\n".encode("utf-8"))
+    assert load_config(p).source.key == "mssql"
+
+
 def test_unknown_source_rejected(tmp_path):
     with pytest.raises(ConfigError):
         load_config(write(tmp_path, "source: cobol\n"))

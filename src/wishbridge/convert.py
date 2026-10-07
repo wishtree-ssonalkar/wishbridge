@@ -9,19 +9,29 @@ from typing import Any
 
 from . import lakebridge
 from .config import ProjectConfig
-from .rules import ERROR, WARNING, Finding, apply_rules
+from .rules import ERROR, WARNING, Finding, apply_rules, detect
 from .state import save_step
 
-_TRANSPILE_NOTE = re.compile(r"path='([^']+)', message='(.*)'\)\s*$")
+# One TranspileError(...) record; messages can span several lines.
+_TRANSPILE_NOTE = re.compile(
+    r"TranspileError\(.*?kind=(\w+), severity=(\w+), path='([^']+)', message='(.*?)'\)\s*(?=TranspileError\(|\Z)", re.DOTALL)
 
 
 def _transpile_notes(error_log: Path) -> dict[str, list[str]]:
+    """File name -> non-INFO messages from LakeBridge's error log (parse errors summarised into one message)."""
     notes: dict[str, list[str]] = {}
+    parse_errors: dict[str, list[str]] = {}
     if error_log.exists():
-        for line in error_log.read_text(encoding="utf-8", errors="replace").splitlines():
-            m = _TRANSPILE_NOTE.search(line)
-            if m and "severity=INFO" not in line:
-                notes.setdefault(Path(m.group(1)).name, []).append(m.group(2))
+        for kind, severity, path, message in _TRANSPILE_NOTE.findall(error_log.read_text(encoding="utf-8", errors="replace")):
+            if severity == "INFO":
+                continue
+            text = " ".join(message.split())
+            target = parse_errors if kind == "PARSING" else notes
+            target.setdefault(Path(path).name, []).append(text)
+    for name, errs in parse_errors.items():
+        examples = "; ".join(errs[:2]) + ("; ..." if len(errs) > 2 else "")
+        notes.setdefault(name, []).insert(0, f"LakeBridge could not parse {len(errs)} part(s) of this file, which were "
+                                             f"left as comments - rewrite them manually (e.g. {examples})")
     return notes
 
 
@@ -36,6 +46,10 @@ def file_status(findings: list[Finding]) -> str:
 
 def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any]:
     use_ai = cfg.ai_enabled if use_ai is None else use_ai
+    if use_ai:
+        from .ai import preflight
+
+        preflight()
     raw_dir = cfg.output_dir / "converted"
     final_dir = cfg.output_dir / "final"
     ai_dir = cfg.output_dir / "ai_suggestions"
@@ -52,12 +66,23 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
     files: list[dict[str, Any]] = []
     for src in sorted(p for p in raw_dir.rglob("*") if p.is_file()):
         rel = src.relative_to(raw_dir)
-        text = src.read_text(encoding="utf-8", errors="replace")
+        text = src.read_text(encoding="utf-8-sig", errors="replace")
         fixed, findings = apply_rules(text, cfg.schema_map, cfg.source.key)
-        seen = {f.message for f in findings}
+        added: set[str] = set()
         for msg in tnotes.get(rel.name, []):
-            if msg not in seen:  # most transpiler warnings are also written into the code as FIXME comments
-                findings.append(Finding("transpile-error", ERROR, 1, msg))
+            # Most transpiler warnings are also written into the code as FIXME comments (possibly with guidance added).
+            if msg in added or any(msg in f.message for f in findings):
+                continue
+            added.add(msg)
+            findings.append(Finding("transpile-error", ERROR, 1, msg))
+
+        # A hand-fixed file in overrides/ replaces the converted one; it is still checked, never rewritten.
+        override = cfg.overrides_dir / rel if cfg.overrides_dir else None
+        manual = override is not None and override.is_file()
+        if manual:
+            fixed = override.read_text(encoding="utf-8-sig", errors="replace")
+            findings = detect(fixed, cfg.source.key)
+
         dest = final_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(fixed, encoding="utf-8")
@@ -67,16 +92,17 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
             "input": str(cfg.input_dir / rel),
             "converted": str(src),
             "final": str(dest),
+            "manual_override": manual,
             "status": file_status(findings),
             "fixed": sum(1 for f in findings if f.fixed),
             "findings": [f.to_dict() for f in findings],
         }
 
-        if use_ai and entry["status"] != "ready":
+        if use_ai and not manual and entry["status"] != "ready":
             from .ai import suggest_fix
 
             original_path = cfg.input_dir / rel
-            original = original_path.read_text(encoding="utf-8", errors="replace") if original_path.exists() else ""
+            original = original_path.read_text(encoding="utf-8-sig", errors="replace") if original_path.exists() else ""
             s = suggest_fix(cfg.source.analyzer_tech, original, fixed, findings, cfg.ai_model)
             entry["ai"] = {"status": s.status, "notes": s.notes}
             if s.sql:
@@ -93,6 +119,7 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
         "review": sum(f["status"] == "review" for f in files),
         "needs_fix": sum(f["status"] == "needs-fix" for f in files),
         "auto_fixed": sum(f["fixed"] for f in files),
+        "manual_overrides": sum(1 for f in files if f.get("manual_override")),
         "open_errors": sum(1 for f in files for x in f["findings"] if not x["fixed"] and x["severity"] == ERROR),
         "open_warnings": sum(1 for f in files for x in f["findings"] if not x["fixed"] and x["severity"] == WARNING),
     }

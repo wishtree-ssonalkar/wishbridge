@@ -40,6 +40,24 @@ def _client():
     return anthropic, anthropic.Anthropic()
 
 
+def preflight() -> None:
+    """Fail fast, with a clear message, when Claude credentials are missing or the API is unreachable."""
+    try:
+        import anthropic
+    except ImportError as e:
+        raise RuntimeError("AI fixes need the 'anthropic' package: pip install \"wishbridge[ai]\"") from e
+    no_credentials = (TypeError, getattr(anthropic, "CredentialsError", TypeError))
+    try:
+        _, client = _client()
+        client.models.list(limit=1)
+    except no_credentials as e:  # raised by the SDK when no credential source resolves
+        raise RuntimeError("AI fixes need Claude credentials: set ANTHROPIC_API_KEY (or run `ant auth login`).") from e
+    except anthropic.AuthenticationError as e:
+        raise RuntimeError("The Claude API rejected the credentials - check ANTHROPIC_API_KEY.") from e
+    except anthropic.APIConnectionError as e:
+        raise RuntimeError(f"Could not reach the Claude API (network or proxy problem): {e}") from e
+
+
 def suggest_fix(source_name: str, original: str, converted: str, findings: list[Finding], model: str) -> Suggestion:
     open_issues = [f for f in findings if not f.fixed and f.severity in ("error", "warning")]
     if not open_issues:

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wishbridge"
-version = "0.1.0"
+version = "1.0.0"
 description = "Wishtree WishBridge: end-to-end migration accelerator to Databricks, built on Databricks Labs LakeBridge"
 readme = "README.md"
 requires-python = ">=3.10"

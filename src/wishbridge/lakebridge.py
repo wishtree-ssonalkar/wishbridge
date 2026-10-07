@@ -28,14 +28,19 @@ def _databricks_cli() -> str:
     return exe
 
 
-def run(cfg: ProjectConfig, *args: str) -> str:
+def _fail(command: str, out: str) -> LakeBridgeError:
+    tail = "\n".join(out.strip().splitlines()[-15:])
+    return LakeBridgeError(f"`lakebridge {command}` failed:\n{tail}")
+
+
+def run(cfg: ProjectConfig, *args: str, strict: bool = True) -> str:
+    """Run a lakebridge command. strict=False tolerates per-file ERROR lines (the caller checks the output)."""
     env = {**os.environ, "DATABRICKS_CONFIG_PROFILE": cfg.profile}
     cmd = [_databricks_cli(), "labs", "lakebridge", *args]
     proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     out = _ANSI.sub("", (proc.stdout or "") + (proc.stderr or ""))
-    if proc.returncode != 0 or re.search(r"^(\d\d:\d\d:\d\d\s+)?ERROR\b|^Error:", out, re.MULTILINE):
-        tail = "\n".join(out.strip().splitlines()[-15:])
-        raise LakeBridgeError(f"`lakebridge {args[0]}` failed:\n{tail}")
+    if strict and (proc.returncode != 0 or re.search(r"^(\d\d:\d\d:\d\d\s+)?ERROR\b|^Error:", out, re.MULTILINE)):
+        raise _fail(args[0], out)
     return out
 
 
@@ -60,7 +65,8 @@ def analyze(cfg: ProjectConfig, report_file: Path) -> str:
 
 
 def transpile(cfg: ProjectConfig, output_folder: Path, error_file: Path) -> str:
-    return run(
+    """Transpile; parse errors in individual statements are not fatal - they are reported per file."""
+    out = run(
         cfg,
         "transpile",
         "--transpiler-config-path", str(transpiler_config_path(cfg.transpiler)),
@@ -69,7 +75,11 @@ def transpile(cfg: ProjectConfig, output_folder: Path, error_file: Path) -> str:
         "--output-folder", str(output_folder),
         "--error-file-path", str(error_file),
         "--skip-validation", "true",
+        strict=False,
     )
+    if not output_folder.exists() or not any(p.is_file() for p in output_folder.rglob("*")):
+        raise _fail("transpile", out)
+    return out
 
 
 def reconcile(cfg: ProjectConfig) -> str:

@@ -1,11 +1,13 @@
 """Step 3 - Deploy & validate: run converted DDL in a dev schema and EXPLAIN every query/DML.
 
 DML is only planned (EXPLAIN), never executed, unless --execute-dml is given,
-so validation does not change data.
+so validation does not change data. Re-running keeps objects that already exist;
+--recreate rebuilds them with CREATE OR REPLACE.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .config import ProjectConfig, looks_like_prod
@@ -14,11 +16,24 @@ from .sqltext import split_statements, statement_kind
 from .state import load_state, save_step
 
 
+_ALREADY_EXISTS = re.compile(r"\b(TABLE_OR_VIEW|ROUTINE|FUNCTION|SCHEMA)_ALREADY_EXISTS\b")
+_CREATE = re.compile(
+    r"^(\s*(?:--[^\n]*\n\s*)*)CREATE\s+(?!OR\s+REPLACE\b)(?!TEMP(?:ORARY)?\b)(TABLE|VIEW|PROCEDURE|FUNCTION)\b",
+    re.IGNORECASE,
+)
+
+
 def _first_line(msg: str) -> str:
     return (msg or "").strip().splitlines()[0][:400] if msg else ""
 
 
-def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool = False, wh: Warehouse | None = None) -> dict[str, Any]:
+def or_replace(stmt: str) -> str:
+    """CREATE TABLE|VIEW|PROCEDURE|FUNCTION -> CREATE OR REPLACE ... (leading comments allowed)."""
+    return _CREATE.sub(lambda m: f"{m.group(1)}CREATE OR REPLACE {m.group(2)}", stmt, count=1)
+
+
+def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool = False, recreate: bool = False,
+               wh: Warehouse | None = None) -> dict[str, Any]:
     if looks_like_prod(cfg.target_schema) and not allow_prod:
         raise SqlError(f"Target {cfg.target_schema} looks like production. Deploy to a dev schema or pass --allow-prod.")
     convert = load_state(cfg).get("convert")
@@ -30,7 +45,7 @@ def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool =
 
     files: list[dict[str, Any]] = []
     for f in convert["files"]:
-        sql = open(f["final"], encoding="utf-8").read()
+        sql = open(f["final"], encoding="utf-8-sig").read()
         results = []
         for i, stmt in enumerate(split_statements(sql), 1):
             kind = statement_kind(stmt)
@@ -42,9 +57,13 @@ def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool =
                     if plan.startswith("Error occurred during query planning") or "AnalysisException" in plan:
                         raise SqlError(plan.split("\n", 2)[1] if "\n" in plan else plan)
                 else:
-                    wh.run(stmt, cfg.catalog, cfg.schema)
+                    wh.run(or_replace(stmt) if recreate and kind == "ddl" else stmt, cfg.catalog, cfg.schema)
                 results.append({"n": i, "kind": kind, "action": action, "ok": True})
             except SqlError as e:
+                if action == "execute" and _ALREADY_EXISTS.search(str(e)):
+                    results.append({"n": i, "kind": kind, "action": "exists", "ok": True,
+                                    "note": "already existed - kept (use --recreate to rebuild)"})
+                    continue
                 results.append({"n": i, "kind": kind, "action": action, "ok": False, "error": _first_line(str(e)),
                                 "statement": stmt[:300]})
         passed = sum(r["ok"] for r in results)
@@ -58,6 +77,7 @@ def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool =
         "files_ok": sum(f["ok"] for f in files),
         "statements": sum(f["statements"] for f in files),
         "statements_ok": sum(f["passed"] for f in files),
+        "kept_existing": sum(1 for f in files for r in f["results"] if r["action"] == "exists"),
     }
     result = {"summary": summary, "files": files}
     save_step(cfg, "deploy", result)

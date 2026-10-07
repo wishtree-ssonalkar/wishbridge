@@ -1,0 +1,11 @@
+# WishBridge example: Snowflake -> Databricks
+name: snowflake-demo
+source: snowflake
+input: input
+output: output
+databricks:
+  profile: DEFAULT
+  catalog: workspace
+  schema: wishbridge_snowflake_demo
+schema_map:
+  ANALYTICS: workspace.wishbridge_snowflake_demo

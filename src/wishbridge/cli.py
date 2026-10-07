@@ -96,11 +96,13 @@ def convert(config_path: str, ai: bool | None) -> None:
     click.echo(f"Converting with {cfg.transpiler} ({cfg.source.dialect}) ...")
     res = _guard(run_convert, cfg, ai)
     s = res["summary"]
+    manual = f"; {s['manual_overrides']} manual fixes applied" if s.get("manual_overrides") else ""
     _ok(f"{s['files']} files: {s['ready']} ready, {s['review']} to review, {s['needs_fix']} need fixes; "
-        f"{s['auto_fixed']} issues auto-fixed")
+        f"{s['auto_fixed']} issues auto-fixed{manual}")
     for f in res["files"]:
         colour = {"ready": "green", "review": "yellow", "needs-fix": "red"}[f["status"]]
-        click.echo(f"  {click.style(f'{f["status"]:<9}', fg=colour)} {f['file']}")
+        tag = "  (manual fix)" if f.get("manual_override") else ""
+        click.echo(f"  {click.style(f'{f["status"]:<9}', fg=colour)} {f['file']}{tag}")
         for x in f["findings"]:
             if not x["fixed"] and x["severity"] != "info":
                 click.echo(f"      line {x['line']}: {x['message']}")
@@ -111,15 +113,17 @@ def convert(config_path: str, ai: bool | None) -> None:
 @config_option
 @click.option("--execute-dml", is_flag=True, help="Also execute INSERT/UPDATE/DELETE/MERGE (default: EXPLAIN only).")
 @click.option("--allow-prod", is_flag=True, help="Allow a target schema whose name contains 'prod'.")
-def deploy(config_path: str, execute_dml: bool, allow_prod: bool) -> None:
+@click.option("--recreate", is_flag=True, help="Rebuild existing tables/views/procedures (CREATE OR REPLACE).")
+def deploy(config_path: str, execute_dml: bool, allow_prod: bool, recreate: bool) -> None:
     """Create converted objects in the dev schema and validate every statement."""
     from .deploy import run_deploy
 
     cfg = _load(config_path)
     click.echo(f"Deploying to {cfg.target_schema} ...")
-    res = _guard(run_deploy, cfg, execute_dml, allow_prod)
+    res = _guard(run_deploy, cfg, execute_dml, allow_prod, recreate)
     s = res["summary"]
-    _ok(f"{s['statements_ok']}/{s['statements']} statements OK, {s['files_ok']}/{s['files']} files clean")
+    kept = f" ({s['kept_existing']} existing objects kept)" if s.get("kept_existing") else ""
+    _ok(f"{s['statements_ok']}/{s['statements']} statements OK, {s['files_ok']}/{s['files']} files clean{kept}")
     for f in res["files"]:
         for x in f["results"]:
             if not x["ok"]:
@@ -172,6 +176,28 @@ def report(config_path: str) -> None:
     _ok(f"Report: {_guard(build_report, cfg)}")
 
 
+@main.command("sql")
+@config_option
+@click.argument("sql_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--allow-prod", is_flag=True, help="Allow statements that name a 'prod' catalog/schema.")
+def sql_cmd(config_path: str, sql_file: str, allow_prod: bool) -> None:
+    """Run a SQL file on the project's SQL warehouse, statement by statement."""
+    from .config import looks_like_prod
+    from .dbx import Warehouse
+    from .sqltext import mask, split_statements
+
+    cfg = _load(config_path)
+    stmts = split_statements(Path(sql_file).read_text(encoding="utf-8-sig"))
+    if not allow_prod and any(looks_like_prod(w) for s in stmts for w in mask(s).split()):
+        _fail("The file references a 'prod' object. Re-run with --allow-prod if that is intended.")
+    wh = _guard(Warehouse, cfg)
+    for i, stmt in enumerate(stmts, 1):
+        res = _guard(wh.run, stmt)
+        first = " ".join(mask(stmt).split())[:70]
+        click.echo(f"  #{i} ok  {first}" + (f"  -> {res.rows[0]}" if res.rows and len(res.rows) == 1 else ""))
+    _ok(f"{len(stmts)} statements run on warehouse {wh.warehouse_id}")
+
+
 @main.command()
 @config_option
 @click.option("--ai/--no-ai", default=None, help="Ask Claude for fix suggestions.")
@@ -183,7 +209,7 @@ def run(ctx: click.Context, config_path: str, ai: bool | None, with_deploy: bool
     ctx.invoke(analyze, config_path=config_path)
     ctx.invoke(convert, config_path=config_path, ai=ai)
     if with_deploy or with_load:
-        ctx.invoke(deploy, config_path=config_path, execute_dml=False, allow_prod=False)
+        ctx.invoke(deploy, config_path=config_path, execute_dml=False, allow_prod=False, recreate=False)
     if with_load:
         ctx.invoke(load, config_path=config_path, execute=True, allow_prod=False)
         ctx.invoke(reconcile, config_path=config_path, full=False)

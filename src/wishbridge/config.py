@@ -66,6 +66,7 @@ class ProjectConfig:
     transpiler: str
     input_dir: Path
     output_dir: Path
+    overrides_dir: Path | None = None  # hand-fixed files that replace converted output
     profile: str = "DEFAULT"
     warehouse_id: str = ""
     catalog: str = "main"
@@ -107,7 +108,7 @@ def load_config(path: str | Path) -> ProjectConfig:
     path = Path(path).resolve()
     if not path.exists():
         raise ConfigError(f"Project file not found: {path}. Create one with `wishbridge init`.")
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8-sig")) or {}
     base = path.parent
 
     source_key = str(raw.get("source", "")).lower()
@@ -131,6 +132,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         transpiler=transpiler,
         input_dir=(base / raw.get("input", "input")).resolve(),
         output_dir=(base / raw.get("output", "output")).resolve(),
+        overrides_dir=(base / raw.get("overrides", "overrides")).resolve(),
         profile=dbx.get("profile", "DEFAULT"),
         warehouse_id=str(dbx.get("warehouse_id") or ""),
         catalog=dbx.get("catalog", "main"),
@@ -164,11 +166,12 @@ source: {source}            # one of: {sources}
 # transpiler: morph         # optional override: morph | bladebridge
 input: input                # put the legacy SQL / ETL files here
 output: output              # everything WishBridge produces goes here
+overrides: overrides        # hand-fixed versions of converted files (same file names) - kept across runs
 
 databricks:
   profile: DEFAULT          # profile in ~/.databrickscfg
   warehouse_id: ""          # SQL warehouse used by deploy/load/reconcile (blank = auto-pick)
-  catalog: main
+  catalog: main             # newer workspaces usually use `workspace`
   schema: wishbridge_{name_id}   # dev/test schema the converted objects are deployed to
 
 # Rename source schemas to target catalog.schema in the converted code
