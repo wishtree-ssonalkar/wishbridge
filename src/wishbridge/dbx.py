@@ -19,11 +19,25 @@ class SqlResult:
     columns: list[str]
 
 
+def normalise_host(host: str) -> str:
+    host = (host or "").strip().lower().rstrip("/")
+    return host if not host or host.startswith("http") else f"https://{host}"
+
+
+def check_workspace(cfg: ProjectConfig, actual_host: str) -> None:
+    """Refuse to work on a different workspace than the one the project belongs to."""
+    if cfg.host and normalise_host(actual_host) != normalise_host(cfg.host):
+        raise SqlError(
+            f"Profile '{cfg.profile}' is signed in to {actual_host}, but this project belongs to {cfg.host}. "
+            "Choose the right workspace in Settings (or set databricks.profile in project.yml).")
+
+
 class Warehouse:
     def __init__(self, cfg: ProjectConfig):
         from databricks.sdk import WorkspaceClient
 
         self.w = WorkspaceClient(profile=cfg.profile)
+        check_workspace(cfg, self.w.config.host)
         self.warehouse_id = cfg.warehouse_id or self._pick_warehouse()
 
     def _pick_warehouse(self) -> str:

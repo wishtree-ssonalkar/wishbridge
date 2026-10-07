@@ -103,21 +103,70 @@ with tab_settings:
         src_keys = list(SOURCES)
         source = st.selectbox("Source system", src_keys, index=src_keys.index(cfg.source.key),
                               format_func=lambda k: f"{SOURCES[k].analyzer_tech} ({k})")
+    with c2:
         transpiler = st.selectbox("Converter", ["(default for source)", "morph", "bladebridge"],
                                   index=["(default for source)", "morph", "bladebridge"].index(raw.get("transpiler") or "(default for source)"),
                                   help="Morph handles most SQL dialects; BladeBridge handles ETL tools and some SQL.")
+
+    # --- Databricks workspace: which saved login (profile) this project uses
+    st.markdown("**Databricks workspace** — the client workspace this project migrates into.")
+    if "profiles" not in ss:
+        ss.profiles = h.list_profiles()
+    profiles = ss.profiles
+    names = [p["name"] for p in profiles]
+    cur_profile = ss.get("pending_profile") or dbx.get("profile", "DEFAULT")
+    if cur_profile not in names:
+        names = [cur_profile] + names
+    by_name = {p["name"]: p for p in profiles}
+
+    def profile_label(n: str) -> str:
+        p = by_name.get(n)
+        if not p:
+            return f"{n} — not set up on this computer"
+        state = {True: "signed in", False: "login expired", None: "status unknown"}[p["valid"]]
+        return f"{n} — {p['host']} ({state})"
+
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        profile = st.selectbox("Workspace login", names, index=names.index(cur_profile), format_func=profile_label)
     with c2:
-        profile = st.text_input("Databricks CLI profile", value=dbx.get("profile", "DEFAULT"))
-        if st.button("Load warehouses and catalogs from Databricks"):
+        st.write("")
+        if st.button("Load warehouses and catalogs", width="stretch"):
             with st.spinner("Asking the workspace..."):
                 try:
                     ss.workspace = h.list_workspace(profile)
                 except Exception as e:  # SDK raises many types; show the message
+                    ss.workspace = None
                     st.error(f"Could not reach the workspace: {e}")
+    chosen_host = (by_name.get(profile) or {}).get("host", "")
+    project_host = str(dbx.get("host") or "")
+    if ss.workspace and ss.workspace.get("profile") == profile:
+        st.success(f"Connected as **{ss.workspace['user']}** on **{ss.workspace['host']}**")
+    if project_host and chosen_host and project_host.rstrip("/").lower() != chosen_host.rstrip("/").lower():
+        st.error(f"This project belongs to **{project_host}**, but the selected login is for **{chosen_host}**. "
+                 "Pick the login for the project's workspace. Saving will move the project to the selected workspace.")
+    if by_name.get(profile, {}).get("valid") is False:
+        st.warning("This login has expired. Sign in again below with the same profile name.")
+
+    with st.expander("Connect to another workspace (sign in)"):
+        st.caption("Opens a browser on this computer to sign in. The login is saved in this user's ~/.databrickscfg; "
+                   "WishBridge never sees the password.")
+        n1, n2, n3 = st.columns([3, 2, 1])
+        new_host = n1.text_input("Workspace URL", placeholder="https://adb-1234567890.12.azuredatabricks.net")
+        new_profile = n2.text_input("Profile name", placeholder="CLIENT_ACME")
+        n3.write("")
+        if n3.button("Sign in"):
+            with st.spinner("Finish signing in in the browser window..."):
+                ok, msg = h.sign_in(new_host, new_profile)
+            (st.success if ok else st.error)(msg)
+            if ok:
+                ss.profiles = h.list_profiles()
+                ss.pending_profile = new_profile.strip()
+                st.rerun()
 
     st.markdown("**Target in Databricks** — converted objects are created in this test schema.")
     c1, c2, c3 = st.columns(3)
-    ws = ss.workspace
+    ws = ss.workspace if ss.workspace and ss.workspace.get("profile") == profile else None
     with c1:
         if ws and ws["warehouses"]:
             wh_ids = [""] + [w["id"] for w in ws["warehouses"]]
@@ -188,7 +237,9 @@ with tab_settings:
             new.pop("transpiler", None)
         else:
             new["transpiler"] = transpiler
-        new["databricks"] = {**dbx, "profile": profile, "warehouse_id": warehouse, "catalog": catalog, "schema": schema}
+        host = (ws or {}).get("host") or chosen_host or project_host
+        new["databricks"] = {**dbx, "profile": profile, "host": host, "warehouse_id": warehouse,
+                             "catalog": catalog, "schema": schema}
         new["schema_map"] = h.rows_to_schema_map(map_df.to_dict("records"))
         new["data"] = {**data, "method": method, "source_catalog": source_catalog, "files_root": files_root,
                        "file_format": file_format, "mode": load_mode, "tables": h.rows_to_tables(tables_df.to_dict("records"))}
@@ -196,6 +247,7 @@ with tab_settings:
         new["estimate"] = {**est, "hours_per_issue": hpi}
         try:
             h.save_raw(ss.project, new)
+            ss.pop("pending_profile", None)
             st.success("Saved project.yml")
             st.rerun()
         except (ConfigError, KeyError, ValueError) as e:

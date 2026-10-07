@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import configparser
+import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -154,13 +157,73 @@ def _login_check(profile: str, cli: str | None) -> Check:
 
 # ---------------------------------------------------------------- workspace
 
-def list_workspace(profile: str) -> dict[str, list[dict[str, str]]]:
-    """Warehouses and catalogs visible to the profile, for the settings dropdowns."""
+def databrickscfg_path() -> Path:
+    return Path(os.environ.get("DATABRICKS_CONFIG_FILE") or Path.home() / ".databrickscfg")
+
+
+def _validity() -> dict[str, bool]:
+    """Profile name -> login still valid, from `databricks auth profiles`."""
+    cli = shutil.which("databricks")
+    if not cli:
+        return {}
+    try:
+        out = subprocess.run([cli, "auth", "profiles"], capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    result = {}
+    for line in out.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 2:
+            result[parts[0]] = parts[-1].upper() == "YES"
+    return result
+
+
+def list_profiles(check_validity: bool = True) -> list[dict[str, Any]]:
+    """Saved Databricks logins on this computer: name, workspace URL and whether the login still works."""
+    cp = configparser.ConfigParser(default_section="__wishbridge_none__", interpolation=None)
+    path = databrickscfg_path()
+    if path.exists():
+        cp.read(path, encoding="utf-8")
+    valid = _validity() if check_validity else {}
+    profiles = []
+    for name in cp.sections():
+        host = cp.get(name, "host", fallback="")
+        if name.startswith("__") or not host:
+            continue
+        profiles.append({"name": name, "host": host.rstrip("/"), "valid": valid.get(name)})
+    return profiles
+
+
+def sign_in(host: str, profile: str) -> tuple[bool, str]:
+    """Run `databricks auth login` (opens a browser on this computer). Returns (ok, message)."""
+    host = host.strip().rstrip("/")
+    profile = profile.strip()
+    if not re.fullmatch(r"https://[A-Za-z0-9.-]+(:\d+)?(/.*)?", host):
+        return False, "Enter the workspace URL, e.g. https://dbc-1234.cloud.databricks.com"
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", profile):
+        return False, "Profile name: letters, digits, '-', '_' or '.'"
+    cli = shutil.which("databricks")
+    if not cli:
+        return False, "Databricks CLI not found"
+    try:
+        proc = subprocess.run([cli, "auth", "login", "--host", host, "--profile", profile],
+                              capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return False, "Sign-in timed out - finish it in the browser within 5 minutes"
+    if proc.returncode != 0:
+        return False, (proc.stderr or proc.stdout).strip().splitlines()[-1] if (proc.stderr or proc.stdout) else "Sign-in failed"
+    return True, f"Signed in to {host} as profile '{profile}'"
+
+
+def list_workspace(profile: str) -> dict[str, Any]:
+    """Who we are, where, and the warehouses and catalogs visible - for the settings screen."""
     from databricks.sdk import WorkspaceClient
 
     w = WorkspaceClient(profile=profile)
+    user = w.current_user.me().user_name
     warehouses = [{"id": wh.id, "name": wh.name, "state": str(wh.state.value if wh.state else "")}
                   for wh in w.warehouses.list()]
     catalogs = [{"name": c.name, "type": str(c.catalog_type.value if c.catalog_type else "")}
                 for c in w.catalogs.list() if c.name]
-    return {"warehouses": warehouses, "catalogs": catalogs}
+    return {"profile": profile, "host": w.config.host.rstrip("/"), "user": user,
+            "warehouses": warehouses, "catalogs": catalogs}

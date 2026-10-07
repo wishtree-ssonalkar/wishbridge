@@ -68,6 +68,7 @@ class ProjectConfig:
     output_dir: Path
     overrides_dir: Path | None = None  # hand-fixed files that replace converted output
     profile: str = "DEFAULT"
+    host: str = ""  # workspace this project belongs to; WishBridge refuses to run against another
     warehouse_id: str = ""
     catalog: str = "main"
     schema: str = "wishbridge"
@@ -134,6 +135,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         output_dir=(base / raw.get("output", "output")).resolve(),
         overrides_dir=(base / raw.get("overrides", "overrides")).resolve(),
         profile=dbx.get("profile", "DEFAULT"),
+        host=str(dbx.get("host") or ""),
         warehouse_id=str(dbx.get("warehouse_id") or ""),
         catalog=dbx.get("catalog", "main"),
         schema=dbx.get("schema", "wishbridge"),
@@ -170,6 +172,7 @@ overrides: overrides        # hand-fixed versions of converted files (same file 
 
 databricks:
   profile: DEFAULT          # profile in ~/.databrickscfg
+  host: ""                  # workspace URL this project belongs to; WishBridge refuses to run against another
   warehouse_id: ""          # SQL warehouse used by deploy/load/reconcile (blank = auto-pick)
   catalog: main             # newer workspaces usually use `workspace`
   schema: wishbridge_{name_id}   # dev/test schema the converted objects are deployed to

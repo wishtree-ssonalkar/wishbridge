@@ -102,9 +102,13 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   to make a desktop shortcut), or run `wishbridge ui`. It opens at http://localhost:8501 and runs only on
   your computer; close the black window to stop it.
 - **Sidebar:** *Create new* makes a project (name, source system, folder); *Open existing* opens one.
-- **1 · Settings:** source system, converter, Databricks profile; press *Load warehouses and catalogs from
-  Databricks* to pick the SQL warehouse and catalog from lists; test schema; schema mapping; data method and
-  the tables to copy. Press *Save settings* (bad values are refused and the old settings kept).
+- **1 · Settings:** source system and converter, then the **Databricks workspace**: pick the saved login for the
+  client's workspace (each shows its URL and whether it is still signed in), or open *Connect to another
+  workspace* to sign in to a new one in the browser. Press *Load warehouses and catalogs* — the app shows
+  *Connected as &lt;user&gt; on &lt;workspace&gt;* and fills the SQL warehouse and catalog lists. Then the test schema,
+  schema mapping, data method and the tables to copy. Press *Save settings* (bad values are refused and the old
+  settings kept). Saving records the workspace URL in the project: from then on WishBridge refuses to deploy,
+  load or reconcile with a login for any other workspace, so a client project can't touch the wrong workspace.
 - **2 · Code:** upload the legacy code files and preview them.
 - **3 · Run:** tick the steps (analyze, convert, deploy, copy data, reconcile, report) and press *Start*.
   Each step shows its result; a failed step stops the run and says why. Copying data only happens when
