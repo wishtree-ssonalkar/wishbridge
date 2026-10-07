@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wishbridge"
+version = "0.1.0"
+description = "Wishtree WishBridge: end-to-end migration accelerator to Databricks, built on Databricks Labs LakeBridge"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Wishtree Technologies" }]
+dependencies = [
+    "click>=8.1",
+    "pyyaml>=6.0",
+    "openpyxl>=3.1",
+    "databricks-sdk>=0.40",
+]
+
+[project.optional-dependencies]
+ai = ["anthropic"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+wishbridge = "wishbridge.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wishbridge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

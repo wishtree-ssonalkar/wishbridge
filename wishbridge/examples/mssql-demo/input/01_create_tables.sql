@@ -1,0 +1,14 @@
+CREATE TABLE dbo.Customers (
+    CustomerID INT IDENTITY(1,1) PRIMARY KEY,
+    FullName NVARCHAR(200) NOT NULL,
+    Email VARCHAR(255),
+    CreatedAt DATETIME DEFAULT GETDATE()
+);
+
+CREATE TABLE dbo.Orders (
+    OrderID INT IDENTITY(1,1) PRIMARY KEY,
+    CustomerID INT NOT NULL,
+    OrderDate DATETIME NOT NULL,
+    Amount MONEY NOT NULL,
+    Status VARCHAR(20)
+);

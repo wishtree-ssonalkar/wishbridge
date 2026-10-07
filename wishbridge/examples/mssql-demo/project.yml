@@ -1,0 +1,30 @@
+# WishBridge example: SQL Server -> Databricks. Paths are relative to this file.
+name: mssql-demo
+source: mssql
+input: input
+output: output
+
+databricks:
+  profile: DEFAULT
+  warehouse_id: ""          # blank = first running SQL warehouse
+  catalog: main
+  schema: wishbridge_demo    # dev schema - converted objects are created here
+
+schema_map:
+  dbo: main.wishbridge_demo
+
+autofix:
+  ai: false                 # `wishbridge convert --ai` to get Claude suggestions
+  model: claude-opus-5-5
+
+data:
+  method: federation
+  source_catalog: sqlserver_fed   # Lakehouse Federation catalog pointing at the SQL Server database
+  mode: overwrite
+  tables:
+    - dbo.Customers
+    - dbo.Orders
+
+estimate:
+  hours_per_file: {LOW: 0.5, MEDIUM: 2, HIGH: 6, VERY HIGH: 12}
+  hours_per_issue: 0.5
