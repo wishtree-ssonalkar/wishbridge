@@ -4,6 +4,8 @@
 Built on [Databricks Labs LakeBridge](https://github.com/databrickslabs/lakebridge).
 
 **New to WishBridge? Start with the step-by-step [User Guide](docs/USER_GUIDE.md).**
+Prefer forms to commands? Double-click `Start WishBridge.cmd` (or run `wishbridge ui`) to open the WishBridge app
+in your browser: create a project, fill in the settings, upload code, press Start and review the results.
 
 LakeBridge gives you an analyzer, transpilers and a reconciler. WishBridge turns them into a
 repeatable migration pipeline and fills the gaps between them:
@@ -48,7 +50,7 @@ databricks auth login --host https://<your-workspace>.cloud.databricks.com --pro
 databricks labs install lakebridge
 databricks labs lakebridge install-transpile --interactive false
 
-pip install -e ".[ai]"          # from this folder; drop [ai] if you don't need Claude suggestions
+pip install -e ".[ai,ui]"       # from this folder; [ai] = Claude suggestions, [ui] = the app
 ```
 
 ## Quick start (local only)

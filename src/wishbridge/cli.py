@@ -179,6 +179,28 @@ def report(config_path: str) -> None:
     _ok(f"Report: {_guard(build_report, cfg)}")
 
 
+@main.command()
+@click.option("--project", "project", default=None, type=click.Path(file_okay=False), help="Project folder to open.")
+@click.option("--port", default=8501, show_default=True, help="Local port for the app.")
+def ui(project: str | None, port: int) -> None:
+    """Open the WishBridge app in your browser."""
+    import subprocess
+
+    try:
+        import streamlit  # noqa: F401
+    except ImportError:
+        _fail('The UI needs Streamlit: pip install -e ".[ui]"')
+    app = Path(__file__).parent / "ui" / "app.py"
+    args = [sys.executable, "-m", "streamlit", "run", str(app), "--server.port", str(port),
+            "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal", "--"]
+    if project:
+        args += ["--project", str(Path(project).resolve())]
+    elif Path("project.yml").exists():
+        args += ["--project", str(Path.cwd())]
+    click.echo(f"WishBridge app: http://localhost:{port}  (Ctrl+C to stop)")
+    subprocess.run(args)
+
+
 @main.command("sql")
 @config_option
 @click.argument("sql_file", type=click.Path(exists=True, dir_okay=False))

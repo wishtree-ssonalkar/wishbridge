@@ -53,7 +53,7 @@ Press Enter to accept the defaults if the installer asks questions.
 git clone https://github.com/wishtree-ssonalkar/wishbridge.git C:\wishbridge
 cd C:\wishbridge
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[ai]"
+.\.venv\Scripts\python.exe -m pip install -e ".[ai,ui]"
 ```
 
 Check it works:
@@ -67,6 +67,32 @@ Check it works:
 > `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or keep using the full path
 > `C:\wishbridge\.venv\Scripts\wishbridge.exe`. The rest of this guide writes `wishbridge` for short.
 > (Mac/Linux: `source .venv/bin/activate`.)
+
+---
+
+## The WishBridge app (no commands needed)
+
+Everything in this guide can also be done in the WishBridge app, which opens in your browser.
+
+- **Start it:** double-click `Start WishBridge.cmd` in the WishBridge folder (right-click → *Send to → Desktop*
+  to make a desktop shortcut), or run `wishbridge ui`. It opens at http://localhost:8501 and runs only on
+  your computer; close the black window to stop it.
+- **Sidebar:** *Create new* makes a project (name, source system, folder); *Open existing* opens one.
+- **1 · Settings:** source system, converter, Databricks profile; press *Load warehouses and catalogs from
+  Databricks* to pick the SQL warehouse and catalog from lists; test schema; schema mapping; data method and
+  the tables to copy. Press *Save settings* (bad values are refused and the old settings kept).
+- **2 · Code:** upload the legacy code files and preview them.
+- **3 · Run:** tick the steps (analyze, convert, deploy, copy data, reconcile, report) and press *Start*.
+  Each step shows its result; a failed step stops the run and says why. Copying data only happens when
+  *really copy* is ticked.
+- **4 · Results:** the numbers, file statuses, open items, deployment errors, reconciliation and the full
+  report, with a download button.
+- **5 · Manual fixes:** pick a file, see its open items and the original next to the Databricks version, edit it
+  and press *Save as manual fix*. Then run Convert again.
+- **Environment:** checks the Databricks CLI, Java, LakeBridge, the converters and your login, with the command
+  that fixes anything missing.
+
+The app and the commands use the same project folders, so you can switch between them at any time.
 
 ---
 
