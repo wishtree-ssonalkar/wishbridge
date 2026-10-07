@@ -182,7 +182,11 @@ def report(config_path: str) -> None:
 @main.command()
 @click.option("--project", "project", default=None, type=click.Path(file_okay=False), help="Project folder to open.")
 @click.option("--port", default=8501, show_default=True, help="Local port for the app.")
-def ui(project: str | None, port: int) -> None:
+@click.option("--host", default="localhost", show_default=True,
+              help="Address to listen on. The default keeps the app private to this computer; "
+                   "0.0.0.0 shares it on the network with everyone who can reach this machine.")
+@click.option("--no-browser", is_flag=True, help="Don't open a browser (e.g. on a server).")
+def ui(project: str | None, port: int, host: str, no_browser: bool) -> None:
     """Open the WishBridge app in your browser."""
     import subprocess
 
@@ -192,11 +196,15 @@ def ui(project: str | None, port: int) -> None:
         _fail('The UI needs Streamlit: pip install -e ".[ui]"')
     app = Path(__file__).parent / "ui" / "app.py"
     args = [sys.executable, "-m", "streamlit", "run", str(app), "--server.port", str(port),
+            "--server.address", host, "--server.headless", str(no_browser).lower(),
             "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal", "--"]
     if project:
         args += ["--project", str(Path(project).resolve())]
     elif Path("project.yml").exists():
         args += ["--project", str(Path.cwd())]
+    if host not in ("localhost", "127.0.0.1", "::1"):
+        click.secho(f"Warning: the app is reachable from the network on {host}:{port} and runs with "
+                    "this computer's Databricks login. Only do this on a trusted network.", fg="yellow")
     click.echo(f"WishBridge app: http://localhost:{port}  (Ctrl+C to stop)")
     subprocess.run(args)
 

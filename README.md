@@ -43,7 +43,11 @@ cross-dialect rules. Set `transpiler: bladebridge` in `project.yml` to try LakeB
 
 ## Install
 
-Prerequisites: Python 3.10+, Java 11+, the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install), and a workspace login.
+**One-click setup:** Windows: double-click `Install WishBridge.cmd`. macOS / Linux: run `./install.sh`.
+It installs anything missing (Python, Java, Databricks CLI), signs in to Databricks, installs LakeBridge and
+WishBridge, and adds a desktop / app-menu launcher. Details: [User Guide, Part A](docs/USER_GUIDE.md).
+
+By hand: Python 3.10+, Java 11+, the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/install), and a workspace login, then:
 
 ```powershell
 databricks auth login --host https://<your-workspace>.cloud.databricks.com --profile DEFAULT

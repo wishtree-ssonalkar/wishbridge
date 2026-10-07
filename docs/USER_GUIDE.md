@@ -12,6 +12,30 @@ HTML report you can share with the client.
 
 ## Part A – One-time setup (about 20 minutes)
 
+### Quick setup (recommended)
+
+Get the WishBridge folder (`git clone https://github.com/wishtree-ssonalkar/wishbridge.git C:\wishbridge`,
+or download it as a ZIP from GitHub and unzip it), then:
+
+| System | Run once | Then start WishBridge with |
+|---|---|---|
+| Windows 10/11 | Double-click **`Install WishBridge.cmd`** | The **Wishtree WishBridge** icon on the desktop |
+| macOS | `./install.sh` in Terminal | **Wishtree WishBridge.command** on the Desktop |
+| Linux (Ubuntu/Debian, RHEL/Fedora) | `./install.sh` in a terminal | **Wishtree WishBridge** in the app menu, or `./start-wishbridge.sh` |
+
+The setup installs whatever is missing (Python, Java and the Databricks CLI, via winget on Windows, Homebrew on
+macOS, apt or dnf on Linux), opens a browser to sign in to Databricks, installs LakeBridge and its converters,
+installs WishBridge and adds the launcher. It is safe to run again; finished steps are skipped. Add
+`-DryRun` (Windows) or `DRY_RUN=1` (macOS/Linux) to see what it would do without changing anything.
+
+**Linux server without a desktop:** run `./start-wishbridge.sh --no-browser` on the server, open an SSH tunnel
+from your laptop (`ssh -L 8501:localhost:8501 <server>`) and browse to http://localhost:8501. The app only
+listens on its own machine unless started with `--host 0.0.0.0`; don't do that on an untrusted network, because
+the app runs with that machine's Databricks login.
+
+If the quick setup works, skip to [Part B](#part-b--try-the-demo-5-minutes-nothing-touches-databricks).
+Steps A1–A4 below are the same setup done by hand.
+
 ### A1. What you need
 
 | Item | Check with | Get it from |
