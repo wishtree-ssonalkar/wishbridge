@@ -68,7 +68,10 @@ def init(name: str, source: str, directory: str) -> None:
     (root / "project.yml").write_text(render_template(name, source), encoding="utf-8")
     _ok(f"Created {root}")
     click.echo(f"  1. Copy your {SOURCES[source].analyzer_tech} files into {root / 'input'}")
-    click.echo(f"  2. cd {root} && wishbridge run")
+    click.echo(f"  2. Review {root / 'project.yml'} (catalog, schema, schema_map)")
+    click.echo(f"  3. cd {root}")
+    click.echo("     wishbridge run")
+    click.echo("  Step-by-step guide: docs/USER_GUIDE.md")
 
 
 @main.command()

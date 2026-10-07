@@ -3,6 +3,8 @@
 **End-to-end migration accelerator from legacy data warehouses and ETL to Databricks, by Wishtree Technologies.**
 Built on [Databricks Labs LakeBridge](https://github.com/databrickslabs/lakebridge).
 
+**New to WishBridge? Start with the step-by-step [User Guide](docs/USER_GUIDE.md).**
+
 LakeBridge gives you an analyzer, transpilers and a reconciler. WishBridge turns them into a
 repeatable migration pipeline and fills the gaps between them:
 
