@@ -38,8 +38,15 @@ pipeline steps (against a stand-in warehouse) and the AI step (against a stand-i
 
 `wishbridge sources` lists them: SQL Server, Azure Synapse, Snowflake, Oracle, Teradata, Redshift,
 BigQuery, Netezza (SQL) and DataStage, Informatica PowerCenter / Cloud, SSIS (ETL, via BladeBridge).
-Dialect rules exist for SQL Server / Synapse, Snowflake, Oracle and Teradata; other sources get the
-cross-dialect rules. Set `transpiler: bladebridge` in `project.yml` to try LakeBridge's other converter.
+Dialect rules exist for SQL Server / Synapse, Oracle, Snowflake, Teradata and Netezza; every source gets the
+cross-dialect rules.
+
+**The converter is chosen automatically.** WishBridge picks LakeBridge's better converter for the source system
+(Morph for SQL Server, Synapse, Oracle, Snowflake, Redshift and BigQuery; BladeBridge for Teradata, Netezza and the
+ETL tools). Where both converters support the source (SQL Server, Synapse, Oracle, Teradata, Redshift), any file
+the first one leaves errors in is also run through the other, and the result with fewer errors is kept, file by file.
+The report shows which converter produced each file. To force one converter, set `transpiler: morph` or
+`transpiler: bladebridge` in `project.yml` (or pick it in the app).
 
 ## Install
 
@@ -122,7 +129,7 @@ See [examples/mssql-demo/project.yml](examples/mssql-demo/project.yml). Key sett
 
 | Setting | Meaning |
 |---|---|
-| `source` / `transpiler` | Source system key (`wishbridge sources`); optional `morph` / `bladebridge` override |
+| `source` / `transpiler` | Source system key (`wishbridge sources`); converter `auto` (default), `morph` or `bladebridge` |
 | `input` / `output` / `overrides` | Legacy code, generated output, hand-fixed files |
 | `databricks.profile` / `warehouse_id` | CLI profile and SQL warehouse (blank = first running warehouse) |
 | `databricks.catalog` / `schema` | **Dev** schema that `deploy` creates objects in |

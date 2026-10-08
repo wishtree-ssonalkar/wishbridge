@@ -96,7 +96,11 @@ def convert(config_path: str, ai: bool | None) -> None:
     from .convert import run_convert
 
     cfg = _load(config_path)
-    click.echo(f"Converting with {cfg.transpiler} ({cfg.source.dialect}) ...")
+    from .config import fallback_converter
+
+    second = fallback_converter(cfg)
+    click.echo(f"Converting {cfg.source.analyzer_tech} with {cfg.transpiler}"
+               + (f" (automatic: {second} is tried on files {cfg.transpiler} can't convert)" if second else "") + " ...")
     res = _guard(run_convert, cfg, ai)
     s = res["summary"]
     manual = f"; {s['manual_overrides']} manual fixes applied" if s.get("manual_overrides") else ""
@@ -105,6 +109,8 @@ def convert(config_path: str, ai: bool | None) -> None:
     for f in res["files"]:
         colour = {"ready": "green", "review": "yellow", "needs-fix": "red"}[f["status"]]
         tag = "  (manual fix)" if f.get("manual_override") else ""
+        if not tag and f.get("converter") not in (None, cfg.transpiler):
+            tag = f"  (converted by {f['converter']})"
         click.echo(f"  {click.style(f'{f["status"]:<9}', fg=colour)} {f['file']}{tag}")
         for x in f["findings"]:
             if not x["fixed"] and x["severity"] != "info":

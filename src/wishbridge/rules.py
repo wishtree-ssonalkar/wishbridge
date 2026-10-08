@@ -196,6 +196,10 @@ _DETECTORS: list[Detector] = [
              "Oracle package call {m}: remove it or replace with Databricks equivalents (e.g. SELECT for output)."),
     Detector("plsql-cursor-attr", ERROR, ORACLE, re.compile(r"\bSQL%(?:ROWCOUNT|FOUND|NOTFOUND|ISOPEN)\b", I),
              "{m} is not supported: read num_affected_rows from the statement result."),
+    Detector("oracle-date-column", WARNING, ORACLE,
+             re.compile(r"^\s*`?\w+`?\s+DATE\b(?!\s*\()(?=[^\n]*(?:,|NOT\s+NULL|DEFAULT|$))", I | M),
+             "Oracle DATE also stores the time of day; a Databricks DATE column drops it. Use TIMESTAMP unless the "
+             "column really holds dates only."),
     Detector("oracle-date-mask", WARNING, ORACLE,
              # function names in any case; mask tokens case-sensitive (Oracle masks are upper-case, Java's are not)
              re.compile(r"\b(?i:TO_CHAR|TO_DATE|TO_TIMESTAMP|DATE_FORMAT)\s*\([^;]*?'[^']*(?:YYYY|HH24|\bMI\b|\bRR\b|\bMON\b)[^']*'"),

@@ -115,8 +115,10 @@ def build_report(cfg: ProjectConfig) -> Path:
     if c:
         parts.append(f'<p class="muted">Transpiler: {escape(c["transpiler"])} (Databricks Labs LakeBridge) + WishBridge rules. '
                      f'Converted code: <code>{escape(_rel(c["final_dir"], base))}</code></p>')
-        parts.append(_table(["File", "Status", "Auto-fixed", "Open errors", "Open warnings", "AI suggestion"], [
+        conv_names = {"morph": "Morph", "bladebridge": "BladeBridge", "manual": "hand-written"}
+        parts.append(_table(["File", "Converter", "Status", "Auto-fixed", "Open errors", "Open warnings", "AI suggestion"], [
             [f'<code>{escape(f["file"])}</code>',
+             escape(conv_names.get(f.get("converter", c["transpiler"]), f.get("converter", ""))),
              _pill(f["status"]) + (' <span class="pill muted">manual fix</span>' if f.get("manual_override") else ""),
              str(f["fixed"]),
              str(sum(1 for x in f["findings"] if not x["fixed"] and x["severity"] == "error")),

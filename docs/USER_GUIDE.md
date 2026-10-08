@@ -102,7 +102,9 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   to make a desktop shortcut), or run `wishbridge ui`. It opens at http://localhost:8501 and runs only on
   your computer; close the black window to stop it.
 - **Sidebar:** *Create new* makes a project (name, source system, folder); *Open existing* opens one.
-- **1 · Settings:** source system and converter, then the **Databricks workspace**: pick the saved login for the
+- **1 · Settings:** the source system — the converter is then chosen automatically (leave it on *Automatic*: it
+  picks the right LakeBridge converter and retries files it can't convert with the other one) — then the
+  **Databricks workspace**: pick the saved login for the
   client's workspace (each shows its URL and whether it is still signed in), or open *Connect to another
   workspace* to sign in to a new one in the browser. Press *Load warehouses and catalogs* — the app shows
   *Connected as &lt;user&gt; on &lt;workspace&gt;* and fills the SQL warehouse and catalog lists. Then the test schema,

@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from wishbridge import __version__
-from wishbridge.config import SOURCES, ConfigError, load_config
+from wishbridge.config import CONVERTER_DIALECTS, SOURCES, ConfigError, converter_summary, load_config
 from wishbridge.dbx import SqlError
 from wishbridge.lakebridge import LakeBridgeError
 from wishbridge.state import load_state
@@ -104,9 +104,14 @@ with tab_settings:
         source = st.selectbox("Source system", src_keys, index=src_keys.index(cfg.source.key),
                               format_func=lambda k: f"{SOURCES[k].analyzer_tech} ({k})")
     with c2:
-        transpiler = st.selectbox("Converter", ["(default for source)", "morph", "bladebridge"],
-                                  index=["(default for source)", "morph", "bladebridge"].index(raw.get("transpiler") or "(default for source)"),
-                                  help="Morph handles most SQL dialects; BladeBridge handles ETL tools and some SQL.")
+        # Only converters that support the chosen source are offered; "auto" is the default and the recommendation.
+        conv_options = ["auto"] + [c for c in ("morph", "bladebridge") if SOURCES[source].dialect in CONVERTER_DIALECTS[c]]
+        cur_conv = str(raw.get("transpiler") or "auto").lower()
+        conv_labels = {"auto": "Automatic (recommended)", "morph": "Morph only", "bladebridge": "BladeBridge only"}
+        transpiler = st.selectbox("Converter", conv_options, format_func=conv_labels.get,
+                                  index=conv_options.index(cur_conv) if cur_conv in conv_options else 0)
+        st.caption(converter_summary(source) if transpiler == "auto"
+                   else "Fixed converter: no second attempt on files it can't convert.")
 
     # --- Databricks workspace: which saved login (profile) this project uses
     st.markdown("**Databricks workspace** — the client workspace this project migrates into.")
@@ -233,8 +238,8 @@ with tab_settings:
     if st.button("💾 Save settings", type="primary"):
         new = dict(raw)
         new["source"] = source
-        if transpiler == "(default for source)":
-            new.pop("transpiler", None)
+        if transpiler == "auto":
+            new.pop("transpiler", None)  # automatic is the default
         else:
             new["transpiler"] = transpiler
         host = (ws or {}).get("host") or chosen_host or project_host
@@ -304,7 +309,8 @@ with tab_run:
     with c3:
         do_reconcile = st.checkbox("5. Reconcile the data", value=False)
         do_report = st.checkbox("6. Build the report", value=True)
-    st.caption(f"Target: `{cfg.target_schema}` · converter: {cfg.transpiler} · source: {cfg.source.analyzer_tech}")
+    st.caption(f"Target: `{cfg.target_schema}` · converter: {'automatic, ' if cfg.auto_converter else ''}{cfg.transpiler}"
+               + (" first" if cfg.auto_converter else "") + f" · source: {cfg.source.analyzer_tech}")
 
     if st.button("▶ Start", type="primary"):
         from wishbridge.analysis import run_analyze
@@ -361,6 +367,7 @@ with tab_results:
             st.dataframe(pd.DataFrame([{
                 "file": f["file"],
                 "status": STATUS_ICON.get(f["status"], f["status"]) + (" · manual fix" if f.get("manual_override") else ""),
+                "converter": f.get("converter", ""),
                 "auto-fixed": f["fixed"],
                 "open errors": sum(1 for x in f["findings"] if not x["fixed"] and x["severity"] == "error"),
                 "open warnings": sum(1 for x in f["findings"] if not x["fixed"] and x["severity"] == "warning"),

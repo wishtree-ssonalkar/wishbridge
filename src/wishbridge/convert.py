@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import re
 import shutil
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from . import lakebridge
-from .config import ProjectConfig
+from .config import ProjectConfig, fallback_converter
 from .rules import ERROR, INFO, WARNING, Finding, apply_rules, detect, dropped_statement_check
 from .state import save_step
 
@@ -58,6 +59,78 @@ def file_status(findings: list[Finding]) -> str:
     return "ready"
 
 
+def check_sql(cfg: ProjectConfig, rel: Path, text: str, notes: list[str],
+              source_file: Path | None) -> tuple[str, list[Finding]]:
+    """Apply the rules to one converted SQL file and add the converter's own notes and the dropped-statement check."""
+    fixed, findings = apply_rules(text, cfg.schema_map, cfg.source.key)
+    added: set[str] = set()
+    for msg in notes:
+        # Most transpiler warnings are also written into the code as FIXME comments (possibly with guidance added).
+        if msg in added or any(msg in f.message for f in findings):
+            continue
+        added.add(msg)
+        findings.append(Finding("transpile-error", ERROR, 1, msg))
+    if source_file is not None and source_file.is_file() and source_file.suffix.lower() == ".sql":
+        dropped = dropped_statement_check(source_file.read_text(encoding="utf-8-sig", errors="replace"), text, findings)
+        if dropped:
+            findings.append(dropped)
+    return fixed, findings
+
+
+def _score(findings: list[Finding]) -> tuple[int, int]:
+    """Lower is better: open errors first, then open warnings."""
+    open_ = [f for f in findings if not f.fixed]
+    return sum(f.severity == ERROR for f in open_), sum(f.severity == WARNING for f in open_)
+
+
+def choose_best_converter(cfg: ProjectConfig, raw_dir: Path, tnotes: dict[str, list[str]]) -> dict[str, str]:
+    """Automatic converter mode: for each SQL file the main converter left errors in, also try the other
+    LakeBridge converter (when it supports this source) and keep whichever result has fewer open errors.
+
+    Better results replace the file in raw_dir (and its notes in tnotes). Returns file -> converter used."""
+    used = {p.relative_to(raw_dir).as_posix(): cfg.transpiler for p in raw_dir.rglob("*") if p.is_file()}
+    alternative = fallback_converter(cfg)
+    if not alternative:
+        return used
+    primary: dict[Path, tuple[int, int]] = {}
+    for p in raw_dir.rglob("*"):
+        rel = p.relative_to(raw_dir)
+        text = p.read_text(encoding="utf-8-sig", errors="replace") if p.is_file() else ""
+        source = cfg.input_dir / rel
+        if p.is_file() and file_kind(rel, text) == "sql" and source.is_file():
+            score = _score(check_sql(cfg, rel, text, tnotes.get(rel.name, []), source)[1])
+            if score[0] > 0:
+                primary[rel] = score
+    if not primary:
+        return used
+
+    work = cfg.output_dir / "fallback"
+    if work.exists():
+        shutil.rmtree(work)
+    for rel in primary:
+        (work / "input" / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cfg.input_dir / rel, work / "input" / rel)
+    alt_cfg = replace(cfg, transpiler=alternative, input_dir=work / "input", target_technology="")
+    try:
+        lakebridge.transpile(alt_cfg, work / "converted", cfg.out("logs", "fallback_errors.log"))
+    except lakebridge.LakeBridgeError:
+        return used  # the fallback converter failed outright; keep the main converter's output
+    alt_notes = _transpile_notes(cfg.output_dir / "logs" / "fallback_errors.log")
+    for rel, score in primary.items():
+        alt_file = work / "converted" / rel
+        if not alt_file.is_file():
+            continue
+        alt_text = alt_file.read_text(encoding="utf-8-sig", errors="replace")
+        alt_score = _score(check_sql(cfg, rel, alt_text, alt_notes.get(rel.name, []), cfg.input_dir / rel)[1])
+        # Switch only for strictly fewer errors: the fallback is there to rescue files the main converter
+        # failed on, not to trade warnings (a converter that writes fewer notes is not necessarily better).
+        if alt_score[0] < score[0]:
+            shutil.copy2(alt_file, raw_dir / rel)
+            tnotes[rel.name] = alt_notes.get(rel.name, [])
+            used[rel.as_posix()] = alternative
+    return used
+
+
 def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any]:
     use_ai = cfg.ai_enabled if use_ai is None else use_ai
     if use_ai:
@@ -76,6 +149,7 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
 
     lakebridge.transpile(cfg, raw_dir, error_log)
     tnotes = _transpile_notes(error_log)
+    converters = choose_best_converter(cfg, raw_dir, tnotes)
 
     files: list[dict[str, Any]] = []
     converted = sorted(p.relative_to(raw_dir) for p in raw_dir.rglob("*") if p.is_file())
@@ -87,19 +161,7 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
         text = src.read_text(encoding="utf-8-sig", errors="replace") if src.exists() else ""
         kind = file_kind(rel, text)
         if kind == "sql":
-            fixed, findings = apply_rules(text, cfg.schema_map, cfg.source.key)
-            added: set[str] = set()
-            for msg in tnotes.get(rel.name, []):
-                # Most transpiler warnings are also written into the code as FIXME comments (possibly with guidance added).
-                if msg in added or any(msg in f.message for f in findings):
-                    continue
-                added.add(msg)
-                findings.append(Finding("transpile-error", ERROR, 1, msg))
-            source_file = cfg.input_dir / rel
-            if src.exists() and source_file.is_file() and source_file.suffix.lower() == ".sql":
-                dropped = dropped_statement_check(source_file.read_text(encoding="utf-8-sig", errors="replace"), text, findings)
-                if dropped:
-                    findings.append(dropped)
+            fixed, findings = check_sql(cfg, rel, text, tnotes.get(rel.name, []), cfg.input_dir / rel if src.exists() else None)
         else:
             fixed, findings = text, [Finding("notebook", INFO, 1, NOTEBOOK_NOTES[kind])]
 
@@ -118,6 +180,7 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
         entry: dict[str, Any] = {
             "file": rel.as_posix(),
             "kind": kind,
+            "converter": "manual" if not src.exists() else converters.get(rel.as_posix(), cfg.transpiler),
             "input": str(cfg.input_dir / rel),
             "converted": str(src) if src.exists() else "",
             "final": str(dest),

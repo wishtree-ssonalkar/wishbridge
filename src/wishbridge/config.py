@@ -47,6 +47,13 @@ TRANSPILER_DIRS = {"morph": "databricks-morph-plugin", "bladebridge": "bladebrid
 # ETL tools: BladeBridge asks which code to generate; WishBridge defaults to SPARKSQL.
 ETL_SOURCES = frozenset({"datastage", "informatica", "informatica-cloud", "ssis"})
 
+# Source dialects each LakeBridge converter accepts (from each transpiler's lib/config.yml).
+CONVERTER_DIALECTS = {
+    "morph": frozenset({"bigquery", "oracle", "teradata", "mssql", "redshift", "snowflake", "synapse"}),
+    "bladebridge": frozenset({"datastage", "informatica (desktop edition)", "informatica cloud", "ssis", "mssql",
+                              "netezza", "oracle", "redshift", "synapse", "teradata"}),
+}
+
 DEFAULT_HOURS_PER_FILE = {"LOW": 0.5, "MEDIUM": 2.0, "HIGH": 6.0, "VERY HIGH": 12.0}
 
 _PROD_SEGMENT = re.compile(r"(^|[._\-])(prod|production)($|[._\-])", re.IGNORECASE)
@@ -72,6 +79,7 @@ class ProjectConfig:
     input_dir: Path
     output_dir: Path
     target_technology: str = ""  # BladeBridge ETL sources: SPARKSQL or PYSPARK
+    auto_converter: bool = True  # transpiler "auto": also try the other converter on files with errors
     overrides_dir: Path | None = None  # hand-fixed files that replace converted output
     profile: str = "DEFAULT"
     host: str = ""  # workspace this project belongs to; WishBridge refuses to run against another
@@ -111,6 +119,25 @@ class ProjectConfig:
         return f"{self.target_schema}.{table}"
 
 
+def fallback_converter(cfg: ProjectConfig) -> str | None:
+    """The second converter automatic mode tries, if it supports this source; None when there is none."""
+    if not cfg.auto_converter:
+        return None
+    other = "bladebridge" if cfg.transpiler == "morph" else "morph"
+    return other if cfg.source.dialect in CONVERTER_DIALECTS[other] else None
+
+
+def converter_summary(source_key: str) -> str:
+    """Plain-words description of automatic mode for a source, e.g. for the app."""
+    s = SOURCES[source_key]
+    other = "bladebridge" if s.transpiler == "morph" else "morph"
+    names = {"morph": "Morph", "bladebridge": "BladeBridge"}
+    if s.dialect in CONVERTER_DIALECTS[other]:
+        return (f"{names[s.transpiler]} converts {s.analyzer_tech}; any file it can't fully convert is also tried "
+                f"with {names[other]}, and the better result is kept.")
+    return f"{names[s.transpiler]} converts {s.analyzer_tech} (the only LakeBridge converter for it)."
+
+
 def load_config(path: str | Path) -> ProjectConfig:
     path = Path(path).resolve()
     if not path.exists():
@@ -123,7 +150,9 @@ def load_config(path: str | Path) -> ProjectConfig:
         raise ConfigError(f"Unknown source '{source_key}'. Supported: {', '.join(SOURCES)}")
     source = SOURCES[source_key]
 
-    transpiler = raw.get("transpiler") or source.transpiler
+    chosen = str(raw.get("transpiler") or "auto").lower()
+    auto_converter = chosen == "auto"
+    transpiler = source.transpiler if auto_converter else chosen
     if transpiler not in TRANSPILER_DIRS:
         raise ConfigError(f"Unknown transpiler '{transpiler}'. Use one of: {', '.join(TRANSPILER_DIRS)}")
 
@@ -137,6 +166,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         name=raw.get("name") or base.name,
         source=source,
         transpiler=transpiler,
+        auto_converter=auto_converter,
         target_technology=str(raw.get("target_technology") or ("SPARKSQL" if source.key in ETL_SOURCES else "")).upper(),
         input_dir=(base / raw.get("input", "input")).resolve(),
         output_dir=(base / raw.get("output", "output")).resolve(),
@@ -173,7 +203,7 @@ PROJECT_TEMPLATE = """\
 # WishBridge project file. Paths are relative to this file.
 name: {name}
 source: {source}            # one of: {sources}
-# transpiler: morph         # optional override: morph | bladebridge
+# transpiler: auto          # auto (default): best converter per file | morph | bladebridge
 input: input                # put the legacy SQL / ETL files here
 output: output              # everything WishBridge produces goes here
 overrides: overrides        # hand-fixed versions of converted files (same file names) - kept across runs
