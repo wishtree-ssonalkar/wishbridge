@@ -58,10 +58,36 @@ def sources() -> None:
 
 @main.command()
 @click.argument("name")
-@click.option("--source", "source", required=True, type=click.Choice(list(SOURCES)), help="Source system.")
+@click.option("--source", "source", default=None, type=click.Choice(list(SOURCES)),
+              help="Source system (detected from --code when omitted).")
 @click.option("--dir", "directory", default=".", type=click.Path(file_okay=False), help="Parent directory.")
-def init(name: str, source: str, directory: str) -> None:
-    """Create a new migration project folder."""
+@click.option("--code", "code", default=None, type=click.Path(exists=True, file_okay=False),
+              help="Client code folder (repository, database project, export) to read in place.")
+@click.option("--split/--no-split", default=True, show_default=True,
+              help="With --code: one project per database when the code holds several.")
+@click.option("--catalog", default="main", show_default=True, help="Databricks catalog for the test schema.")
+def init(name: str, source: str | None, directory: str, code: str | None, split: bool, catalog: str) -> None:
+    """Create a new migration project folder - or projects for an existing folder of client code."""
+    if code:
+        from . import discover
+
+        info = _guard(discover.inspect, code)
+        det = info.detection
+        chosen = source or det.source
+        click.echo(f"{info.files} code files in {info.path}")
+        click.echo(f"Source system: {SOURCES[chosen].analyzer_tech}"
+                   + ("" if source else f" (detected, {det.confidence} confidence: {det.reason})"))
+        if not source and det.confidence == "low":
+            _fail("Couldn't tell the source system for sure - re-run with --source <system>")
+        if info.databases:
+            click.echo("Databases: " + ", ".join(f"{n} ({c} files)" for n, _, c in info.databases))
+        made = _guard(discover.create_projects_for_code, info, directory, name, chosen, split, catalog)
+        for p in made:
+            _ok(f"Created {p}  (reads {discover.load_config(p / 'project.yml').input_dir})")
+        click.echo(f"  Next: cd {made[0]}  then  wishbridge run")
+        return
+    if not source:
+        _fail("Give --source <system>, or --code <folder> to detect it")
     root = Path(directory) / name
     if (root / "project.yml").exists():
         _fail(f"{root / 'project.yml'} already exists")

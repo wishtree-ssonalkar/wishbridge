@@ -101,7 +101,12 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
 - **Start it:** double-click `Start WishBridge.cmd` in the WishBridge folder (right-click → *Send to → Desktop*
   to make a desktop shortcut), or run `wishbridge ui`. It opens at http://localhost:8501 and runs only on
   your computer; close the black window to stop it.
-- **Sidebar:** *Create new* makes a project (name, source system, folder); *Open existing* opens one.
+- **Sidebar:** *Open a folder* takes either a WishBridge project or **any folder of client code** — a Git
+  repository, a Visual Studio database project, an export. For client code the app detects the source system
+  (from `.sqlproj`, `.dtsx`, Informatica XML, or the SQL keywords), finds separate databases inside it (e.g.
+  TenantDB, AuditDB) and offers to create one project per database in `C:\migrations`. The client's folder is
+  only read, never written to. *Create new* makes an empty project to upload code into.
+  Same from the command line: `wishbridge init acme --code C:\client-repo --dir C:\migrations`.
 - **1 · Settings:** the source system — the converter is then chosen automatically (leave it on *Automatic*: it
   picks the right LakeBridge converter and retries files it can't convert with the other one) — then the
   **Databricks workspace**: pick the saved login for the

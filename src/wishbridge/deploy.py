@@ -8,6 +8,7 @@ so validation does not change data. Re-running keeps objects that already exist;
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from .config import ProjectConfig, looks_like_prod
@@ -85,6 +86,11 @@ def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool =
     for f in convert["files"]:
         if f.get("kind", "sql") != "sql":
             files.append(_upload(wh, cfg, f))
+            continue
+        if not f.get("final") or not Path(f["final"]).is_file():
+            files.append({"file": f["file"], "statements": 1, "passed": 0, "ok": False, "results": [
+                {"n": 1, "kind": "file", "action": "skip", "ok": False,
+                 "error": "Not converted - nothing to deploy (see the convert results)"}]})
             continue
         sql = open(f["final"], encoding="utf-8-sig").read()
         results = []

@@ -35,13 +35,24 @@ def _fail(command: str, out: str) -> LakeBridgeError:
 
 def run(cfg: ProjectConfig, *args: str, strict: bool = True) -> str:
     """Run a lakebridge command. strict=False tolerates per-file ERROR lines (the caller checks the output)."""
-    env = {**os.environ, "DATABRICKS_CONFIG_PROFILE": cfg.profile}
+    # UTF-8 mode: on Windows LakeBridge otherwise writes files in the ANSI code page and crashes on characters such
+    # as non-breaking or em spaces, which real client code contains (it then stops converting the remaining files).
+    env = {**os.environ, "DATABRICKS_CONFIG_PROFILE": cfg.profile, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
     cmd = [_databricks_cli(), "labs", "lakebridge", *args]
     proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     out = _ANSI.sub("", (proc.stdout or "") + (proc.stderr or ""))
     if strict and (proc.returncode != 0 or re.search(r"^(\d\d:\d\d:\d\d\s+)?ERROR\b|^Error:", out, re.MULTILINE)):
         raise _fail(args[0], out)
     return out
+
+
+_FATAL = re.compile(r"^(?:\d\d:\d\d:\d\d\s+)?ERROR\s+\[[^\]]*\]\s*(.+)$", re.MULTILINE)
+
+
+def fatal_error(output: str) -> str:
+    """The first ERROR line LakeBridge printed (it can stop part-way through the files after one), or ''."""
+    m = _FATAL.search(output or "")
+    return m.group(1).strip()[:300] if m else ""
 
 
 def transpiler_config_path(transpiler: str) -> Path:

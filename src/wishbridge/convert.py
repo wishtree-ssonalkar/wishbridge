@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import lakebridge
-from .config import ProjectConfig, fallback_converter
+from .config import ETL_SOURCES, ProjectConfig, fallback_converter
 from .rules import ERROR, INFO, WARNING, Finding, apply_rules, detect, dropped_statement_check
 from .state import save_step
 
@@ -131,6 +131,28 @@ def choose_best_converter(cfg: ProjectConfig, raw_dir: Path, tnotes: dict[str, l
     return used
 
 
+SQL_SUFFIXES = {".sql", ".ddl", ".prc", ".pls", ".pks", ".pkb", ".bteq", ".btq"}
+
+
+def not_converted_entries(cfg: ProjectConfig, produced: set[Path], crash: str) -> list[dict[str, Any]]:
+    """Entries for SQL source files the converter produced no output for (e.g. it stopped part-way)."""
+    if cfg.source.key in ETL_SOURCES or not cfg.input_dir.exists():
+        return []  # ETL exports map to differently named notebooks
+    reason = f" It stopped with: {crash}" if crash else ""
+    entries = []
+    for p in sorted(cfg.input_dir.rglob("*")):
+        rel = p.relative_to(cfg.input_dir)
+        if not p.is_file() or p.suffix.lower() not in SQL_SUFFIXES or rel in produced:
+            continue
+        finding = Finding("not-converted", ERROR, 1,
+                          "The converter produced no output for this file." + reason +
+                          " Re-run convert; if it persists, convert this file by hand in overrides/.")
+        entries.append({"file": rel.as_posix(), "kind": "sql", "converter": cfg.transpiler, "input": str(p),
+                        "converted": "", "final": "", "manual_override": False, "status": "needs-fix",
+                        "fixed": 0, "findings": [finding.to_dict()]})
+    return entries
+
+
 def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any]:
     use_ai = cfg.ai_enabled if use_ai is None else use_ai
     if use_ai:
@@ -147,7 +169,8 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
     if error_log.exists():
         error_log.unlink()
 
-    lakebridge.transpile(cfg, raw_dir, error_log)
+    converter_output = lakebridge.transpile(cfg, raw_dir, error_log)
+    crash = lakebridge.fatal_error(converter_output)
     tnotes = _transpile_notes(error_log)
     converters = choose_best_converter(cfg, raw_dir, tnotes)
 
@@ -204,6 +227,10 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
                 out.with_suffix(out.suffix + ".notes.md").write_text(s.notes + "\n", encoding="utf-8")
                 entry["ai"]["file"] = str(out)
         files.append(entry)
+
+    # Never lose a file silently: every SQL source file must come out of the converter (or be in overrides/).
+    files += not_converted_entries(cfg, set(converted) | set(extra), crash)
+    files.sort(key=lambda f: f["file"])
 
     summary = {
         "files": len(files),

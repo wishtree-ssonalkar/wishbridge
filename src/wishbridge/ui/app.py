@@ -6,10 +6,12 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import yaml
 import streamlit as st
 
 from wishbridge import __version__
 from wishbridge.config import CONVERTER_DIALECTS, SOURCES, ConfigError, converter_summary, load_config
+from wishbridge import discover
 from wishbridge import source_db as sd
 from wishbridge.dbx import SqlError, Warehouse
 from wishbridge.lakebridge import LakeBridgeError
@@ -42,16 +44,32 @@ def project_ok() -> bool:
 
 with st.sidebar:
     st.markdown(f"### 🌉 Wishtree WishBridge\nMigration to Databricks · v{__version__}")
-    mode = st.radio("Project", ["Open existing", "Create new"], horizontal=True, label_visibility="collapsed")
-    if mode == "Open existing":
-        folder = st.text_input("Project folder", value=ss.project, placeholder=r"C:\migrations\acme-dw")
-        if st.button("Open project", width="stretch"):
+    mode = st.radio("Project", ["Open a folder", "Create new"], horizontal=True, label_visibility="collapsed")
+    if mode == "Open a folder":
+        folder = st.text_input("Project or client code folder", value=ss.project,
+                               placeholder=r"C:\migrations\acme-dw  or  C:\client-repo",
+                               help="A WishBridge project opens directly. Any other folder of SQL/ETL code (a repository, "
+                                    "a Visual Studio database project, an export) gets a project created for it.")
+        if st.button("Open", width="stretch"):
             if h.project_file(folder).exists():
                 ss.project = str(Path(folder).expanduser().resolve())
                 ss.workspace = None
+                ss.pop("code_info", None)
                 st.rerun()
             else:
-                st.error("No project.yml in that folder.")
+                try:
+                    with st.spinner("Looking at the code..."):
+                        ss.code_info = discover.inspect(folder)
+                    ss.project = ""
+                    st.rerun()
+                except (ValueError, OSError) as e:
+                    st.error(str(e))
+        if ss.get("created_projects"):
+            st.caption("Projects created for the client code:")
+            for p in ss.created_projects:
+                if st.button(f"📂 {Path(p).name}", key=f"open-{p}", width="stretch"):
+                    ss.project, ss.workspace = p, None
+                    st.rerun()
     else:
         with st.form("new-project"):
             name = st.text_input("Project name", placeholder="acme-dw")
@@ -72,19 +90,64 @@ with st.sidebar:
 st.title("Wishtree WishBridge")
 st.caption("Assess, convert, deploy, load and reconcile legacy SQL and ETL on Databricks — built on Databricks Labs LakeBridge.")
 
+info = ss.get("code_info")
+if info and not project_ok():
+    # A folder of client code (no project.yml): offer to create WishBridge project(s) that read it in place.
+    det = info.detection
+    st.subheader("Create a project for this code")
+    st.markdown(f"`{info.path}` is client code, not a WishBridge project yet: **{info.files} code files** "
+                f"({info.sql_files} SQL). WishBridge only **reads** this folder; the project and everything it produces "
+                f"go in a separate folder.")
+    (st.success if det.confidence == "high" else st.info if det.confidence == "medium" else st.warning)(
+        f"Detected source system: **{SOURCES[det.source].analyzer_tech}** ({det.confidence} confidence) - {det.reason}")
+    with st.form("code-project"):
+        c1, c2 = st.columns(2)
+        src_keys = list(SOURCES)
+        source = c1.selectbox("Source system", src_keys, index=src_keys.index(det.source),
+                              format_func=lambda k: f"{SOURCES[k].analyzer_tech} ({k})")
+        name = c2.text_input("Project name", value=discover.suggested_name(info.path))
+        c1, c2 = st.columns(2)
+        parent = c1.text_input("Create projects in", value=r"C:\migrations")
+        catalog = c2.text_input("Databricks catalog", value="main",
+                                help="Newer workspaces use `workspace`; you can change it later in Settings.")
+        split = False
+        if info.databases:
+            dbs = ", ".join(f"{n} ({c} files)" for n, _, c in info.databases)
+            st.markdown(f"The code holds **{len(info.databases)} databases**: {dbs}.")
+            split = st.radio("Projects", [True, False], horizontal=True,
+                             format_func=lambda s: "One project per database (recommended)" if s else "One project for everything")
+        if st.form_submit_button("Create project" + ("s" if info.databases and split else ""), type="primary"):
+            try:
+                made = discover.create_projects_for_code(info, parent, name, source, split, catalog.strip() or "main")
+            except (ValueError, OSError, ConfigError) as e:
+                st.error(str(e))
+            else:
+                ss.created_projects = [str(p) for p in made]
+                ss.project, ss.workspace = str(made[0]), None
+                ss.pop("code_info", None)
+                st.rerun()
+    if st.button("Cancel"):
+        ss.pop("code_info", None)
+        st.rerun()
+    st.stop()
+
 if not project_ok():
-    st.info("Open a project folder or create a new one in the sidebar to begin.")
+    st.info("Open a project folder - or any folder of client code - or create a new project in the sidebar to begin.")
     st.markdown(
         "**How it works:** 1. create a project · 2. fill in the settings · 3. upload the legacy code · "
         "4. run the steps · 5. review the results and fix what is left · 6. share the report."
     )
     st.stop()
 
-raw = h.read_raw(ss.project)
 try:
+    raw = h.read_raw(ss.project)
+    if not isinstance(raw, dict):
+        raise ConfigError("the file does not contain WishBridge settings")
     cfg = load_config(h.project_file(ss.project))
-except ConfigError as e:
-    st.error(f"project.yml has a problem: {e}")
+except (ConfigError, yaml.YAMLError, KeyError, TypeError, ValueError) as e:
+    st.error(f"This project's settings file can't be read: {str(e).splitlines()[0]}")
+    st.markdown(f"Open `{h.project_file(ss.project)}` in a text editor and correct it, or open the client's code folder "
+                "instead - the app can create a fresh project for it.")
     st.stop()
 
 tab_settings, tab_code, tab_run, tab_results, tab_fixes, tab_env = st.tabs(
