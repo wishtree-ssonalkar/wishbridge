@@ -161,6 +161,53 @@ def _fix_empty_create(sql: str) -> tuple[str, list[Finding]]:
                          "Commented out an unconverted CREATE statement that would fail to run", True) for h in hits]
 
 
+# `ALTER TABLE t /* CONSTRAINT [FK] FOREIGN KEY (...) REFERENCES [dbo].[B] (...) -- FIXME: <note> */;`
+# Morph comments out foreign keys added with ALTER TABLE, leaving a statement that cannot run.
+_EMPTY_ALTER = re.compile(r"\bALTER\s+TABLE\s+([^\s/;]+)\s*/\*(.*?)\*/\s*;", I | S)
+_FK_BODY = re.compile(r"CONSTRAINT\s+(\S+)\s+FOREIGN\s+KEY\s*(\([^)]*\))\s*REFERENCES\s+(\S+)\s*(\([^)]*\))(.*)", I | S)
+
+
+def _fix_empty_alter(sql: str, schema_map: dict[str, str]) -> tuple[str, list[Finding]]:
+    findings: list[Finding] = []
+
+    def ident(s: str) -> str:
+        s = re.sub(r"\[([^\]]+)\]", r"`\1`", s)
+        for src, tgt in schema_map.items():
+            s = re.sub(rf"^(?:`{re.escape(src)}`|{re.escape(src)})\.", f"{tgt}.", s, flags=I)
+        return s
+
+    def repl(m: re.Match) -> str:
+        body, note = m.group(2), ""
+        if "-- FIXME:" in body:
+            body, note = body.split("-- FIXME:", 1)
+            note = " ".join(note.split())
+        fk = _FK_BODY.search(" ".join(body.split()))
+        if not fk:
+            text = " ".join(m.group(2).split())
+            findings.append(Finding("empty-alter", WARNING, 0, f"Commented out an unconverted ALTER TABLE: {note or text[:80]}"))
+            return f"-- [WishBridge] not converted - rewrite manually: ALTER TABLE {m.group(1)} {text}"
+        name, cols, ref, ref_cols, rest = fk.groups()
+        action = " ".join(rest.split())
+        msg = (f"Foreign key {ident(name)} is written out as a commented Databricks statement: Unity Catalog foreign keys "
+               "are informational only (not enforced)" + (f" and '{action}' is not supported - handle it in the ETL" if action else "")
+               + ". Run it after the referenced table exists if you want the relationship documented."
+               + (f" ({note})" if note else ""))
+        findings.append(Finding("foreign-key", WARNING, 0, msg))
+        return (f"-- [WishBridge] informational foreign key (not enforced{'; ' + action + ' dropped' if action else ''}):\n"
+                f"-- ALTER TABLE {m.group(1)} ADD CONSTRAINT {ident(name)} FOREIGN KEY {ident(cols)} "
+                f"REFERENCES {ident(ref)} {ident(ref_cols)};")
+
+    out, pos = [], 0
+    for m in _EMPTY_ALTER.finditer(sql):
+        before = len(findings)
+        out += [sql[pos:m.start()], repl(m)]
+        for f in findings[before:]:
+            object.__setattr__(f, "line", line_of(sql, m.start()))
+        pos = m.end()
+    out.append(sql[pos:])
+    return "".join(out), findings
+
+
 # --------------------------------------------------------------- detectors
 
 _DETECTORS: list[Detector] = [
@@ -418,6 +465,8 @@ def apply_rules(sql: str, schema_map: dict[str, str] | None = None, dialect: str
     for fixer in (_fix_dangling_comment, _fix_empty_create, _fix_explicit_null):
         sql, f = fixer(sql)
         findings += f
+    sql, f = _fix_empty_alter(sql, schema_map or {})
+    findings += f
     sql = re.sub(r"\n{3,}", "\n\n", sql)
     findings += detect(sql, dialect)
     return sql, sorted(findings, key=lambda x: (x.line, x.rule))

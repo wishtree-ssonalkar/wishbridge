@@ -103,3 +103,17 @@ def test_other_sources_are_copied_unchanged(tmp_path):
     p.write_text(f"source: oracle\ninput: '{code.as_posix()}'\n", encoding="utf-8")
     s = staged(load_config(p))
     assert (s.input_dir / "t.sql").read_text(encoding="utf-8") == "SELECT 1 WITH CHECK ADD CONSTRAINT x;\n"
+
+
+def test_commented_out_foreign_key_becomes_a_runnable_note():
+    from wishbridge.rules import apply_rules
+
+    out = ("ALTER\n    TABLE workspace.prm.`UserSkillMappings`\n/*\n            CONSTRAINT [FK_A]\n"
+           "    FOREIGN KEY ([SkillId]) REFERENCES [dbo].[SkillMaster] ([SkillId]) ON DELETE CASCADE\n"
+           "            -- FIXME: TSQL: The transpiler cannot currently convert table constraints added with ALTER TABLE\n        */;\n")
+    fixed, findings = apply_rules(out, {"dbo": "workspace.prm"}, "mssql")
+    assert "-- ALTER TABLE workspace.prm.`UserSkillMappings` ADD CONSTRAINT `FK_A` FOREIGN KEY (`SkillId`) " \
+           "REFERENCES workspace.prm.`SkillMaster` (`SkillId`);" in fixed
+    assert all(l.lstrip().startswith("--") for l in fixed.strip().splitlines())
+    fk = [f for f in findings if f.rule == "foreign-key"]
+    assert len(fk) == 1 and fk[0].severity == "warning" and fk[0].line == 1 and "ON DELETE CASCADE" in fk[0].message
