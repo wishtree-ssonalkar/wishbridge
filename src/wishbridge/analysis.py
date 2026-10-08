@@ -8,6 +8,7 @@ from typing import Any
 import openpyxl
 
 from . import lakebridge
+from .staging import staged
 from .config import ProjectConfig
 from .state import save_step
 
@@ -68,7 +69,7 @@ def run_analyze(cfg: ProjectConfig) -> dict[str, Any]:
     if not cfg.input_dir.exists() or not any(cfg.input_dir.rglob("*")):
         raise FileNotFoundError(f"No input files in {cfg.input_dir}")
     report = cfg.out("analysis", "analysis.xlsx")
-    lakebridge.analyze(cfg, report)
+    lakebridge.analyze(staged(cfg), report)  # code files only: no bin/obj or project files
     if not report.exists():
         # Some analyzer versions drop the extension.
         bare = report.with_suffix("")

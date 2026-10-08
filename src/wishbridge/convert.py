@@ -11,6 +11,7 @@ from typing import Any
 from . import lakebridge
 from .config import ETL_SOURCES, ProjectConfig, fallback_converter
 from .rules import ERROR, INFO, WARNING, Finding, apply_rules, detect, dropped_statement_check
+from .staging import prepared_notes, source_files, staged
 from .state import save_step
 
 # One TranspileError(...) record; messages can span several lines.
@@ -77,13 +78,29 @@ def check_sql(cfg: ProjectConfig, rel: Path, text: str, notes: list[str],
     return fixed, findings
 
 
-def _score(findings: list[Finding]) -> tuple[int, int]:
-    """Lower is better: open errors first, then open warnings."""
+_ALSO_LINES = re.compile(r"\(also lines? ([\d, ]+)\)\s*$")
+
+# Output that is structurally broken (or silently loses statements) is worse than output that honestly
+# says "cannot convert" (unconverted-file: the source is passed through unchanged with a note).
+DAMAGE_RULES = frozenset({"unbalanced-parentheses", "dropped-statements"})
+
+
+def _occurrences(f: Finding) -> int:
+    """A finding reported once can stand for several lines ('also lines 7, 9') - count them all."""
+    m = _ALSO_LINES.search(f.message)
+    return 1 + (len(re.findall(r"\d+", m.group(1))) if m else 0)
+
+
+def _score(findings: list[Finding]) -> tuple[int, int, bool]:
+    """Open errors, open warnings (each occurrence counted) and whether the output is structurally damaged."""
     open_ = [f for f in findings if not f.fixed]
-    return sum(f.severity == ERROR for f in open_), sum(f.severity == WARNING for f in open_)
+    return (sum(_occurrences(f) for f in open_ if f.severity == ERROR),
+            sum(_occurrences(f) for f in open_ if f.severity == WARNING),
+            any(f.rule in DAMAGE_RULES for f in open_))
 
 
 def choose_best_converter(cfg: ProjectConfig, raw_dir: Path, tnotes: dict[str, list[str]]) -> dict[str, str]:
+    # cfg.input_dir is the staged (tidied) copy of the code the main converter was given.
     """Automatic converter mode: for each SQL file the main converter left errors in, also try the other
     LakeBridge converter (when it supports this source) and keep whichever result has fewer open errors.
 
@@ -92,7 +109,7 @@ def choose_best_converter(cfg: ProjectConfig, raw_dir: Path, tnotes: dict[str, l
     alternative = fallback_converter(cfg)
     if not alternative:
         return used
-    primary: dict[Path, tuple[int, int]] = {}
+    primary: dict[Path, tuple[int, int, bool]] = {}
     for p in raw_dir.rglob("*"):
         rel = p.relative_to(raw_dir)
         text = p.read_text(encoding="utf-8-sig", errors="replace") if p.is_file() else ""
@@ -124,14 +141,13 @@ def choose_best_converter(cfg: ProjectConfig, raw_dir: Path, tnotes: dict[str, l
         alt_score = _score(check_sql(cfg, rel, alt_text, alt_notes.get(rel.name, []), cfg.input_dir / rel)[1])
         # Switch only for strictly fewer errors: the fallback is there to rescue files the main converter
         # failed on, not to trade warnings (a converter that writes fewer notes is not necessarily better).
-        if alt_score[0] < score[0]:
+        # Never trade an honest "cannot convert" for output with broken syntax or dropped statements.
+        damaged = alt_score[2] and not score[2]  # never trade honest output for broken output
+        if alt_score[0] < score[0] and not damaged:
             shutil.copy2(alt_file, raw_dir / rel)
             tnotes[rel.name] = alt_notes.get(rel.name, [])
             used[rel.as_posix()] = alternative
     return used
-
-
-SQL_SUFFIXES = {".sql", ".ddl", ".prc", ".pls", ".pks", ".pkb", ".bteq", ".btq"}
 
 
 def not_converted_entries(cfg: ProjectConfig, produced: set[Path], crash: str) -> list[dict[str, Any]]:
@@ -140,9 +156,9 @@ def not_converted_entries(cfg: ProjectConfig, produced: set[Path], crash: str) -
         return []  # ETL exports map to differently named notebooks
     reason = f" It stopped with: {crash}" if crash else ""
     entries = []
-    for p in sorted(cfg.input_dir.rglob("*")):
-        rel = p.relative_to(cfg.input_dir)
-        if not p.is_file() or p.suffix.lower() not in SQL_SUFFIXES or rel in produced:
+    for rel in source_files(cfg):  # the same files LakeBridge was given (no build folders)
+        p = cfg.input_dir / rel
+        if rel in produced:
             continue
         finding = Finding("not-converted", ERROR, 1,
                           "The converter produced no output for this file." + reason +
@@ -169,10 +185,12 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
     if error_log.exists():
         error_log.unlink()
 
-    converter_output = lakebridge.transpile(cfg, raw_dir, error_log)
+    scfg = staged(cfg)  # code files only, SQL Server source tidied (see staging.py)
+    converter_output = lakebridge.transpile(scfg, raw_dir, error_log)
     crash = lakebridge.fatal_error(converter_output)
     tnotes = _transpile_notes(error_log)
-    converters = choose_best_converter(cfg, raw_dir, tnotes)
+    converters = choose_best_converter(scfg, raw_dir, tnotes)
+    prep = prepared_notes(cfg)
 
     files: list[dict[str, Any]] = []
     converted = sorted(p.relative_to(raw_dir) for p in raw_dir.rglob("*") if p.is_file())
@@ -184,7 +202,8 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
         text = src.read_text(encoding="utf-8-sig", errors="replace") if src.exists() else ""
         kind = file_kind(rel, text)
         if kind == "sql":
-            fixed, findings = check_sql(cfg, rel, text, tnotes.get(rel.name, []), cfg.input_dir / rel if src.exists() else None)
+            fixed, findings = check_sql(cfg, rel, text, tnotes.get(rel.name, []), scfg.input_dir / rel if src.exists() else None)
+            findings += [Finding(n["rule"], n["severity"], 1, n["message"]) for n in prep.get(rel.as_posix(), [])]
         else:
             fixed, findings = text, [Finding("notebook", INFO, 1, NOTEBOOK_NOTES[kind])]
 
