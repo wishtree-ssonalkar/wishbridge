@@ -80,6 +80,7 @@ class ProjectConfig:
     output_dir: Path
     target_technology: str = ""  # BladeBridge ETL sources: SPARKSQL or PYSPARK
     auto_converter: bool = True  # transpiler "auto": also try the other converter on files with errors
+    source_db: dict = field(default_factory=dict)  # legacy database connection settings (no password)
     overrides_dir: Path | None = None  # hand-fixed files that replace converted output
     profile: str = "DEFAULT"
     host: str = ""  # workspace this project belongs to; WishBridge refuses to run against another
@@ -167,6 +168,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         source=source,
         transpiler=transpiler,
         auto_converter=auto_converter,
+        source_db=dict(raw.get("source_db") or {}),
         target_technology=str(raw.get("target_technology") or ("SPARKSQL" if source.key in ETL_SOURCES else "")).upper(),
         input_dir=(base / raw.get("input", "input")).resolve(),
         output_dir=(base / raw.get("output", "output")).resolve(),

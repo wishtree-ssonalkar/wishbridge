@@ -238,15 +238,36 @@ deploy again. Re-running is safe; add `--recreate` to rebuild objects that alrea
 
 ### C7. Copy the data
 
-First make the old database visible in Databricks. Two options:
+Code alone can't copy data: WishBridge needs to know **where the old database is and how to log in**.
+Copying data is optional — skip this step and WishBridge still converts and deploys the code.
 
-- **Lakehouse Federation (recommended):** a Databricks admin creates a *connection* to the old database and a
-  *foreign catalog* for it (Catalog Explorer → External data → Connections). In `project.yml` set
-  `data.method: federation` and `data.source_catalog` to that catalog's name.
-- **Files:** export each table to Parquet/CSV, upload into a Unity Catalog volume with one folder per table,
-  and set `data.method: files`, `data.files_root: /Volumes/<catalog>/<schema>/<volume>`.
+**Connect the source database (recommended).** In the app: *Settings → Source database*. Choose the database
+type, enter the server, port, database (or Oracle service name) and a read-only user and password, then press
+**Create connection**. WishBridge stores the password in Databricks secrets (never in `project.yml` or on your
+computer), creates a Lakehouse Federation connection and a catalog `wb_<project>_source` that shows the old
+database inside Databricks, and fills in the data-copy settings. Press **Test connection** — Databricks reads the
+list of schemas — then pick a schema, **List tables**, tick the tables and **Add** them to the copy list.
 
-Then list the tables in `project.yml`:
+From the command line, put the details in `project.yml` and run `wishbridge connect` (it asks for the password,
+or reads `WISHBRIDGE_SOURCE_PASSWORD`):
+
+```yaml
+source_db: {type: sqlserver, host: sqlprod01.client.com, port: 1433, database: SalesDB, user: migration_reader}
+```
+
+Types: `sqlserver`, `sqldw` (Synapse), `oracle` (`database` = service name), `snowflake` (also
+`options: {sfWarehouse: ETL_WH}`), `teradata`, `redshift`, `postgresql`, `mysql`.
+`wishbridge connect --test` re-tests, `--remove` deletes the connection, catalog and stored password.
+
+Creating a connection needs the Databricks *CREATE CONNECTION* privilege. **Databricks must be able to reach the
+database over the network**: a cloud database usually needs an allow-list entry, an on-premises one a VPN or
+private link — ask IT early. *Test connection* tells you within 3 minutes if it can't.
+
+**No network route? Use files.** Export each table to Parquet/CSV, upload into a Unity Catalog volume with one
+folder per table, and set *Method* to `files` and *Files root* to `/Volumes/<catalog>/<schema>/<volume>`. This is
+also the route for BigQuery and Netezza, which Lakehouse Federation can't reach with a user and password.
+
+Then list the tables (or pick them in the app as above):
 
 ```yaml
 data:

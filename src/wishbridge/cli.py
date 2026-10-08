@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -157,6 +158,52 @@ def load(config_path: str, execute: bool, allow_prod: bool) -> None:
                 click.secho(f"  {t['target']}: {t['error']}", fg="red")
     else:
         _ok(f"Plan for {s['tables']} tables written to {res['plan_file']} (re-run with --execute)")
+
+
+@main.command()
+@config_option
+@click.option("--test", "test_only", is_flag=True, help="Only test the existing connection.")
+@click.option("--remove", is_flag=True, help="Remove the connection, catalog and stored password.")
+def connect(config_path: str, test_only: bool, remove: bool) -> None:
+    """Connect the legacy source database to Databricks, so data can be copied.
+
+    Reads type, host, port, database and user from the source_db section of project.yml and asks for the
+    password, which is stored only in Databricks secrets.
+    """
+    from . import source_db as sd
+    from .dbx import Warehouse
+    from .ui.helpers import read_raw, save_raw
+
+    cfg = _load(config_path)
+    folder = cfg.path.parent
+    raw = read_raw(folder)
+    s = cfg.source_db
+    if remove:
+        _guard(sd.remove_connection, cfg)
+        raw.pop("source_db", None)
+        raw.setdefault("data", {})["source_catalog"] = ""
+        save_raw(folder, raw)
+        _ok("Removed the connection, catalog and stored password from Databricks")
+        return
+    if not test_only:
+        if not s.get("type") or not s.get("host"):
+            _fail("Add a source_db section to project.yml first, e.g.\n"
+                  "source_db: {type: sqlserver, host: sqlprod01.client.com, port: 1433, database: SalesDB, user: reader}\n"
+                  f"Types: {', '.join(sd.DB_TYPES)}")
+        # Non-interactive use (scripts, CI): WISHBRIDGE_SOURCE_PASSWORD; otherwise ask without echoing it.
+        password = os.environ.get("WISHBRIDGE_SOURCE_PASSWORD") or click.prompt(
+            f"Password for {s.get('user')}@{s.get('host')}", hide_input=True)
+        made = _guard(sd.create_connection, cfg, s, password)
+        raw["source_db"] = {**s, "connection": made["connection"], "catalog": made["catalog"]}
+        raw["data"] = {**(raw.get("data") or {}), "method": "federation", "source_catalog": made["catalog"]}
+        save_raw(folder, raw)
+        _ok(f"Created connection {made['connection']} and catalog {made['catalog']} (password in Databricks secrets)")
+        s = raw["source_db"]
+    if not s.get("catalog"):
+        _fail("No connection yet - run `wishbridge connect` first")
+    schemas = _guard(sd.test_connection, s["catalog"], _guard(Warehouse, cfg))
+    _ok(f"Databricks reached the database: {len(schemas)} schema(s): {', '.join(schemas[:15])}"
+        + (" ..." if len(schemas) > 15 else ""))
 
 
 @main.command()

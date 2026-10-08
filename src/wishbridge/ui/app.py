@@ -10,7 +10,8 @@ import streamlit as st
 
 from wishbridge import __version__
 from wishbridge.config import CONVERTER_DIALECTS, SOURCES, ConfigError, converter_summary, load_config
-from wishbridge.dbx import SqlError
+from wishbridge import source_db as sd
+from wishbridge.dbx import SqlError, Warehouse
 from wishbridge.lakebridge import LakeBridgeError
 from wishbridge.state import load_state
 from wishbridge.ui import helpers as h
@@ -199,6 +200,101 @@ with tab_settings:
     map_df = st.data_editor(pd.DataFrame(h.schema_map_rows(raw) or [{"source_schema": "", "target": ""}]),
                             num_rows="dynamic", width="stretch", key="schema_map",
                             column_config={"source_schema": "Source schema", "target": "Target catalog.schema"})
+
+    # --- Source database: where the data lives. Optional - only needed to copy the data.
+    st.markdown("**Source database** — optional, only needed to copy the data. WishBridge creates a Lakehouse "
+                "Federation connection in Databricks; the password goes into Databricks secrets, never into project.yml.")
+    sdb = raw.get("source_db") or {}
+    default_type = sd.DEFAULT_FOR_SOURCE.get(cfg.source.key, "sqlserver")
+    with st.container(border=True):
+        if ss.get("sdb_msg"):
+            kind, msg = ss.pop("sdb_msg")
+            getattr(st, kind)(msg)
+        if default_type is None and not sdb:
+            st.info(sd.NOT_SUPPORTED_HINT)
+        type_keys = list(sd.DB_TYPES)
+        cur_type = sdb.get("type") or default_type or "sqlserver"
+        d1, d2, d3 = st.columns([2, 3, 1])
+        db_type = d1.selectbox("Database type", type_keys, index=type_keys.index(cur_type),
+                               format_func=lambda k: sd.DB_TYPES[k].label, key="sdb_type")
+        dbt = sd.DB_TYPES[db_type]
+        host = d2.text_input("Server (host)", value=sdb.get("host", ""), placeholder="sqlprod01.client.com", key="sdb_host")
+        port = d3.number_input("Port", value=int(sdb.get("port") or dbt.port), step=1, key="sdb_port")
+        d1, d2, d3 = st.columns(3)
+        database = d1.text_input(dbt.catalog_label, value=sdb.get("database", ""), key="sdb_db",
+                                 disabled=dbt.catalog_option is None,
+                                 help=None if dbt.catalog_option else f"Not needed for {dbt.label}: the whole server is exposed.")
+        user = d2.text_input("User (read-only is enough)", value=sdb.get("user", ""), key="sdb_user")
+        password = d3.text_input("Password", type="password", key="sdb_pw",
+                                 help="Sent straight to Databricks secrets; not saved anywhere else.")
+        extra = {opt: st.text_input(label, value=(sdb.get("options") or {}).get(opt, ""), key=f"sdb_{opt}")
+                 for opt, label in dbt.extra}
+        connected = bool(sdb.get("catalog"))
+        b1, b2, b3 = st.columns(3)
+        if b1.button("🔌 Re-create connection" if connected else "🔌 Create connection", width="stretch"):
+            settings = {"type": db_type, "host": host.strip(), "port": int(port), "database": database.strip(),
+                        "user": user.strip(), "options": extra}
+            with st.spinner("Creating the connection in Databricks..."):
+                try:
+                    made = sd.create_connection(cfg, settings, password, Warehouse(cfg))
+                except (SqlError, ValueError) as e:
+                    st.error(f"Connection not created: {e}")
+                else:
+                    new = dict(raw)
+                    new["source_db"] = {**settings, "connection": made["connection"], "catalog": made["catalog"]}
+                    new["data"] = {**data, "method": "federation", "source_catalog": made["catalog"]}
+                    h.save_raw(ss.project, new)
+                    ss.pop("source_schemas", None)
+                    ss.pop("sdb_pw", None)  # forget the typed password
+                    ss.sdb_msg = ("success", f"Created connection `{made['connection']}` and catalog `{made['catalog']}`. "
+                                             "Press *Test connection* to check Databricks can reach the database.")
+                    st.rerun()
+        if b2.button("🔎 Test connection", width="stretch", disabled=not connected):
+            with st.spinner("Asking Databricks to read the database's schema list..."):
+                try:
+                    ss.source_schemas = sd.test_connection(sdb["catalog"], Warehouse(cfg))
+                    st.success(f"Databricks reached the database: {len(ss.source_schemas)} schema(s) found.")
+                except (SqlError, ValueError) as e:
+                    ss.pop("source_schemas", None)
+                    st.error(f"Databricks could not read the database: {e}")
+                    st.caption("Check the server, port, database and login, and that the database accepts connections "
+                               "from Databricks (firewall allow-list, VPN or private link - usually an IT change).")
+        if b3.button("🗑 Remove connection", width="stretch", disabled=not connected):
+            try:
+                sd.remove_connection(cfg, Warehouse(cfg))
+            except (SqlError, ValueError) as e:
+                st.error(f"Could not remove it: {e}")
+            else:
+                new = dict(raw)
+                new.pop("source_db", None)
+                new["data"] = {**data, "source_catalog": ""}
+                h.save_raw(ss.project, new)
+                ss.pop("source_schemas", None)
+                ss.sdb_msg = ("success", "Connection, catalog and stored password removed from Databricks.")
+                st.rerun()
+        if connected:
+            st.caption(f"Connected through catalog `{sdb['catalog']}` ({sd.DB_TYPES.get(sdb.get('type'), dbt).label} "
+                       f"at {sdb.get('host')}:{sdb.get('port')}).")
+        if ss.get("source_schemas"):
+            p1, p2 = st.columns([1, 2])
+            schema_pick = p1.selectbox("Schema", ss.source_schemas, key="sdb_schema")
+            if p1.button("List tables"):
+                try:
+                    ss.source_tables = {schema_pick: sd.list_tables(sdb["catalog"], schema_pick, Warehouse(cfg))}
+                except (SqlError, ValueError) as e:
+                    st.error(str(e))
+            available = (ss.get("source_tables") or {}).get(schema_pick, [])
+            picked = p2.multiselect("Tables to copy", available, key="sdb_tables",
+                                    placeholder="Press List tables first" if not available else "Choose tables")
+            if picked and p2.button(f"➕ Add {len(picked)} table(s) to the copy list"):
+                current = h.rows_to_tables(h.table_rows(raw))
+                have = {t if isinstance(t, str) else t["source"] for t in current}
+                current += [f"{schema_pick}.{t}" for t in picked if f"{schema_pick}.{t}" not in have]
+                new = dict(raw)
+                new["data"] = {**data, "tables": current}
+                h.save_raw(ss.project, new)
+                ss.sdb_msg = ("success", f"Added {len(picked)} table(s) from {schema_pick}. Targets follow the schema mapping.")
+                st.rerun()
 
     st.markdown("**Data to copy**")
     c1, c2, c3 = st.columns(3)
