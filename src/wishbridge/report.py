@@ -110,6 +110,28 @@ def build_report(cfg: ProjectConfig) -> Path:
     else:
         parts.append('<p class="skip">Not run — <code>wishbridge analyze</code></p>')
 
+    # 1b. Migration fit
+    fit = state.get("fit")
+    if fit:
+        from .fit import CATEGORY_LABELS
+
+        parts.append("<h2>Migration fit: what belongs on Databricks</h2>")
+        parts.append(f'<p><b>{escape(fit["headline"])}</b></p><ul>' +
+                     "".join(f"<li>{escape(x)}</li>" for x in fit["advice"]) + "</ul>")
+        for key, label in (("app_evidence", "Signs of an application database"),
+                           ("warehouse_evidence", "Signs of reporting / warehouse use")):
+            if fit.get(key):
+                parts.append(f'<p class="muted">{label}: ' + "; ".join(escape(x) for x in fit[key]) + "</p>")
+        parts.append('<p class="muted">' + " · ".join(f"{CATEGORY_LABELS[k]}: {v}" for k, v in fit["counts"].items() if v) +
+                     f'. Deploy scope: <code>{escape(cfg.scope)}</code>'
+                     + (" (objects to keep on the source or not needed are not deployed)" if cfg.scope == "recommended" else
+                        " (set <code>scope: recommended</code> to deploy only what belongs on Databricks)") + "</p>")
+        order = list(CATEGORY_LABELS)
+        parts.append(_table(["Object", "Type", "Recommendation", "Why"], [
+            [f'<code>{escape(o["file"])}</code>', escape(o["type"]), escape(CATEGORY_LABELS[o["category"]]),
+             escape("; ".join(o["reasons"]))]
+            for o in sorted(fit["objects"], key=lambda o: (order.index(o["category"]), o["file"]))]))
+
     # 2. Conversion
     parts.append("<h2>2. Code conversion</h2>")
     if c:
@@ -149,6 +171,8 @@ def build_report(cfg: ProjectConfig) -> Path:
             errs = "<br>".join(f'#{x["n"]} {escape(x["error"])}' for x in f["results"] if not x["ok"])
             kept = sum(1 for x in f["results"] if x.get("action") == "exists")
             note = f'<span class="muted">{kept} existing object(s) kept</span>' if kept else ""
+            note = next((f'<span class="muted">{escape(x["note"])}</span>' for x in f["results"]
+                         if x.get("action") == "left-out"), note)
             rows.append([f'<code>{escape(f["file"])}</code>', _pill("ready" if f["ok"] else "failed"),
                          f'{f["passed"]}/{f["statements"]}', errs or note or "—"])
         parts.append(_table(["File", "Result", "Statements OK", "Errors"], rows))

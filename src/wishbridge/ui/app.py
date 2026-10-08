@@ -176,6 +176,12 @@ with tab_settings:
                                   index=conv_options.index(cur_conv) if cur_conv in conv_options else 0)
         st.caption(converter_summary(source) if transpiler == "auto"
                    else "Fixed converter: no second attempt on files it can't convert.")
+        scope_labels = {"all": "Everything", "recommended": "Only what belongs on Databricks (fit check)"}
+        cur_scope = str(raw.get("scope") or "all").lower()
+        scope = st.selectbox("What to deploy", list(scope_labels), format_func=scope_labels.get,
+                             index=list(scope_labels).index(cur_scope) if cur_scope in scope_labels else 0,
+                             help="The fit check (run with Analyze) marks application logic to keep on the source "
+                                  "and objects Databricks does not need. 'Only what belongs' leaves those out of deploy.")
 
     # --- Databricks workspace: which saved login (profile) this project uses
     st.markdown("**Databricks workspace** — the client workspace this project migrates into.")
@@ -401,6 +407,7 @@ with tab_settings:
             new.pop("transpiler", None)  # automatic is the default
         else:
             new["transpiler"] = transpiler
+        new["scope"] = scope
         host = (ws or {}).get("host") or chosen_host or project_host
         new["databricks"] = {**dbx, "profile": profile, "host": host, "warehouse_id": warehouse,
                              "catalog": catalog, "schema": schema}
@@ -481,7 +488,7 @@ with tab_run:
 
         steps = [
             (do_analyze, "Analyze", lambda: run_analyze(cfg),
-             lambda r: f"{len(r['programs'])} files, estimate {r['estimated_hours_baseline']} h"),
+             lambda r: f"{len(r['programs'])} files, estimate {r['estimated_hours_baseline']} h · fit: {r['fit']['verdict']}"),
             (do_convert, "Convert", lambda: run_convert(cfg, use_ai),
              lambda r: f"{r['summary']['ready']} ready, {r['summary']['review']} review, {r['summary']['needs_fix']} need fixes"),
             (do_deploy, "Deploy", lambda: run_deploy(cfg, recreate=recreate),
@@ -520,6 +527,30 @@ with tab_results:
             m[3].metric("Statements deployed", f"{d['summary']['statements_ok']}/{d['summary']['statements']}")
         if r and r.get("mode") == "quick":
             m[4].metric("Tables reconciled", f"{r['summary']['matched']}/{r['summary']['tables']}")
+
+        fit = state.get("fit")
+        if fit:
+            from wishbridge.fit import CATEGORY_LABELS
+
+            st.markdown("#### Migration fit: what belongs on Databricks")
+            (st.warning if fit["verdict"] == "application" else st.info if fit["verdict"] == "mixed" else st.success)(
+                f"**{fit['headline']}**\n\n" + "\n".join(f"- {x}" for x in fit["advice"]))
+            fm = st.columns(len(CATEGORY_LABELS))
+            for col, (k, label) in zip(fm, CATEGORY_LABELS.items()):
+                col.metric(label, fit["counts"].get(k, 0))
+            with st.expander("Why, and every object's recommendation"):
+                for key, label in (("app_evidence", "Signs of an application database"),
+                                   ("warehouse_evidence", "Signs of reporting / warehouse use")):
+                    if fit.get(key):
+                        st.markdown(f"**{label}:** " + "; ".join(fit[key]))
+                show = st.multiselect("Show", list(CATEGORY_LABELS), default=list(CATEGORY_LABELS),
+                                      format_func=CATEGORY_LABELS.get, key="fit_filter")
+                st.dataframe(pd.DataFrame([{
+                    "file": o["file"], "type": o["type"], "recommendation": CATEGORY_LABELS[o["category"]],
+                    "why": "; ".join(o["reasons"])} for o in fit["objects"] if o["category"] in show]),
+                    width="stretch", hide_index=True)
+            if cfg.scope != "recommended":
+                st.caption("To deploy only what belongs on Databricks, set **What to deploy** in Settings.")
 
         if c:
             st.markdown("#### Files")

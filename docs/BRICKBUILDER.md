@@ -52,4 +52,7 @@ the Databricks Partner Portal before you plan dates.
   it auto-fixes mechanical leftovers, catches mis-conversions the transpiler doesn't flag (for example an
   `UPDATE … FROM … JOIN` turned into a `MERGE INTO <alias>`), validates every statement on a SQL warehouse,
   moves the data and proves it matches.
+- WishBridge tells the client **what should move**: its fit check separates reporting / ETL logic (move to
+  Databricks) from application logic (keep with the app, feed the data via Lakehouse Federation, Lakeflow Connect or CDC).
+  LakeBridge converts whatever it is given; this advice avoids migrating a live application's database by mistake.
 - Every run produces a client-ready report with the numbers above. Those same numbers become your case-study metrics.

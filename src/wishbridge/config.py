@@ -98,6 +98,7 @@ class ProjectConfig:
     tables: list[TableMapping] = field(default_factory=list)
     hours_per_file: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_HOURS_PER_FILE))
     hours_per_issue: float = 0.5
+    scope: str = "all"  # all | recommended: deploy leaves out objects the fit check says stay on the source
 
     @property
     def target_schema(self) -> str:
@@ -188,7 +189,10 @@ def load_config(path: str | Path) -> ProjectConfig:
         load_mode=data.get("mode", "append"),
         hours_per_file={**DEFAULT_HOURS_PER_FILE, **(est.get("hours_per_file") or {})},
         hours_per_issue=float(est.get("hours_per_issue", 0.5)),
+        scope=str(raw.get("scope") or "all").lower(),
     )
+    if cfg.scope not in ("all", "recommended"):
+        raise ConfigError("scope must be 'all' or 'recommended'")
     if cfg.data_method not in ("federation", "files"):
         raise ConfigError("data.method must be 'federation' or 'files'")
     if cfg.load_mode not in ("append", "overwrite"):
@@ -209,6 +213,7 @@ source: {source}            # one of: {sources}
 input: input                # put the legacy SQL / ETL files here
 output: output              # everything WishBridge produces goes here
 overrides: overrides        # hand-fixed versions of converted files (same file names) - kept across runs
+scope: all                  # all | recommended: deploy only what belongs on Databricks (see the fit check)
 
 databricks:
   profile: DEFAULT          # profile in ~/.databrickscfg

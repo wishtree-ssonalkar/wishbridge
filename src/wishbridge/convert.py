@@ -11,7 +11,7 @@ from typing import Any
 from . import lakebridge
 from .config import ETL_SOURCES, ProjectConfig, fallback_converter
 from .rules import ERROR, INFO, WARNING, Finding, apply_rules, detect, dropped_statement_check
-from .staging import prepared_notes, source_files, staged
+from .staging import prepared_notes, read_source, source_files, staged
 from .state import save_step
 
 # One TranspileError(...) record; messages can span several lines.
@@ -72,7 +72,7 @@ def check_sql(cfg: ProjectConfig, rel: Path, text: str, notes: list[str],
         added.add(msg)
         findings.append(Finding("transpile-error", ERROR, 1, msg))
     if source_file is not None and source_file.is_file() and source_file.suffix.lower() == ".sql":
-        dropped = dropped_statement_check(source_file.read_text(encoding="utf-8-sig", errors="replace"), text, findings)
+        dropped = dropped_statement_check(read_source(source_file), text, findings)
         if dropped:
             findings.append(dropped)
     return fixed, findings
@@ -211,7 +211,7 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
         override = cfg.overrides_dir / rel if cfg.overrides_dir else None
         manual = override is not None and override.is_file()
         if manual:
-            fixed = override.read_text(encoding="utf-8-sig", errors="replace")
+            fixed = read_source(override)
             kind = file_kind(rel, fixed)
             findings = detect(fixed, cfg.source.key) if kind == "sql" else [Finding("notebook", INFO, 1, NOTEBOOK_NOTES[kind])]
 
@@ -236,7 +236,7 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
             from .ai import suggest_fix
 
             original_path = cfg.input_dir / rel
-            original = original_path.read_text(encoding="utf-8-sig", errors="replace") if original_path.exists() else ""
+            original = read_source(original_path) if original_path.exists() else ""
             s = suggest_fix(cfg.source.analyzer_tech, original, fixed, findings, cfg.ai_model)
             entry["ai"] = {"status": s.status, "notes": s.notes}
             if s.sql:

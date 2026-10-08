@@ -12,7 +12,7 @@ repeatable migration pipeline and fills the gaps between them:
 
 | Step | Command | Powered by | What WishBridge adds |
 |---|---|---|---|
-| 1. Assess | `wishbridge analyze` | LakeBridge Analyzer | Parsed results, effort estimate |
+| 1. Assess | `wishbridge analyze` | LakeBridge Analyzer | Parsed results, effort estimate, **migration fit check**: which objects belong on Databricks (reporting / ETL) and which stay with the application (CRUD, screens), with a verdict for the whole database |
 | 2. Convert | `wishbridge convert` | LakeBridge transpilers (Morph / BladeBridge) | Rule engine that auto-fixes leftovers, catches mis-conversions the transpiler misses, flags blockers by line with Databricks guidance; keeps hand fixes across runs; optional AI fix suggestions (Claude) |
 | 3. Deploy & validate | `wishbridge deploy` | Databricks SQL warehouse | Creates converted objects in a dev schema; EXPLAINs every query/DML; per-statement pass/fail; safe to re-run |
 | 4. Load data | `wishbridge load` | Lakehouse Federation or `COPY INTO` | Load plan + execution with row counts |
@@ -112,7 +112,8 @@ file to `output\ai_suggestions\` as a starting point for step 2.
 |---|---|
 | `wishbridge init NAME --source X` | Create a project folder |
 | `wishbridge sources` | List supported source systems |
-| `wishbridge analyze` | LakeBridge assessment + effort estimate |
+| `wishbridge analyze` | LakeBridge assessment + effort estimate + fit check |
+| `wishbridge fit [--details]` | Fit check only (seconds, no LakeBridge): move / copy data / keep on source / not needed |
 | `wishbridge convert [--ai]` | Transpile, apply rules and overrides |
 | `wishbridge deploy [--recreate] [--execute-dml]` | Create objects in the dev schema and validate (`--recreate` rebuilds existing objects) |
 | `wishbridge load [--execute]` | Write (or run) the data load plan |
@@ -131,6 +132,7 @@ See [examples/mssql-demo/project.yml](examples/mssql-demo/project.yml). Key sett
 |---|---|
 | `source` / `transpiler` | Source system key (`wishbridge sources`); converter `auto` (default), `morph` or `bladebridge` |
 | `input` / `output` / `overrides` | Legacy code, generated output, hand-fixed files |
+| `scope` | `all` (default) or `recommended`: deploy only what the fit check says belongs on Databricks |
 | `databricks.profile` / `warehouse_id` | CLI profile and SQL warehouse (blank = first running warehouse) |
 | `databricks.catalog` / `schema` | **Dev** schema that `deploy` creates objects in |
 | `schema_map` | Rename source schemas in converted code, e.g. `dbo: main.sales` |

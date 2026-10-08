@@ -81,9 +81,17 @@ def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool =
 
     wh = wh or Warehouse(cfg)
     wh.run(f"CREATE SCHEMA IF NOT EXISTS {cfg.target_schema}")
+    from .fit import excluded_files
+
+    left_out = excluded_files(cfg, load_state(cfg).get("fit"))
 
     files: list[dict[str, Any]] = []
     for f in convert["files"]:
+        if f["file"] in left_out:
+            files.append({"file": f["file"], "statements": 0, "passed": 0, "ok": True, "results": [
+                {"n": 1, "kind": "file", "action": "left-out", "ok": True,
+                 "note": f"Not deployed - fit check: {left_out[f['file']]} (scope: recommended)"}]})
+            continue
         if f.get("kind", "sql") != "sql":
             files.append(_upload(wh, cfg, f))
             continue
@@ -126,6 +134,7 @@ def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool =
         "statements": sum(f["statements"] for f in files),
         "statements_ok": sum(f["passed"] for f in files),
         "kept_existing": sum(1 for f in files for r in f["results"] if r["action"] == "exists"),
+        "left_out": len(left_out),
     }
     result = {"summary": summary, "files": files}
     save_step(cfg, "deploy", result)

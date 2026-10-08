@@ -212,6 +212,30 @@ Every file gets a status:
 The terminal and the report's **Open items** table list each problem with its line number and what to use
 on Databricks instead. The converted code is in `output\final\`.
 
+### C4a. Check what belongs on Databricks (migration fit)
+
+Databricks is the home for reporting, ETL, dashboards and AI. It is **not** a replacement for the database
+behind a live application. Client folders often hold both kinds of code, so **Analyze** also runs a fit check
+(or run it on its own in seconds: `wishbridge fit --details`). Every object gets a recommendation with its reasons:
+
+| Recommendation | Typical objects | What to do |
+|---|---|---|
+| **Move to Databricks** | Report procedures, aggregations, ETL / load / merge procedures, views, their helper functions | Convert and deploy |
+| **Copy the data** | Tables, seed-data scripts | Create on Databricks and copy the data (step C7) |
+| **Keep on source** | Insert/update/delete procedures, paged searches for screens, lookups by id, login / e-mail, triggers | Leave with the application |
+| **Not needed** | Users, roles, indexes, partition functions, SSDT deployment scripts, framework tables (`__EFMigrationsHistory`) | Nothing |
+| **Decide** | No clear signals | Decide by hand |
+
+It also gives a verdict for the whole database:
+
+- **Application database**: keep it (and the app) on the source, feed its data to Databricks (Lakehouse
+  Federation, Lakeflow Connect or CDC) and move only the reporting / ETL objects.
+- **Good fit**: a warehouse / reporting / ETL code base; migrate it all.
+- **Mixed**: move the reporting / ETL part, keep the application part.
+
+To deploy only what belongs on Databricks, set `scope: recommended` in `project.yml` (or **What to deploy**
+in the app's Settings). The fit check uses names and code patterns, so read the reasons before you rely on it.
+
 ### C5. Fix what WishBridge could not
 
 1. Copy the file from `output\final\` into a new folder `acme-dw\overrides\` (same file name).
@@ -340,7 +364,8 @@ reconciliation.
 | `wishbridge init NAME --source X` | Create a project |
 | `wishbridge run` | Assess + convert + report |
 | `wishbridge run --deploy --load` | The whole pipeline |
-| `wishbridge analyze` | Assess the legacy code |
+| `wishbridge analyze` | Assess the legacy code (includes the fit check) |
+| `wishbridge fit [--details]` | What belongs on Databricks vs stays with the application |
 | `wishbridge convert [--ai]` | Convert and check |
 | `wishbridge deploy [--recreate]` | Create objects in the test schema |
 | `wishbridge load [--execute]` | Plan / copy the data |

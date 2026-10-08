@@ -79,4 +79,8 @@ def run_analyze(cfg: ProjectConfig) -> dict[str, Any]:
     result["report_file"] = str(report)
     result["estimated_hours_baseline"] = estimate_hours(cfg, result["programs"])
     save_step(cfg, "analyze", result)
+    from .fit import run_fit
+
+    fit = run_fit(cfg)
+    result["fit"] = {"verdict": fit["verdict"], "headline": fit["headline"], "counts": fit["counts"]}
     return result

@@ -113,6 +113,37 @@ def analyze(config_path: str) -> None:
     cx = ", ".join(f"{k}={v}" for k, v in sorted(res["complexity"].items()))
     _ok(f"{len(res['programs'])} files ({cx}); manual estimate {res['estimated_hours_baseline']} h")
     click.echo(f"  Report: {res['report_file']}")
+    from .state import load_state
+
+    _print_fit(load_state(cfg).get("fit"), cfg)
+
+
+def _print_fit(fit: dict | None, cfg) -> None:
+    if not fit:
+        return
+    from .fit import CATEGORY_LABELS
+
+    click.echo(f"Migration fit: {fit['headline']}")
+    for line in fit["advice"]:
+        click.echo(f"  - {line}")
+    click.echo("  " + " | ".join(f"{CATEGORY_LABELS[k]}: {v}" for k, v in fit["counts"].items() if v))
+    if cfg.scope != "recommended":
+        click.echo("  Tip: set `scope: recommended` in project.yml to deploy only what belongs on Databricks.")
+
+
+@main.command()
+@config_option
+@click.option("--details", is_flag=True, help="List every object with its recommendation and reasons.")
+def fit(config_path: str, details: bool) -> None:
+    """Check which objects belong on Databricks and which should stay with the application (fast, no LakeBridge)."""
+    from .fit import CATEGORY_LABELS, run_fit
+
+    cfg = _load(config_path)
+    res = _guard(run_fit, cfg)
+    _print_fit(res, cfg)
+    if details:
+        for o in sorted(res["objects"], key=lambda o: (list(CATEGORY_LABELS).index(o["category"]), o["file"])):
+            click.echo(f"  {CATEGORY_LABELS[o['category']]:<20} {o['file']}  - {'; '.join(o['reasons'])}")
 
 
 @main.command()

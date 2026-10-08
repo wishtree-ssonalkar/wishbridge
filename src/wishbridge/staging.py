@@ -23,6 +23,18 @@ SQL_SUFFIXES = {".sql", ".ddl", ".prc", ".pls", ".pks", ".pkb", ".bteq", ".btq"}
 ETL_SUFFIXES = SQL_SUFFIXES | {".xml", ".dsx", ".isx", ".dtsx"}
 
 
+def read_source(path: Path) -> str:
+    """Read a client code file whatever its encoding: UTF-8 (with or without BOM), UTF-16 (SSMS / Redgate
+    'Unicode' scripts) or Windows-1252."""
+    data = path.read_bytes()
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return data.decode("utf-16", errors="replace")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
+
+
 def source_files(cfg: ProjectConfig) -> list[Path]:
     """Relative paths of the code files LakeBridge should see (build and tool folders excluded)."""
     from .discover import _walk
@@ -81,12 +93,14 @@ def staged(cfg: ProjectConfig) -> ProjectConfig:
     for rel in files:
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        if cfg.source.key in TSQL_SOURCES and rel.suffix.lower() == ".sql":
-            text = (cfg.input_dir / rel).read_text(encoding="utf-8-sig", errors="replace")
-            text, notes = prepare_tsql(text)
-            target.write_text(text, encoding="utf-8")
-            if notes:
-                manifest[rel.as_posix()] = notes
+        if rel.suffix.lower() in SQL_SUFFIXES:
+            # Always hand LakeBridge UTF-8: it cannot read UTF-16 scripts.
+            text = read_source(cfg.input_dir / rel)
+            if cfg.source.key in TSQL_SOURCES and rel.suffix.lower() == ".sql":
+                text, notes = prepare_tsql(text)
+                if notes:
+                    manifest[rel.as_posix()] = notes
+            target.write_text(text, encoding="utf-8", newline="")  # keep the original line endings
         else:
             shutil.copy2(cfg.input_dir / rel, target)
     m = prep_manifest(cfg)
