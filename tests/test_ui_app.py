@@ -58,7 +58,7 @@ def test_steps_open_in_order(project):
 
 def test_next_saves_settings_and_opens_code(project):
     at = ready_app(project).run()
-    schema_input = next(t for t in at.text_input if t.label == "Test schema")
+    schema_input = next(t for t in at.text_input if t.label.startswith("Test schema"))
     schema_input.set_value("wishbridge_ui_test").run()
     next(b for b in at.button if b.label.startswith("Next: add the code")).click().run()
     assert not at.exception
@@ -96,8 +96,10 @@ def test_migration_settings_need_target_and_source(project):
     at = ready_app(project).run()
     nxt = next(b for b in at.button if b.label.startswith("Next: add the code"))
     assert nxt.disabled
-    msg = " ".join(e.value for e in at.error)
-    assert "Fill these in" in msg and "Source database" in msg and "at least one table" in msg
+    notes = " ".join(m.value for m in at.markdown)
+    assert "Fill in the fields marked *" in notes  # short line next to Next
+    assert "create the connection" in notes and "at least one table" in notes  # red notes under the fields
+    assert any(t.label.endswith(":red[*]") for t in at.text_input)  # required fields carry a red *
 
 
 def test_assessment_ends_with_sharing_the_zip(project):

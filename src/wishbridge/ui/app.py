@@ -13,7 +13,7 @@ import streamlit as st
 
 from wishbridge import __version__
 from wishbridge.config import (CONVERTER_DIALECTS, PURPOSE, SCOPE_ROWS, SOURCES, ConfigError, converter_summary,
-                               load_config)
+                               load_config, looks_like_prod)
 from wishbridge import discover
 from wishbridge import source_db as sd
 from wishbridge.dbx import SqlError, Warehouse
@@ -338,6 +338,11 @@ def next_button(label: str, step: str, key: str) -> None:
         st.rerun()
 
 
+def required(message: str) -> None:
+    """A red note right under a required field that is missing or wrong."""
+    st.markdown(f":red[{message}]")
+
+
 def settings_problems(offline: bool, v: dict) -> list[str]:
     """What must be filled in before leaving Settings. Assessment needs only the source system; the migration
     phase also needs the Databricks target and the source data connection."""
@@ -398,7 +403,7 @@ if STEP == "settings":
     c1, c2 = st.columns(2)
     with c1:
         src_keys = list(SOURCES)
-        source = st.selectbox("Source system", src_keys, index=src_keys.index(cfg.source.key),
+        source = st.selectbox("Source system :red[*]", src_keys, index=src_keys.index(cfg.source.key),
                               format_func=lambda k: SOURCES[k].label)
     with c2:
         # Only converters that support the chosen source are offered; "auto" is the default and the recommendation.
@@ -451,7 +456,12 @@ if STEP == "settings":
 
         c1, c2 = st.columns([3, 2])
         with c1:
-            profile = st.selectbox("Workspace login", names, index=names.index(cur_profile), format_func=profile_label)
+            profile = st.selectbox("Workspace login :red[*]", names, index=names.index(cur_profile), format_func=profile_label)
+            _login = by_name.get(profile)
+            if not _login:
+                required("Required: choose a saved login, or sign in to the client's workspace below.")
+            elif _login.get("valid") is False:
+                required("This login has expired: sign in again below.")
         with c2:
             st.write("")
             if st.button("Load warehouses and catalogs", width="stretch"):
@@ -504,24 +514,29 @@ if STEP == "settings":
             cats = [c["name"] for c in ws["catalogs"]] if ws else []
             cur_cat = dbx.get("catalog", "main")
             if cats:
-                catalog = st.selectbox("Catalog", cats if cur_cat in cats else [cur_cat] + cats,
+                catalog = st.selectbox("Catalog :red[*]", cats if cur_cat in cats else [cur_cat] + cats,
                                        index=(cats if cur_cat in cats else [cur_cat] + cats).index(cur_cat))
             else:
-                catalog = st.text_input("Catalog", value=cur_cat)
+                catalog = st.text_input("Catalog :red[*]", value=cur_cat)
+            if not str(catalog or "").strip():
+                required("Required: the Databricks catalog.")
         with c3:
-            schema = st.text_input("Test schema", value=dbx.get("schema", "wishbridge"))
+            schema = st.text_input("Test schema :red[*]", value=dbx.get("schema", "wishbridge"))
+            if not schema.strip():
+                required("Required: the test schema.")
         scope_labels = {"all": "Everything", "recommended": "Only what belongs on Databricks (fit check)"}
         scope = st.selectbox("What to deploy", list(scope_labels), format_func=scope_labels.get,
                              index=list(scope_labels).index(scope) if scope in scope_labels else 0,
                              help="The fit check (run with Analyze) marks application logic to keep on the source "
                                   "and objects Databricks does not need. 'Only what belongs' leaves those out of deploy.")
 
-        if "prod" in f"{catalog}.{schema}".lower():
-            st.warning("This looks like a production schema. WishBridge will refuse to deploy there.")
+        if looks_like_prod(f"{catalog}.{schema}"):
+            required("This looks like a production schema - use a test schema. WishBridge will not deploy there.")
 
         # --- Source database: where the data lives. Optional - only needed to copy the data.
-        st.markdown("**Source database** — optional, only needed to copy the data. WishBridge creates a Lakehouse "
-                    "Federation connection in Databricks; the password goes into Databricks secrets, never into project.yml.")
+        st.markdown("**Source database** :red[*] — where the data is copied from (or choose *files* under Data to copy). "
+                    "WishBridge creates a Lakehouse Federation connection in Databricks; the password goes into Databricks "
+                    "secrets, never into project.yml.")
         sdb = raw.get("source_db") or {}
         default_type = sd.DEFAULT_FOR_SOURCE.get(cfg.source.key, "sqlserver")
         with st.container(border=True):
@@ -614,7 +629,7 @@ if STEP == "settings":
                     ss.sdb_msg = ("success", f"Added {len(picked)} table(s) from {schema_pick}. Targets follow the schema mapping.")
                     st.rerun()
 
-        st.markdown("**Data to copy**")
+        st.markdown("**Data to copy** :red[*]")
         c1, c2, c3 = st.columns(3)
         with c1:
             method = st.selectbox("Method", ["federation", "files"], index=["federation", "files"].index(data.get("method", "federation")),
@@ -625,13 +640,17 @@ if STEP == "settings":
                 cur_src = data.get("source_catalog", "")
                 if fed_options:
                     opts = [""] + fed_options if cur_src in fed_options or not cur_src else ["", cur_src] + fed_options
-                    source_catalog = st.selectbox("Source catalog (federation)", opts, index=opts.index(cur_src))
+                    source_catalog = st.selectbox("Source catalog (federation) :red[*]", opts, index=opts.index(cur_src))
                 else:
-                    source_catalog = st.text_input("Source catalog (federation)", value=cur_src)
+                    source_catalog = st.text_input("Source catalog (federation) :red[*]", value=cur_src)
+                if not str(source_catalog or "").strip():
+                    required("Required: create the connection in *Source database* above, or enter the source catalog.")
                 files_root, file_format = data.get("files_root", ""), data.get("file_format", "PARQUET")
             else:
-                files_root = st.text_input("Files root (volume path)", value=data.get("files_root", ""),
+                files_root = st.text_input("Files root (volume path) :red[*]", value=data.get("files_root", ""),
                                            placeholder="/Volumes/main/landing/acme")
+                if not files_root.strip():
+                    required("Required: the volume folder the exported tables are in.")
                 file_format = st.selectbox("File format", ["PARQUET", "CSV", "JSON", "AVRO", "ORC"],
                                            index=["PARQUET", "CSV", "JSON", "AVRO", "ORC"].index(str(data.get("file_format", "PARQUET")).upper()))
                 source_catalog = data.get("source_catalog", "")
@@ -639,8 +658,10 @@ if STEP == "settings":
             load_mode = st.selectbox("Load mode", ["append", "overwrite"], index=["append", "overwrite"].index(data.get("mode", "append")))
         tables_df = st.data_editor(pd.DataFrame(h.table_rows(raw) or [{"source": "", "target": ""}]),
                                    num_rows="dynamic", width="stretch", key="tables",
-                                   column_config={"source": "Source table (schema.table)",
+                                   column_config={"source": "Source table (schema.table) *",
                                                   "target": "Target (optional catalog.schema.table)"})
+        if not h.rows_to_tables(tables_df.to_dict("records")):
+            required("Required: at least one table to copy (type it, or use the inventory in Code / *List tables* above).")
 
     with st.expander("AI suggestions and estimates"):
         ai_on = st.checkbox("Ask Claude for fix suggestions during convert (needs ANTHROPIC_API_KEY; sends code, not data)",
@@ -651,7 +672,7 @@ if STEP == "settings":
 
     problems = settings_problems(offline, locals())
     if problems:
-        st.error("Fill these in before going on:\n" + "\n".join(f"- {p}" for p in problems))
+        st.markdown(":red[Fill in the fields marked * (see the red notes above) before going on.]")
     if st.button("Next: add the code →", type="primary", help="Saves the settings and opens the Code tab.",
                  disabled=bool(problems)):
         new = dict(raw)
