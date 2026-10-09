@@ -132,7 +132,7 @@ with st.sidebar:
                                placeholder=r"C:\migrations\acme-dw  or  C:\client-repo",
                                help="A WishBridge project opens directly. Any other folder of SQL/ETL code (a repository, "
                                     "a Visual Studio database project, an export) gets a project created for it.")
-        if st.button("Open", width="stretch", disabled=locked):
+        if st.button("Open", width="stretch", disabled=locked or not folder.strip()):
             if h.project_file(folder).exists():
                 ss.project = str(Path(folder).expanduser().resolve())
                 ss.workspace = None
@@ -157,7 +157,7 @@ with st.sidebar:
                    "It becomes a project here, ready to review and fix.")
         pkg_up = st.file_uploader("Package (.zip)", type=["zip"], key="pkg_upload", disabled=locked)
         pkg_parent = st.text_input("Create the project in", value=r"C:\migrations", key="pkg_parent", disabled=locked)
-        if pkg_up is not None and st.button("Open package", width="stretch", disabled=locked):
+        if st.button("Open package", width="stretch", disabled=locked or pkg_up is None or not pkg_parent.strip()):
             from wishbridge.package import open_package
 
             tmp = Path(pkg_parent).expanduser() / ".wishbridge-incoming" / Path(pkg_up.name).name
@@ -171,17 +171,16 @@ with st.sidebar:
             except (ValueError, OSError, ConfigError) as e:
                 st.error(str(e))
     else:
-        with st.form("new-project"):
-            name = st.text_input("Project name", placeholder="acme-dw", disabled=locked)
-            source = st.selectbox("Source system", list(SOURCES), format_func=lambda k: SOURCES[k].label, disabled=locked)
-            parent = st.text_input("Create in folder", value=r"C:\migrations", disabled=locked)
-            if st.form_submit_button("Create project", width="stretch", disabled=locked):
-                try:
-                    ss.project = str(h.create_project(parent, name, source))
-                    ss.workspace = None
-                    st.rerun()
-                except (ValueError, OSError) as e:
-                    st.error(str(e))
+        name = st.text_input("Project name :red[*]", placeholder="acme-dw", disabled=locked, key="new_name")
+        source = st.selectbox("Source system :red[*]", list(SOURCES), format_func=lambda k: SOURCES[k].label, disabled=locked)
+        parent = st.text_input("Create in folder :red[*]", value=r"C:\migrations", disabled=locked, key="new_parent")
+        if st.button("Create project", width="stretch", disabled=locked or not name.strip() or not parent.strip()):
+            try:
+                ss.project = str(h.create_project(parent, name, source))
+                ss.workspace = None
+                st.rerun()
+            except (ValueError, OSError) as e:
+                st.error(str(e))
     if project_ok() and not locked:
         st.success(f"Open: {Path(ss.project).name}")
         st.caption(ss.project)
@@ -189,15 +188,27 @@ with st.sidebar:
 
 st.title("Wishtree WishBridge")
 st.caption(f"{PURPOSE} Assess, convert, deploy, copy the data and prove it matches — built on Databricks Labs LakeBridge.")
-if not system_ready():
-    st.info("Start with **Step 0 · System check** in the sidebar: *Check this computer*, and *Install missing* if "
-            "anything is not there. Projects open once the computer is ready.")
-    st.stop()
 
 
 def show_scope() -> None:
     st.markdown("**What WishBridge migrates**")
     st.table(pd.DataFrame(SCOPE_ROWS, columns=["What the client has", "Migrate it?"]).set_index("What the client has"))
+
+
+def show_welcome() -> None:
+    st.markdown(
+        "**How it works:** 1. open the warehouse code · 2. fill in the settings · 3. analyze (is it a warehouse? how big?) · "
+        "4. convert and deploy · 5. copy the data and reconcile · 6. share the report."
+    )
+    show_scope()
+
+
+if not system_ready():
+    st.info("Start with **Step 0 · System check** in the sidebar: *Check this computer*, and *Install missing* if "
+            "anything is not there. Then open the client's warehouse code (a project folder, a repository, a database "
+            "project or an ETL export) or create a new project.")
+    show_welcome()
+    st.stop()
 
 info = ss.get("code_info")
 if info and not project_ok():
@@ -212,21 +223,22 @@ if info and not project_ok():
     if det.source in ("mssql", "oracle"):
         st.caption("SQL Server and Oracle are migrated when they hold a **data warehouse**. Analyze runs a fit check "
                    "that warns if this is an application's database instead.")
-    with st.form("code-project"):
+    with st.container(border=True):
         c1, c2 = st.columns(2)
         src_keys = list(SOURCES)
-        source = c1.selectbox("Source system", src_keys, index=src_keys.index(det.source),
+        source = c1.selectbox("Source system :red[*]", src_keys, index=src_keys.index(det.source),
                               format_func=lambda k: SOURCES[k].label)
         default_parent = r"C:\migrations"
-        name = c2.text_input("Project name", value=discover.suggested_name(info.path, default_parent))
-        parent = st.text_input("Create projects in", value=default_parent)
+        name = c2.text_input("Project name :red[*]", value=discover.suggested_name(info.path, default_parent), key="code_name")
+        parent = st.text_input("Create projects in :red[*]", value=default_parent, key="code_parent")
         split = False
         if info.databases:
             dbs = ", ".join(f"{n} ({c} files)" for n, _, c in info.databases)
             st.markdown(f"The code holds **{len(info.databases)} databases**: {dbs}.")
             split = st.radio("Projects", [True, False], horizontal=True,
                              format_func=lambda s: "One project per database (recommended)" if s else "One project for everything")
-        if st.form_submit_button("Create project" + ("s" if info.databases and split else ""), type="primary"):
+        if st.button("Create project" + ("s" if info.databases and split else ""), type="primary",
+                     disabled=not name.strip() or not parent.strip()):
             try:
                 made = discover.create_projects_for_code(info, parent, name, source, split)
             except (ValueError, OSError, ConfigError) as e:
@@ -253,11 +265,7 @@ if info and not project_ok():
 if not project_ok():
     st.info("Open the client's warehouse code (a project folder, a repository, a database project or an ETL export) "
             "or create a new project in the sidebar to begin.")
-    st.markdown(
-        "**How it works:** 1. open the warehouse code · 2. fill in the settings · 3. analyze (is it a warehouse? how big?) · "
-        "4. convert and deploy · 5. copy the data and reconcile · 6. share the report."
-    )
-    show_scope()
+    show_welcome()
     st.stop()
 
 try:
@@ -485,10 +493,12 @@ if STEP == "settings":
             st.caption("Opens a browser on this computer to sign in. The login is saved in this user's ~/.databrickscfg; "
                        "WishBridge never sees the password.")
             n1, n2, n3 = st.columns([3, 2, 1])
-            new_host = n1.text_input("Workspace URL", placeholder="https://adb-1234567890.12.azuredatabricks.net")
-            new_profile = n2.text_input("Profile name", placeholder="CLIENT_ACME")
+            new_host = n1.text_input("Workspace URL :red[*]", placeholder="https://adb-1234567890.12.azuredatabricks.net")
+            new_profile = n2.text_input("Profile name :red[*]", placeholder="CLIENT_ACME")
             n3.write("")
-            if n3.button("Sign in"):
+            if new_host.strip() and not new_host.strip().lower().startswith("https://"):
+                required("The workspace URL starts with https://")
+            if n3.button("Sign in", disabled=not new_host.strip().lower().startswith("https://") or not new_profile.strip()):
                 with st.spinner("Finish signing in in the browser window..."):
                     ok, msg = h.sign_in(new_host, new_profile)
                 (st.success if ok else st.error)(msg)
@@ -551,20 +561,27 @@ if STEP == "settings":
             db_type = d1.selectbox("Database type", type_keys, index=type_keys.index(cur_type),
                                    format_func=lambda k: sd.DB_TYPES[k].label, key="sdb_type")
             dbt = sd.DB_TYPES[db_type]
-            host = d2.text_input("Server (host)", value=sdb.get("host", ""), placeholder="sqlprod01.client.com", key="sdb_host")
+            host = d2.text_input("Server (host) :red[*]", value=sdb.get("host", ""), placeholder="sqlprod01.client.com", key="sdb_host")
             port = d3.number_input("Port", value=int(sdb.get("port") or dbt.port), step=1, key="sdb_port")
             d1, d2, d3 = st.columns(3)
-            database = d1.text_input(dbt.catalog_label, value=sdb.get("database", ""), key="sdb_db",
+            database = d1.text_input(dbt.catalog_label + (" :red[*]" if dbt.catalog_option else ""), value=sdb.get("database", ""), key="sdb_db",
                                      disabled=dbt.catalog_option is None,
                                      help=None if dbt.catalog_option else f"Not needed for {dbt.label}: the whole server is exposed.")
-            user = d2.text_input("User (read-only is enough)", value=sdb.get("user", ""), key="sdb_user")
-            password = d3.text_input("Password", type="password", key="sdb_pw",
+            user = d2.text_input("User (read-only is enough) :red[*]", value=sdb.get("user", ""), key="sdb_user")
+            password = d3.text_input("Password :red[*]", type="password", key="sdb_pw",
                                      help="Sent straight to Databricks secrets; not saved anywhere else.")
-            extra = {opt: st.text_input(label, value=(sdb.get("options") or {}).get(opt, ""), key=f"sdb_{opt}")
+            extra = {opt: st.text_input(label + " :red[*]", value=(sdb.get("options") or {}).get(opt, ""), key=f"sdb_{opt}")
                      for opt, label in dbt.extra}
+            conn_missing = [n for n, v in (("server", host), ("user", user), ("password", password)) if not str(v).strip()]
+            if dbt.catalog_option and not database.strip():
+                conn_missing.append(dbt.catalog_label.lower())
+            conn_missing += [label.lower() for opt, label in dbt.extra if not str(extra.get(opt, "")).strip()]
             connected = bool(sdb.get("catalog"))
             b1, b2, b3 = st.columns(3)
-            if b1.button("🔌 Re-create connection" if connected else "🔌 Create connection", width="stretch"):
+            if conn_missing:
+                st.caption(":red[To create the connection, fill in: " + ", ".join(conn_missing) + ".]")
+            if b1.button("🔌 Re-create connection" if connected else "🔌 Create connection", width="stretch",
+                         disabled=bool(conn_missing)):
                 settings = {"type": db_type, "host": host.strip(), "port": int(port), "database": database.strip(),
                             "user": user.strip(), "options": extra}
                 with st.spinner("Creating the connection in Databricks..."):
@@ -1091,7 +1108,7 @@ if STEP == "fix":
                 st.markdown("**Databricks version** " + ("(manual fix)" if ovr.exists() else "(converted — edit to fix)"))
                 edited = st.text_area("Databricks SQL", value=start, height=420, label_visibility="collapsed", key=f"edit-{pick}")
                 b1, b2 = st.columns(2)
-                if b1.button("💾 Save as manual fix", type="primary"):
+                if b1.button("💾 Save as manual fix", type="primary", disabled=edited == start):
                     ovr.parent.mkdir(parents=True, exist_ok=True)
                     ovr.write_text(edited, encoding="utf-8")
                     st.success("Saved. Run Convert again to apply it, then Deploy to check it on Databricks.")
