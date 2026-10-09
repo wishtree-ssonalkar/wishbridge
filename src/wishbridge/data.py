@@ -35,7 +35,12 @@ def build_plan(cfg: ProjectConfig) -> list[tuple[TableMapping, list[str]]]:
         if cfg.load_mode == "overwrite":
             stmts.append(f"TRUNCATE TABLE {t.target}")
         if cfg.data_method == "federation":
-            stmts.append(f"INSERT INTO {t.target} BY NAME SELECT * FROM {_source_ref(cfg, t)}")
+            if t.columns:  # mapped by hand in the app: target column <- source column
+                cols = ", ".join(f"`{c}`" for c in t.columns)
+                exprs = ", ".join(f"`{s}` AS `{c}`" for c, s in t.columns.items())
+                stmts.append(f"INSERT INTO {t.target} ({cols}) SELECT {exprs} FROM {_source_ref(cfg, t)}")
+            else:
+                stmts.append(f"INSERT INTO {t.target} BY NAME SELECT * FROM {_source_ref(cfg, t)}")
         else:
             if not cfg.files_root:
                 raise SqlError("data.files_root is required for the files method")

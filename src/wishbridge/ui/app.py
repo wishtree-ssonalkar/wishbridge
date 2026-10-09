@@ -281,15 +281,15 @@ except (ConfigError, yaml.YAMLError, KeyError, TypeError, ValueError) as e:
 
 from wishbridge import runner
 
-LABELS = {"settings": "Settings", "code": "Code", "run": "Run", "results": "Results", "fix": "Fix code",
-          "send": "Share the zip"}
+LABELS = {"settings": "Settings", "code": "Code", "run": "Run", "data": "Map the data", "results": "Results",
+          "fix": "Fix code", "send": "Share the zip"}
 from_package = (Path(ss.project) / "opened_from_package.json").exists()
 if cfg.phase == "assessment":
     # At the client: everything ends up in the zip, so the last step is sending it. Fixing happens later,
     # in the project opened from that zip.
     ORDER = ["settings", "code", "run"] + (["fix"] if from_package else []) + ["send"]
 else:
-    ORDER = ["settings", "code", "run", "results", "fix"]
+    ORDER = ["settings", "code", "run", "data", "results", "fix"]
 state_now = load_state(cfg)
 running = runner.is_running(cfg)
 has_code = bool(h.input_files(ss.project, raw.get("input", "input")))
@@ -299,6 +299,7 @@ done = {
     "settings": bool(ss.get(f"settings_done:{ss.project}")) or has_results,  # confirmed with Next (or used before)
     "code": has_code,
     "run": has_results and not running,
+    "data": bool((state_now.get("load") or {}).get("executed")) and not running,
     "results": has_results and not running,
     "fix": False,
     "send": bool(ss.get(f"sent:{ss.project}")),
@@ -307,7 +308,9 @@ done = {
 
 def reachable(key: str) -> bool:
     if running:
-        return key == "run"  # while a run is going, stay on Run to follow it
+        return key in ("run", "data")  # while a run (or the data copy) is going, stay there to follow it
+    if key == "results":
+        return all(done[k] for k in ("settings", "code", "run"))  # copying the data is not required to look
     if key == "fix":
         return "convert" in state_now and all(done[k] for k in ("settings", "code"))
     if key == "send":
@@ -322,7 +325,7 @@ if ss.get("go_step") is not None:
     _go = ss.pop("go_step")
     if _go in ORDER:
         ss.step = _go
-if running:
+if running and ss.step not in ("run", "data"):
     ss.step = "run"
 if not reachable(ss.step):
     ss.step = [k for k in ORDER if reachable(k)][-1]
@@ -378,10 +381,6 @@ def settings_problems(offline: bool, v: dict) -> list[str]:
             problems.append("Data to copy: the files folder (volume path) the exported tables are in")
     elif not str(v.get("source_catalog") or "").strip():
         problems.append("Source database: create the connection (Source database section) or enter the source catalog")
-    tables_ = v.get("tables_df")
-    rows = h.rows_to_tables(tables_.to_dict("records")) if tables_ is not None else []
-    if not rows:
-        problems.append("Data to copy: at least one table (use the inventory or List tables)")
     return problems
 
 
@@ -436,7 +435,6 @@ if STEP == "settings":
     scope = str(raw.get("scope") or "all").lower()
     method, source_catalog = data.get("method", "federation"), data.get("source_catalog", "")
     files_root, file_format, load_mode = data.get("files_root", ""), data.get("file_format", "PARQUET"), data.get("mode", "append")
-    tables_df = pd.DataFrame(h.table_rows(raw) or [{"source": "", "target": ""}])
     ws, chosen_host, project_host = None, "", str(dbx.get("host") or "")
 
     if offline:
@@ -625,28 +623,8 @@ if STEP == "settings":
             if connected:
                 st.caption(f"Connected through catalog `{sdb['catalog']}` ({sd.DB_TYPES.get(sdb.get('type'), dbt).label} "
                            f"at {sdb.get('host')}:{sdb.get('port')}).")
-            if ss.get("source_schemas"):
-                p1, p2 = st.columns([1, 2])
-                schema_pick = p1.selectbox("Schema", ss.source_schemas, key="sdb_schema")
-                if p1.button("List tables"):
-                    try:
-                        ss.source_tables = {schema_pick: sd.list_tables(sdb["catalog"], schema_pick, Warehouse(cfg))}
-                    except (SqlError, ValueError) as e:
-                        st.error(str(e))
-                available = (ss.get("source_tables") or {}).get(schema_pick, [])
-                picked = p2.multiselect("Tables to copy", available, key="sdb_tables",
-                                        placeholder="Press List tables first" if not available else "Choose tables")
-                if picked and p2.button(f"➕ Add {len(picked)} table(s) to the copy list"):
-                    current = h.rows_to_tables(h.table_rows(raw))
-                    have = {t if isinstance(t, str) else t["source"] for t in current}
-                    current += [f"{schema_pick}.{t}" for t in picked if f"{schema_pick}.{t}" not in have]
-                    new = dict(raw)
-                    new["data"] = {**data, "tables": current}
-                    h.save_raw(ss.project, new)
-                    ss.sdb_msg = ("success", f"Added {len(picked)} table(s) from {schema_pick}. Targets follow the schema mapping.")
-                    st.rerun()
 
-        st.markdown("**Data to copy** :red[*]")
+        st.markdown("**How to copy the data** :red[*]")
         c1, c2, c3 = st.columns(3)
         with c1:
             method = st.selectbox("Method", ["federation", "files"], index=["federation", "files"].index(data.get("method", "federation")),
@@ -673,12 +651,8 @@ if STEP == "settings":
                 source_catalog = data.get("source_catalog", "")
         with c3:
             load_mode = st.selectbox("Load mode", ["append", "overwrite"], index=["append", "overwrite"].index(data.get("mode", "append")))
-        tables_df = st.data_editor(pd.DataFrame(h.table_rows(raw) or [{"source": "", "target": ""}]),
-                                   num_rows="dynamic", width="stretch", key="tables",
-                                   column_config={"source": "Source table (schema.table) *",
-                                                  "target": "Target (optional catalog.schema.table)"})
-        if not h.rows_to_tables(tables_df.to_dict("records")):
-            required("Required: at least one table to copy (type it, or use the inventory in Code / *List tables* above).")
+        st.caption("Which tables go where is chosen in the step *Map the data*, after the run has created the "
+                   "tables in Databricks.")
 
     with st.expander("AI suggestions and estimates"):
         ai_on = st.checkbox("Ask Claude for fix suggestions during convert (needs ANTHROPIC_API_KEY; sends code, not data)",
@@ -709,7 +683,7 @@ if STEP == "settings":
             new["schema_map"] = {k: (f"{catalog}.{v[len(old_cat) + 1:]}" if str(v).startswith(old_cat + ".") else v)
                                  for k, v in new["schema_map"].items()}
         new["data"] = {**data, "method": method, "source_catalog": source_catalog, "files_root": files_root,
-                       "file_format": file_format, "mode": load_mode, "tables": h.rows_to_tables(tables_df.to_dict("records"))}
+                       "file_format": file_format, "mode": load_mode}
         new["autofix"] = {"ai": ai_on, "model": model}
         new["estimate"] = {**est, "hours_per_issue": hpi}
         try:
@@ -722,10 +696,113 @@ if STEP == "settings":
             st.error(f"Not saved: {e}")
 
 
+
+def database_tables(cfg, raw) -> None:
+    """Optional: read the source database's tables (catalog only, no data) and make the Databricks table scripts."""
+    from wishbridge import inventory as inv_mod
+    from wishbridge import schema as schema_mod
+
+    inv = load_state(cfg).get("inventory")
+    title = "Database tables (optional) — make the Databricks table scripts from the database"
+    with st.expander(title, expanded=False):
+        st.markdown("Use this when the code has **no table scripts** (or not all of them). WishBridge reads only the "
+                    "list of tables, columns and data types — **no data is read or copied** — and writes a Databricks "
+                    "`CREATE TABLE` script for every table the code does not already create.")
+        how = st.radio("How to read the tables", ["Connect to the database", "Send a query to the client's DBA"],
+                       horizontal=True, key="schema_how",
+                       help="Connecting works for SQL Server, Azure SQL and Synapse. The DBA query works for every "
+                            "database WishBridge supports.")
+        if how == "Connect to the database":
+            c1, c2 = st.columns(2)
+            server = c1.text_input("Server :red[*]", key="live_server", placeholder="myserver\\SQLEXPRESS or myserver,1433")
+            database = c2.text_input("Database :red[*]", key="live_db")
+            kind = c1.selectbox("Database type", list(inv_mod.LIVE_DATABASES), key="live_type",
+                                format_func={"sqlserver": "SQL Server / Azure SQL", "synapse": "Azure Synapse"}.get)
+            login = c2.radio("Login", ["Windows login", "User and password"], horizontal=True, key="live_login")
+            user = password = ""
+            if login == "User and password":
+                user = c1.text_input("User :red[*]", key="live_user")
+                password = c2.text_input("Password :red[*]", type="password", key="live_pw",
+                                         help="Used once to read the tables; never saved.")
+            trust = st.checkbox("Trust the server certificate", key="live_trust",
+                                help="Needed for servers with a self-signed certificate (common on local servers).")
+            missing = [n for n, v in [("server", server), ("database", database)] if not v.strip()]
+            if login == "User and password":
+                missing += [n for n, v in [("user", user), ("password", password)] if not v.strip()]
+            if missing:
+                st.caption(f":red[Fill in the {' and '.join(missing) if len(missing) < 3 else ', '.join(missing)} to read the tables.]")
+            if st.button("🔍 Read the tables", type="primary", disabled=bool(missing), key="live_read"):
+                with st.spinner(f"Reading the table list from {server} / {database}..."):
+                    try:
+                        inv_mod.read_live(cfg, server, database, login == "Windows login", user, password, trust, kind)
+                    except (RuntimeError, ValueError) as e:
+                        st.error(str(e))
+                    else:
+                        ss.pop("live_pw", None)
+                        st.rerun()
+        else:
+            st.markdown("Give the client's DBA this read-only query and import the CSV they send back.")
+            db_types = list(inv_mod.QUERIES)
+            default_db = (cfg.source_db or {}).get("type") or inv_mod.DEFAULT_DB.get(cfg.source.key, "sqlserver")
+            db = st.selectbox("Database type", db_types, index=db_types.index(default_db) if default_db in db_types else 0)
+            fname, text = inv_mod.script(cfg, db)
+            st.download_button("Download the query for the DBA", text, file_name=fname, mime="text/plain")
+            up = st.file_uploader("Import the DBA's CSV", type=["csv", "txt"], key="inventory_csv")
+            if st.button("Import the CSV", disabled=up is None):
+                tmp = cfg.out("inventory", "upload_" + Path(up.name).name)
+                tmp.write_bytes(up.getvalue())
+                try:
+                    inv_mod.import_file(cfg, tmp, db)
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
+
+        if not inv:
+            return
+        s = inv["summary"]
+        st.success(f"{s['tables']} tables · {s['columns']} columns · {s['rows']:,} rows · {s['size_mb']:,} MB "
+                   f"(from {inv.get('read_from', 'the DBA CSV')}, {inv['imported_at'].replace('T', ' ')})")
+        st.dataframe(pd.DataFrame([{"table": f"{t['schema']}.{t['table']}", "rows": t["rows"], "size (MB)": t["size_mb"],
+                                    "columns": len(t["columns"])} for t in inv["tables"]]), width="stretch", hide_index=True)
+
+        st.markdown("**Databricks table scripts**")
+        sch = load_state(cfg).get("schema")
+        if not sch:
+            try:
+                sch = schema_mod.build_scripts(cfg, inv)
+            except ValueError as e:
+                st.error(str(e))
+                return
+        files = [f for f in sch["files"] if Path(f["path"]).is_file()]
+        line = f"{sch['tables']} table(s) scripted in {len(files)} file(s)"
+        if sch["skipped"]:
+            line += f" · {len(sch['skipped'])} skipped because the code already creates them"
+        st.markdown(line + ". They go into the converted code on the next run" +
+                    (" and are created in Databricks first when you deploy." if cfg.phase == "migration" else
+                     " and into the zip."))
+        if sch.get("unknown_types"):
+            st.warning("Some column types are unknown and were made STRING — search the scripts for `review`: "
+                       + "; ".join(f"{t}: {', '.join(c)}" for t, c in list(sch["unknown_types"].items())[:5]))
+        b1, b2 = st.columns(2)
+        if files:
+            pick = b1.selectbox("Script", [f["file"] for f in files], key="schema_pick",
+                                format_func=lambda n: n.split("/")[-1])
+            path = Path(next(f["path"] for f in files if f["file"] == pick))
+            b2.download_button("⬇ Download this script", path.read_bytes(), file_name=path.name, mime="text/plain")
+            st.code(path.read_text(encoding="utf-8")[:20000], language="sql")
+        if b1.button("↻ Make the scripts again", help="After changing the schema mapping in Settings."):
+            schema_mod.build_scripts(cfg, inv)
+            st.rerun()
+        if cfg.phase == "migration" and b2.button("Use these tables for the data copy"):
+            new = dict(raw)
+            new.setdefault("data", {})["tables"] = inv_mod.table_list(inv)
+            h.save_raw(ss.project, new)
+            st.success("Saved to Settings > Data. Check the mapping there.")
+            st.rerun()
+
 # ----------------------------------------------------------------- code
 
 if STEP == "code":
-    from wishbridge import inventory as inv_mod
 
     st.subheader("Code overview")
     ov = load_state(cfg).get("overview")
@@ -743,36 +820,7 @@ if STEP == "code":
         st.caption("Run Analyze to get a description of the code base: structure, tables, procedures, data flows "
                    "and what needs attention.")
 
-    with st.expander("Source database inventory — no connection needed", expanded=False):
-        st.markdown("Get the list of tables, columns, row counts and sizes **without connecting** to the client's "
-                    "database: give their DBA this read-only query, and import the CSV they send back.")
-        db_types = list(inv_mod.QUERIES)
-        default_db = (cfg.source_db or {}).get("type") or inv_mod.DEFAULT_DB.get(cfg.source.key, "sqlserver")
-        db = st.selectbox("Database type", db_types, index=db_types.index(default_db) if default_db in db_types else 0)
-        fname, text = inv_mod.script(cfg, db)
-        st.download_button("Download the query for the DBA", text, file_name=fname, mime="text/plain")
-        up = st.file_uploader("Import the DBA's CSV", type=["csv", "txt"], key="inventory_csv")
-        if up is not None and st.button("Import inventory"):
-            tmp = cfg.out("inventory", "upload_" + Path(up.name).name)
-            tmp.write_bytes(up.getvalue())
-            try:
-                inv_mod.import_file(cfg, tmp)
-                st.rerun()
-            except ValueError as e:
-                st.error(str(e))
-        inv = load_state(cfg).get("inventory")
-        if inv:
-            s = inv["summary"]
-            st.success(f"{s['tables']} tables · {s['columns']} columns · {s['rows']:,} rows · {s['size_mb']:,} MB "
-                       f"(imported {inv['imported_at'].replace('T', ' ')})")
-            st.dataframe(pd.DataFrame([{"table": f"{t['schema']}.{t['table']}", "rows": t["rows"], "size (MB)": t["size_mb"],
-                                        "columns": len(t["columns"])} for t in inv["tables"]]), width="stretch", hide_index=True)
-            if st.button("Use these tables for the data copy"):
-                new = dict(raw)
-                new.setdefault("data", {})["tables"] = inv_mod.table_list(inv)
-                h.save_raw(ss.project, new)
-                st.success("Saved to Settings > Data. Load targets follow the schema map.")
-                st.rerun()
+    database_tables(cfg, raw)
     uploads = st.file_uploader("Add files", accept_multiple_files=True, type=h.INPUT_EXTENSIONS)
     if uploads and st.button(f"Add {len(uploads)} file(s) to the project"):
         for up in uploads:
@@ -820,6 +868,8 @@ def run_progress() -> None:
 if STEP == "run":
     offline = cfg.phase == "assessment"
     status = runner.read_status(cfg)
+    if status and "load" in [x["name"] for x in status.get("steps", [])]:
+        status = None  # the last run was the data copy: shown in Map the data
     if runner.is_running(cfg):
         st.subheader("Running…")
         run_progress()
@@ -845,19 +895,17 @@ if STEP == "run":
             do_convert = st.checkbox("2. Convert to Databricks SQL", value=True)
             use_ai = st.checkbox("…with Claude suggestions", value=cfg.ai_enabled, disabled=not do_convert)
         with c2:
-            do_deploy = st.checkbox("3. Deploy to the test schema", value=False)
+            do_deploy = st.checkbox("3. Create the tables and code in the test schema", value=True)
             recreate = st.checkbox("…rebuild objects that already exist", value=False, disabled=not do_deploy)
-            do_load = st.checkbox("4. Copy the data", value=False)
-            execute = st.checkbox("…really copy (otherwise only write the plan)", value=False, disabled=not do_load)
         with c3:
-            do_reconcile = st.checkbox("5. Reconcile the data", value=False)
-            do_report = st.checkbox("6. Build the report", value=True)
+            do_report = st.checkbox("4. Build the report", value=True)
+            st.caption("Copying the data comes next, in *Map the data*.")
         st.caption(f"Target: `{cfg.target_schema}` · converter: {'automatic, ' if cfg.auto_converter else ''}{cfg.transpiler}"
                    + (" first" if cfg.auto_converter else "") + f" · source: {cfg.source.analyzer_tech}")
         chosen = [n for n, on in (("analyze", do_analyze), ("convert", do_convert), ("deploy", do_deploy),
-                                  ("load", do_load), ("reconcile", do_reconcile), ("report", do_report)) if on]
+                                  ("report", do_report)) if on]
         if st.button("▶ Start", type="primary", disabled=not chosen):
-            runner.start(cfg, chosen, {"ai": use_ai, "recreate": recreate, "execute": execute}, keep_going=False)
+            runner.start(cfg, chosen, {"ai": use_ai, "recreate": recreate}, keep_going=False)
             st.rerun()
     if status and status.get("state") in ("done", "interrupted") and not runner.is_running(cfg):
         st.markdown("#### Last run")
@@ -872,7 +920,126 @@ if STEP == "run":
             if cfg.phase == "assessment":
                 next_button("Next: share the zip →", "send", "next-run")
             else:
-                next_button("Next: see the results →", "results", "next-run")
+                next_button("Next: map the data →", "data", "next-run")
+
+
+# ----------------------------------------------------------------- data
+
+if STEP == "data":
+    from wishbridge import mapping
+
+    st.subheader("Map the data and copy it")
+    st.markdown("The run created the tables in Databricks. Choose which source table goes into which Databricks "
+                "table, check the columns, then copy the data. Nothing is copied until you press *Copy the data*.")
+    if runner.is_running(cfg):
+        st.markdown("#### Copying…")
+        run_progress()
+        st.stop()
+    federation = cfg.data_method == "federation"
+    if federation and not cfg.source_catalog:
+        st.warning("Create the source database connection in **Settings › Source database** first.")
+        st.stop()
+
+    saved = h.table_rows(raw)
+    if st.button("🔄 Propose the mapping", help="Lists the source tables and the Databricks tables and pairs them by name."):
+        with st.spinner("Reading the table lists..."):
+            try:
+                wh = Warehouse(cfg)
+                targets = mapping.target_tables(cfg, wh)
+                ss.map_rows = mapping.propose(cfg, mapping.source_tables(cfg, wh), targets)
+                ss.map_targets = targets
+                ss.pop("map_check", None)
+            except (SqlError, ValueError) as e:
+                st.error(f"Could not read the tables: {e}")
+    rows = ss.get("map_rows") or [{"copy": True, "source": r["source"], "target": r["target"] or cfg.map_table(r["source"])}
+                                  for r in saved]
+    if not rows:
+        st.info("Press **Propose the mapping** to list the source tables and pair them with the Databricks tables.")
+    else:
+        targets = sorted(set(ss.get("map_targets") or []) | {r["target"] for r in rows if r["target"]})
+        df = pd.DataFrame([{"copy": r["copy"], "source": r["source"], "target": r["target"]} for r in rows])
+        edited = st.data_editor(
+            df, hide_index=True, width="stretch", key="map_editor", num_rows="fixed",
+            column_config={
+                "copy": st.column_config.CheckboxColumn("Copy", width="small"),
+                "source": st.column_config.TextColumn("Source table", disabled=True),
+                "target": st.column_config.SelectboxColumn("Databricks table", options=targets, required=True),
+            })
+        if ss.get("map_rows"):
+            missing = [r["target"] for r in ss.map_rows if not r.get("exists")]
+            if missing:
+                st.caption(f":red[{len(missing)} Databricks table(s) do not exist yet] (e.g. `{missing[0]}`): run "
+                           "*Create the tables* in Run, or pick another table.")
+        picked = [r for r in edited.to_dict("records") if r["copy"] and r["target"]]
+        if st.button(f"💾 Save and check the columns ({len(picked)} table(s))", type="primary", disabled=not picked):
+            new = dict(raw)
+            new["data"] = {**(raw.get("data") or {}),
+                           "tables": h.rows_to_tables(picked, (raw.get("data") or {}).get("tables"))}
+            h.save_raw(ss.project, new)
+            with st.spinner("Reading the columns of both sides..."):
+                try:
+                    ss.map_check = mapping.check(load_config(h.project_file(ss.project)))
+                except (SqlError, ValueError) as e:
+                    st.error(f"Could not check the columns: {e}")
+            st.rerun()
+
+    check = ss.get("map_check")
+    if check:
+        icon = {"ready": "✅", "check columns": "⚠️", "compare only": "➖", "no target table": "❌",
+                "no source table": "❌", "no matching columns": "❌"}
+        st.markdown("**Columns**")
+        st.dataframe(pd.DataFrame([{
+            "": icon.get(c["status"], ""), "source": c["source"], "Databricks table": c["target"], "status": c["status"],
+            "columns paired": f"{len(c.get('pairs', {}))}/{len(c.get('target_columns', []))}" if "pairs" in c else "",
+            "note": c.get("detail") or (", ".join(f"no source for {x}" for x in c.get("target_without_source", []))
+                                        + ("; " if c.get("target_without_source") and c.get("source_not_copied") else "")
+                                        + ", ".join(f"{x} not copied" for x in c.get("source_not_copied", [])))}
+            for c in check]), hide_index=True, width="stretch")
+        for c in check:
+            if c["status"] not in ("check columns", "no matching columns"):
+                continue
+            with st.expander(f"Map the columns: {c['source']} → {c['target']}"):
+                cdf = pd.DataFrame([{"Databricks column": t, "source column": c["pairs"].get(t, "")}
+                                    for t in c["target_columns"]])
+                key = f"cols:{c['target']}"
+                ed = st.data_editor(cdf, hide_index=True, width="stretch", key=key, num_rows="fixed", column_config={
+                    "Databricks column": st.column_config.TextColumn(disabled=True),
+                    "source column": st.column_config.SelectboxColumn(options=[""] + c["source_columns"]),
+                })
+                st.caption("Leave a column empty to keep it NULL (or its default).")
+                if st.button("💾 Save these columns", key=f"save-{key}"):
+                    chosen = {r["Databricks column"]: r["source column"] for r in ed.to_dict("records") if r["source column"]}
+                    tables = [dict(t) if isinstance(t, dict) else {"source": t}
+                              for t in (raw.get("data") or {}).get("tables") or []]
+                    for t in tables:
+                        if t["source"] == c["source"]:
+                            t["columns"] = chosen
+                    new = dict(raw)
+                    new["data"] = {**(raw.get("data") or {}), "tables": tables}
+                    h.save_raw(ss.project, new)
+                    with st.spinner("Checking again..."):
+                        ss.map_check = mapping.check(load_config(h.project_file(ss.project)))
+                    st.rerun()
+
+        blocking = [c for c in check if c["status"] in ("no target table", "no source table", "no matching columns")]
+        if blocking:
+            st.markdown(f":red[Fix the {len(blocking)} table(s) marked ❌ (or untick them above) before copying.]")
+        mode = "replaces what is in the Databricks tables" if cfg.load_mode == "overwrite" else "adds to the Databricks tables"
+        st.caption(f"The copy {mode} (load mode in Settings) and then compares source and target.")
+        if st.button("▶ Copy the data", type="primary", disabled=bool(blocking)):
+            runner.start(cfg, ["load", "reconcile", "report"], {"execute": True}, keep_going=False)
+            st.rerun()
+
+    status = runner.read_status(cfg)
+    if status and "load" in [x["name"] for x in status.get("steps", [])] and status.get("state") != "running":
+        st.markdown("#### Last copy")
+        show_run_status(status)
+        ld = load_state(cfg).get("load") or {}
+        if ld.get("executed"):
+            st.dataframe(pd.DataFrame([{"source": t["source"], "Databricks table": t["target"], "status": t["status"],
+                                        "rows": t.get("rows"), "error": t.get("error", "")} for t in ld["tables"]]),
+                         hide_index=True, width="stretch")
+            next_button("Next: see the results →", "results", "next-data")
 
 
 # ----------------------------------------------------------------- send
@@ -1097,7 +1264,9 @@ if STEP == "fix":
         with left:
             st.markdown("**Original**")
             orig = Path(f["input"])
-            st.code(read_source(orig) if orig.exists() else "(not found)", language="sql")
+            st.code(read_source(orig) if f["input"] and orig.is_file() else
+                    ("(made from the database catalog - no original file)" if f.get("converter") == "database" else "(not found)"),
+                    language="sql")
         with right:
             ovr = h.override_path(ss.project, f["file"], raw.get("overrides", "overrides"))
             final = Path(f["final"])

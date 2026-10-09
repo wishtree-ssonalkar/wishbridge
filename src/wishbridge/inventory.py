@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -177,8 +178,8 @@ def parse(text: str) -> dict[str, Any]:
     }
 
 
-def import_file(cfg: ProjectConfig, path: str | Path) -> dict[str, Any]:
-    """Keep the DBA's file in the project and record the inventory."""
+def import_file(cfg: ProjectConfig, path: str | Path, db: str | None = None, read_from: str = "") -> dict[str, Any]:
+    """Keep the DBA's file in the project, record the inventory and write the Databricks table scripts."""
     path = Path(path)
     from .staging import read_source
 
@@ -186,9 +187,84 @@ def import_file(cfg: ProjectConfig, path: str | Path) -> dict[str, Any]:
     dest = cfg.out("inventory", "inventory.csv")
     if path.resolve() != dest.resolve():
         shutil.copy2(path, dest)
-    result.update(file=str(dest), imported_at=datetime.now().isoformat(timespec="seconds"), source_file=str(path))
+    result.update(file=str(dest), imported_at=datetime.now().isoformat(timespec="seconds"), source_file=str(path),
+                  database_type=db or (cfg.source_db or {}).get("type") or DEFAULT_DB.get(cfg.source.key, "sqlserver"),
+                  read_from=read_from or "DBA's CSV")
     save_step(cfg, "inventory", result)
+    from .schema import build_scripts
+
+    build_scripts(cfg, result)
     return result
+
+
+# --- Read the catalog directly (SQL Server, Azure SQL, Synapse) ---------------------------------------------
+LIVE_DATABASES = ("sqlserver", "synapse")
+_DRIVERS = ("ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server", "SQL Server")
+
+
+def odbc_driver() -> str:
+    try:
+        import pyodbc
+    except ImportError as e:
+        raise RuntimeError("The SQL Server reader is not installed. Run the WishBridge installer again "
+                           "(or: pip install pyodbc).") from e
+    installed = set(pyodbc.drivers())
+    for d in _DRIVERS:
+        if d in installed:
+            return d
+    raise RuntimeError("No SQL Server ODBC driver on this computer. Install 'ODBC Driver 18 for SQL Server' from "
+                       "Microsoft (it comes with SQL Server Management Studio), or use the DBA query instead.")
+
+
+def connection_string(server: str, database: str, windows_login: bool, user: str = "", password: str = "",
+                      trust_certificate: bool = False, driver: str | None = None) -> str:
+    driver = driver or odbc_driver()
+    parts = [f"DRIVER={{{driver}}}", f"SERVER={server}", f"DATABASE={database}", "ApplicationIntent=ReadOnly"]
+    if windows_login:
+        parts.append("Trusted_Connection=yes")
+    else:
+        parts += [f"UID={user}", "PWD={" + password.replace("}", "}}") + "}"]
+    if driver != "SQL Server":  # the old built-in driver does not know these options
+        parts += ["Encrypt=yes", f"TrustServerCertificate={'yes' if trust_certificate else 'no'}"]
+    return ";".join(parts)
+
+
+def read_live(cfg: ProjectConfig, server: str, database: str, windows_login: bool = True, user: str = "",
+              password: str = "", trust_certificate: bool = False, db: str = "sqlserver",
+              timeout_s: int = 30) -> dict[str, Any]:
+    """Run the read-only inventory query on the database and import the result (the password is not kept)."""
+    if db not in LIVE_DATABASES:
+        raise ValueError(f"Reading directly works for SQL Server and Synapse; for {db} use the DBA query.")
+    if not server.strip() or not database.strip():
+        raise ValueError("Enter the server and the database")
+    if not windows_login and not (user.strip() and password):
+        raise ValueError("Enter the user and password, or use Windows login")
+    import pyodbc
+
+    try:
+        conn = pyodbc.connect(connection_string(server.strip(), database.strip(), windows_login, user.strip(), password,
+                                                trust_certificate), timeout=timeout_s, readonly=True)
+    except pyodbc.Error as e:
+        raw = str(e.args[-1] if e.args else e)
+        # "[08001] [Microsoft][ODBC Driver 18 for SQL Server]SSL Provider: ... (-2146893019) (SQLDriverConnect); ..."
+        msg = re.sub(r"[\s.]+$", "", re.sub(r"\[[^\]]*\]|\(-?\d+\)|\(SQL\w+\)", "", raw.split(";")[0])).strip() + "."
+        if "certificate" in raw.lower():
+            msg += " Tick 'Trust the server certificate' if this is the client's own server."
+        raise RuntimeError(f"Could not connect to {server} / {database}: {msg}") from e
+    try:
+        cur = conn.cursor()
+        cur.execute(QUERIES[db])
+        names = [c[0] for c in cur.description]
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(names)
+    w.writerows(["" if v is None else v for v in r] for r in rows)
+    dest = cfg.out("inventory", "inventory.csv")
+    dest.write_text(buf.getvalue(), encoding="utf-8")
+    return import_file(cfg, dest, db, read_from=f"{server} / {database}")
 
 
 def table_list(inv: dict[str, Any]) -> list[str]:

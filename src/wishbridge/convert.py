@@ -216,6 +216,20 @@ def not_converted_entries(cfg: ProjectConfig, produced: set[Path], crash: str) -
     return entries
 
 
+def schema_entries(cfg: ProjectConfig, final_dir: Path) -> list[dict[str, Any]]:
+    """Table scripts made from the database catalog (schema.py), for tables the client's code does not create."""
+    from .schema import scripts
+
+    entries = []
+    for s in scripts(cfg):
+        dest = final_dir / s["file"]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(s["path"], dest)
+        entries.append({"file": s["file"], "kind": "sql", "converter": "database", "input": "", "converted": "",
+                        "final": str(dest), "manual_override": False, "status": "ready", "fixed": 0, "findings": []})
+    return entries
+
+
 def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any]:
     use_ai = cfg.ai_enabled if use_ai is None else use_ai
     if use_ai:
@@ -303,7 +317,8 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
 
     # Never lose a file silently: every SQL source file must come out of the converter (or be in overrides/).
     files += not_converted_entries(cfg, set(converted) | set(extra), crash)
-    files.sort(key=lambda f: f["file"])
+    files += schema_entries(cfg, final_dir)
+    files.sort(key=lambda f: (f["converter"] != "database", f["file"]))  # tables from the database catalog first
 
     summary = {
         "files": len(files),

@@ -102,6 +102,7 @@ class TableMapping:
     source: str
     target: str
     load: bool = True  # False = compare only (e.g. an ETL job's output, produced by `wishbridge execute`)
+    columns: dict[str, str] = field(default_factory=dict)  # target column -> source column (empty: same names)
 
 
 @dataclass
@@ -239,7 +240,8 @@ def load_config(path: str | Path) -> ProjectConfig:
         if isinstance(t, str):
             t = {"source": t}
         cfg.tables.append(TableMapping(source=t["source"], target=t.get("target") or cfg.map_table(t["source"]),
-                                       load=bool(t.get("load", True))))
+                                       load=bool(t.get("load", True)),
+                                       columns={str(k): str(v) for k, v in (t.get("columns") or {}).items() if v}))
     return cfg
 
 

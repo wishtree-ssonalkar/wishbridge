@@ -157,7 +157,8 @@ def build_report(cfg: ProjectConfig) -> Path:
     if c:
         parts.append(f'<p class="muted">Transpiler: {escape(c["transpiler"])} + WishBridge rules. '
                      f'Converted code: <code>{escape(_rel(c["final_dir"], base))}</code></p>')
-        conv_names = {"morph": "Morph", "bladebridge": "BladeBridge", "manual": "hand-written"}
+        conv_names = {"morph": "Morph", "bladebridge": "BladeBridge", "manual": "hand-written",
+                      "database": "from the database catalog"}
         parts.append(_table(["File", "Converter", "Status", "Auto-fixed", "Open errors", "Open warnings", "AI suggestion"], [
             [f'<code>{escape(f["file"])}</code>',
              escape(conv_names.get(f.get("converter", c["transpiler"]), f.get("converter", ""))),

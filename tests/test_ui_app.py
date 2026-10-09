@@ -54,10 +54,10 @@ def test_steps_open_in_order(project):
     at = ready_app(project).run()
     assert not at.exception
     steps = {b.label.replace("✓ ", ""): b for b in at.button if b.key and b.key.startswith("step-")}
-    assert list(steps) == ["1 · Settings", "2 · Code", "3 · Run", "4 · Results", "5 · Fix code"]  # migration phase
+    assert list(steps) == ["1 · Settings", "2 · Code", "3 · Run", "4 · Map the data", "5 · Results", "6 · Fix code"]
     assert steps["1 · Settings"].disabled is False
     # nothing opens before Settings are confirmed with Next
-    assert all(steps[k].disabled for k in ("2 · Code", "3 · Run", "4 · Results", "5 · Fix code"))
+    assert all(steps[k].disabled for k in ("2 · Code", "3 · Run", "4 · Map the data", "5 · Results", "6 · Fix code"))
     assert at.selectbox[0].value == "mssql"
 
 
@@ -73,7 +73,7 @@ def test_next_saves_settings_and_opens_code(project):
     assert at.session_state["step"] == "code"  # Next saves and moves on
     steps = {b.label: b for b in at.button if b.key and b.key.startswith("step-")}
     assert steps["1 · ✓ Settings"].disabled is False and steps["2 · ✓ Code"].disabled is False
-    assert steps["4 · Results"].disabled  # nothing has run yet
+    assert steps["4 · Map the data"].disabled and steps["5 · Results"].disabled  # nothing has run yet
 
 
 def test_fix_code_handles_missing_converted_file(project):
@@ -103,7 +103,7 @@ def test_migration_settings_need_target_and_source(project):
     assert nxt.disabled
     notes = " ".join(m.value for m in at.markdown)
     assert "Fill in the fields marked *" in notes  # short line next to Next
-    assert "create the connection" in notes and "at least one table" in notes  # red notes under the fields
+    assert "create the connection" in notes  # red note under the field; tables are chosen in Map the data
     assert any(t.label.endswith(":red[*]") for t in at.text_input)  # required fields carry a red *
 
 
@@ -158,3 +158,57 @@ def test_create_connection_waits_for_its_fields(project):
         next(t for t in at.text_input if t.label.startswith(label)).set_value(value)
     at.run()
     assert not next(b for b in at.button if "Create connection" in b.label).disabled
+
+
+def _after_deploy(project):
+    from wishbridge.config import load_config
+    from wishbridge.state import save_step
+
+    cfg = load_config(project / "project.yml")
+    save_step(cfg, "deploy", {"summary": {}, "files": []})
+    return cfg
+
+
+def test_map_the_data_proposes_checks_and_copies(project, monkeypatch):
+    from wishbridge import dbx, mapping, runner
+
+    _after_deploy(project)
+    monkeypatch.setattr(dbx, "Warehouse", lambda cfg: object())
+    monkeypatch.setattr(mapping, "target_tables", lambda cfg, wh: ["workspace.wishbridge_demo.customers"])
+    monkeypatch.setattr(mapping, "source_tables", lambda cfg, wh: ["wishbridge_demo_src.Customers", "dbo.Gone"])
+    monkeypatch.setattr(mapping, "check", lambda cfg, wh=None: [
+        {"source": "wishbridge_demo_src.Customers", "target": "workspace.wishbridge_demo.customers", "load": True,
+         "status": "check columns", "source_columns": ["id", "cust_name"], "target_columns": ["id", "customer_name"],
+         "pairs": {"id": "id"}, "target_without_source": ["customer_name"], "source_not_copied": ["cust_name"]}])
+    started = []
+    monkeypatch.setattr(runner, "start", lambda cfg, steps, opts, keep_going: started.append((steps, opts)))
+
+    at = ready_app(project)
+    at.session_state["go_step"] = "data"
+    at.run()
+    assert not at.exception
+    assert at.session_state["step"] == "data"
+    next(b for b in at.button if b.label.startswith("🔄 Propose the mapping")).click().run()
+    assert not at.exception
+    rows = at.session_state["map_rows"]
+    assert rows[0]["target"] == "workspace.wishbridge_demo.customers" and rows[0]["exists"]
+    assert not rows[1]["exists"]  # no Databricks table for it yet: flagged in red
+    assert any("do not exist yet" in c.value for c in at.caption)
+    next(b for b in at.button if b.label.startswith("💾 Save and check the columns")).click().run()
+    assert not at.exception
+    assert any(e.label.startswith("Map the columns") for e in at.expander)  # column mapping for the mismatch
+    copy = next(b for b in at.button if b.label == "▶ Copy the data")
+    assert not copy.disabled  # 'check columns' does not block; missing tables would
+    copy.click().run()
+    assert started == [(["load", "reconcile", "report"], {"execute": True})]
+
+
+def test_migration_run_stops_before_copying(project):
+    _after_deploy(project)
+    at = ready_app(project)
+    at.session_state["go_step"] = "run"
+    at.run()
+    assert not at.exception
+    labels = [c.label for c in at.checkbox]
+    assert not any("Copy the data" in x or "Reconcile" in x for x in labels)  # that is the next step
+    assert any(x.startswith("3. Create the tables") for x in labels)

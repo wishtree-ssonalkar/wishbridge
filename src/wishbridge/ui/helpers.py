@@ -88,12 +88,16 @@ def table_rows(raw: dict[str, Any]) -> list[dict[str, str]]:
     return rows
 
 
-def rows_to_tables(rows: list[dict[str, Any]]) -> list[Any]:
+def rows_to_tables(rows: list[dict[str, Any]], previous: list[Any] | None = None) -> list[Any]:
+    """data.tables from editor rows; settings saved earlier for the same source (column mapping, load) are kept."""
+    extra = {t["source"]: {k: v for k, v in t.items() if k not in ("source", "target")}
+             for t in previous or [] if isinstance(t, dict) and t.get("source")}
     tables: list[Any] = []
     for r in rows:
         src, tgt = str(r.get("source") or "").strip(), str(r.get("target") or "").strip()
         if src:
-            tables.append({"source": src, "target": tgt} if tgt else src)
+            entry = {"source": src, **({"target": tgt} if tgt else {}), **extra.get(src, {})}
+            tables.append(entry if len(entry) > 1 else src)
     return tables
 
 
