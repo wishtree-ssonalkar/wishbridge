@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -271,60 +273,108 @@ except (ConfigError, yaml.YAMLError, KeyError, TypeError, ValueError) as e:
 
 from wishbridge import runner
 
-STEPS = ["Settings", "Code", "Run", "Results", "Fix code (later)"]
+LABELS = {"settings": "Settings", "code": "Code", "run": "Run", "results": "Results", "fix": "Fix code",
+          "send": "Send the zip"}
+from_package = (Path(ss.project) / "opened_from_package.json").exists()
+if cfg.phase == "assessment":
+    # At the client: everything ends up in the zip, so the last step is sending it. Fixing happens later,
+    # in the project opened from that zip.
+    ORDER = ["settings", "code", "run"] + (["fix"] if from_package else []) + ["send"]
+else:
+    ORDER = ["settings", "code", "run", "results", "fix"]
 state_now = load_state(cfg)
 running = runner.is_running(cfg)
 has_code = bool(h.input_files(ss.project, raw.get("input", "input")))
 has_results = any(k in state_now for k in ("analyze", "convert", "fit", "deploy", "reconcile"))
-done = [
-    bool(ss.get(f"settings_done:{ss.project}")) or has_results,  # Settings: confirmed with Next (or used before)
-    has_code,                                                   # Code: there is code to work on
-    has_results and not running,                                # Run: something has run
-    has_results and not running,                                # Results: seen
-    False,
-]
+packages = sorted((cfg.output_dir / "review_package").glob("*.zip"), key=lambda q: q.stat().st_mtime)
+done = {
+    "settings": bool(ss.get(f"settings_done:{ss.project}")) or has_results,  # confirmed with Next (or used before)
+    "code": has_code,
+    "run": has_results and not running,
+    "results": has_results and not running,
+    "fix": False,
+    "send": bool(ss.get(f"sent:{ss.project}")),
+}
 
 
-def reachable(i: int) -> bool:
+def reachable(key: str) -> bool:
     if running:
-        return i == 2  # while a run is going, stay on Run to follow it
-    if i == 4:
-        return "convert" in state_now and all(done[:2])
-    return all(done[:i])
+        return key == "run"  # while a run is going, stay on Run to follow it
+    if key == "fix":
+        return "convert" in state_now and all(done[k] for k in ("settings", "code"))
+    if key == "send":
+        return bool(packages) and all(done[k] for k in ("settings", "code", "run"))
+    return all(done[k] for k in ORDER[:ORDER.index(key)])
 
 
-if "step" not in ss or ss.get("step_project") != ss.project:
+if ss.get("step") not in ORDER or ss.get("step_project") != ss.project:
     ss.step_project = ss.project
-    ss.step = next((i for i in range(4) if not done[i]), 3)  # first unfinished step
+    ss.step = next((k for k in ORDER if not done[k]), ORDER[-1])  # first unfinished step
 if ss.get("go_step") is not None:
-    ss.step = ss.pop("go_step")
+    _go = ss.pop("go_step")
+    if _go in ORDER:
+        ss.step = _go
 if running:
-    ss.step = 2
+    ss.step = "run"
 if not reachable(ss.step):
-    ss.step = max(i for i in range(5) if reachable(i))
+    ss.step = [k for k in ORDER if reachable(k)][-1]
 STEP = ss.step
 
-cols = st.columns(len(STEPS))
-for i, (col, name) in enumerate(zip(cols, STEPS)):
-    mark = "✓ " if done[i] else ""
-    if col.button(f"{i + 1} · {mark}{name}", key=f"step-{i}", width="stretch", disabled=not reachable(i),
-                  type="primary" if i == STEP else "secondary"):
-        ss.step = i
+cols = st.columns(len(ORDER))
+for i, (col, key) in enumerate(zip(cols, ORDER)):
+    mark = "✓ " if done[key] else ""
+    if col.button(f"{i + 1} · {mark}{LABELS[key]}", key=f"step-{key}", width="stretch", disabled=not reachable(key),
+                  type="primary" if key == STEP else "secondary"):
+        ss.step = key
         st.rerun()
 if running:
     st.caption("🔒 A run is going in the background - the other steps open when it has finished.")
 st.divider()
 
 
-def next_button(label: str, step: int, key: str) -> None:
+def next_button(label: str, step: str, key: str) -> None:
     if st.button(label, type="primary", key=key):
         ss.go_step = step
         st.rerun()
 
 
+def settings_problems(offline: bool, v: dict) -> list[str]:
+    """What must be filled in before leaving Settings. Assessment needs only the source system; the migration
+    phase also needs the Databricks target and the source data connection."""
+    from wishbridge.config import looks_like_prod
+
+    problems = []
+    if not v.get("source"):
+        problems.append("Source system")
+    if offline:
+        return problems
+    login = (v.get("by_name") or {}).get(v.get("profile"))
+    if not login:
+        problems.append("Workspace login: choose a saved login or sign in to the client's workspace")
+    elif login.get("valid") is False:
+        problems.append("Workspace login has expired: sign in again")
+    if not str(v.get("catalog") or "").strip():
+        problems.append("Catalog")
+    schema_ = str(v.get("schema") or "").strip()
+    if not schema_:
+        problems.append("Test schema")
+    elif looks_like_prod(f"{v.get('catalog')}.{schema_}"):
+        problems.append("Test schema: it looks like production - use a test schema")
+    if v.get("method") == "files":
+        if not str(v.get("files_root") or "").strip():
+            problems.append("Data to copy: the files folder (volume path) the exported tables are in")
+    elif not str(v.get("source_catalog") or "").strip():
+        problems.append("Source database: create the connection (Source database section) or enter the source catalog")
+    tables_ = v.get("tables_df")
+    rows = h.rows_to_tables(tables_.to_dict("records")) if tables_ is not None else []
+    if not rows:
+        problems.append("Data to copy: at least one table (use the inventory or List tables)")
+    return problems
+
+
 # ----------------------------------------------------------------- settings
 
-if STEP == 0:
+if STEP == "settings":
     dbx = raw.setdefault("databricks", {})
     data = raw.setdefault("data", {})
     ai = raw.setdefault("autofix", {})
@@ -599,7 +649,11 @@ if STEP == 0:
         est = raw.get("estimate") or {}
         hpi = st.number_input("Hours per open item", value=float(est.get("hours_per_issue", 0.5)), step=0.25)
 
-    if st.button("Next: add the code →", type="primary", help="Saves the settings and opens the Code tab."):
+    problems = settings_problems(offline, locals())
+    if problems:
+        st.error("Fill these in before going on:\n" + "\n".join(f"- {p}" for p in problems))
+    if st.button("Next: add the code →", type="primary", help="Saves the settings and opens the Code tab.",
+                 disabled=bool(problems)):
         new = dict(raw)
         new["source"] = source
         if transpiler == "auto":
@@ -624,7 +678,7 @@ if STEP == 0:
             h.save_raw(ss.project, new)
             ss.pop("pending_profile", None)
             ss[f"settings_done:{ss.project}"] = True
-            ss.go_step = 1
+            ss.go_step = "code"
             st.rerun()
         except (ConfigError, KeyError, ValueError) as e:
             st.error(f"Not saved: {e}")
@@ -632,7 +686,7 @@ if STEP == 0:
 
 # ----------------------------------------------------------------- code
 
-if STEP == 1:
+if STEP == "code":
     from wishbridge import inventory as inv_mod
 
     st.subheader("Code overview")
@@ -691,7 +745,7 @@ if STEP == 1:
     if not files:
         st.info("No code yet. Upload files above, or copy them into the input folder.")
     else:
-        next_button("Next: run →", 2, "next-code")
+        next_button("Next: run →", "run", "next-code")
         st.dataframe(pd.DataFrame([{"file": str(p.relative_to(cfg.input_dir)), "size (KB)": round(p.stat().st_size / 1024, 1)}
                                    for p in files]), width="stretch", hide_index=True)
         pick = st.selectbox("Preview", [str(p.relative_to(cfg.input_dir)) for p in files])
@@ -725,7 +779,7 @@ def run_progress() -> None:
     show_run_status(status)
 
 
-if STEP == 2:
+if STEP == "run":
     offline = cfg.phase == "assessment"
     status = runner.read_status(cfg)
     if runner.is_running(cfg):
@@ -777,12 +831,94 @@ if STEP == 2:
             st.success(f"Everything is saved in **{pkg.name}** ({pkg.stat().st_size // 1024:,} KB), also kept at `{pkg}`.")
             st.download_button("⬇ Download the zip", pkg.read_bytes(), file_name=pkg.name, mime="application/zip")
         if load_state(cfg):
-            next_button("Next: see the results →", 3, "next-run")
+            if cfg.phase == "assessment":
+                next_button("Next: send the zip →", "send", "next-run")
+            else:
+                next_button("Next: see the results →", "results", "next-run")
+
+
+# ----------------------------------------------------------------- send
+
+if STEP == "send":
+    from wishbridge import mailer
+
+    st.subheader("Send the zip")
+    if not packages:
+        st.info("No zip yet - run *Assess and save everything* first.")
+    else:
+        pkg = packages[-1]
+        size_mb = pkg.stat().st_size / (1024 * 1024)
+        st.markdown(f"**{pkg.name}** · {size_mb:.1f} MB · `{pkg}`")
+        if size_mb > mailer.MAX_ATTACHMENT_MB:
+            st.warning(f"The zip is larger than {mailer.MAX_ATTACHMENT_MB} MB - many mail servers refuse that. Share it "
+                       "through OneDrive / SharePoint instead, or send it without the code (`wishbridge package --no-original`).")
+        share = raw.get("share") or {}
+        subject_default, body_default = mailer.default_message(cfg.name, load_state(cfg), pkg.name)
+        c1, c2 = st.columns(2)
+        to_text = c1.text_input("To (your e-mail)", value=", ".join(share.get("to", [])), placeholder="you@wishtreetech.com")
+        cc_text = c2.text_input("CC (optional, e.g. the client)", value=", ".join(share.get("cc", [])),
+                                placeholder="name@client.com")
+        subject = st.text_input("Subject", value=subject_default)
+        body = st.text_area("Message", value=body_default, height=220)
+        to, cc = mailer.split_addresses(to_text), mailer.split_addresses(cc_text)
+        problems = []
+        if not to:
+            problems.append("Enter at least one address in To.")
+        bad = mailer.invalid_addresses(to + cc)
+        if bad:
+            problems.append("Not a valid e-mail address: " + ", ".join(bad))
+        for p in problems:
+            st.error(p)
+
+        def remember() -> None:
+            new = dict(raw)
+            new["share"] = {"to": to, "cc": cc}
+            h.save_raw(ss.project, new)
+
+        if "outlook" not in ss:
+            ss.outlook = mailer.outlook_available()
+        b1, b2 = st.columns(2)
+        if ss.outlook:
+            if b1.button("📧 Open in Outlook with the zip attached", type="primary", disabled=bool(problems)):
+                ok, msg = mailer.open_outlook_draft(to, cc, subject, body, pkg)
+                (st.success if ok else st.error)(msg)
+                if ok:
+                    remember()
+                    ss[f"sent:{ss.project}"] = True
+        else:
+            b1.caption("Outlook is not available on this computer - use the mail server option below.")
+        if b2.button("📂 Show the zip in its folder"):
+            if os.name == "nt":
+                subprocess.Popen(["explorer", "/select,", str(pkg)])
+            else:
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(pkg.parent)])
+        with st.expander("Send through the company mail server (SMTP)", expanded=not ss.outlook):
+            st.caption("Sends the message straight away. The password is used for this send only and never saved.")
+            m1, m2, m3 = st.columns([3, 1, 1])
+            host = m1.text_input("Mail server", value=share.get("smtp_host", ""), placeholder="smtp.office365.com")
+            port = m2.number_input("Port", value=int(share.get("smtp_port", 587)), step=1)
+            tls = m3.checkbox("STARTTLS", value=True)
+            m1, m2, m3 = st.columns(3)
+            sender = m1.text_input("From", value=share.get("from", "") or (to[0] if to else ""))
+            user = m2.text_input("User", value=share.get("smtp_user", "") or sender)
+            password = m3.text_input("Password", type="password")
+            if st.button("Send now", disabled=bool(problems) or not host or not sender):
+                try:
+                    mailer.send_smtp(host, int(port), user, password, sender, to, cc, subject, body, pkg, tls)
+                except Exception as e:  # noqa: BLE001 - show the mail server's answer as it is
+                    st.error(f"Not sent: {e}")
+                else:
+                    new = dict(raw)
+                    new["share"] = {"to": to, "cc": cc, "from": sender, "smtp_host": host, "smtp_port": int(port),
+                                    "smtp_user": user}
+                    h.save_raw(ss.project, new)
+                    ss[f"sent:{ss.project}"] = True
+                    st.success(f"Sent to {', '.join(to + cc)}.")
 
 
 # ----------------------------------------------------------------- results
 
-if STEP == 3:
+if STEP == "results":
     state = load_state(cfg)
     if not state:
         st.info("Nothing has run yet. Use the Run tab.")
@@ -875,7 +1011,7 @@ if STEP == 3:
 
 # ----------------------------------------------------------------- manual fixes
 
-if STEP == 4:
+if STEP == "fix":
     state = load_state(cfg)
     conv = state.get("convert")
     st.subheader("Fix code (later)")

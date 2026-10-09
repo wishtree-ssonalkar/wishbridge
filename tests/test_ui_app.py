@@ -49,10 +49,10 @@ def test_steps_open_in_order(project):
     at = ready_app(project).run()
     assert not at.exception
     steps = {b.label.replace("✓ ", ""): b for b in at.button if b.key and b.key.startswith("step-")}
-    assert list(steps) == ["1 · Settings", "2 · Code", "3 · Run", "4 · Results", "5 · Fix code (later)"]
+    assert list(steps) == ["1 · Settings", "2 · Code", "3 · Run", "4 · Results", "5 · Fix code"]  # migration phase
     assert steps["1 · Settings"].disabled is False
     # nothing opens before Settings are confirmed with Next
-    assert all(steps[k].disabled for k in ("2 · Code", "3 · Run", "4 · Results", "5 · Fix code (later)"))
+    assert all(steps[k].disabled for k in ("2 · Code", "3 · Run", "4 · Results", "5 · Fix code"))
     assert at.selectbox[0].value == "mssql"
 
 
@@ -65,7 +65,7 @@ def test_next_saves_settings_and_opens_code(project):
     text = (project / "project.yml").read_text(encoding="utf-8")
     assert "schema: wishbridge_ui_test" in text
     assert "saved from the WishBridge UI" in text
-    assert at.session_state["step"] == 1  # Next saves and moves on
+    assert at.session_state["step"] == "code"  # Next saves and moves on
     steps = {b.label: b for b in at.button if b.key and b.key.startswith("step-")}
     assert steps["1 · ✓ Settings"].disabled is False and steps["2 · ✓ Code"].disabled is False
     assert steps["4 · Results"].disabled  # nothing has run yet
@@ -81,7 +81,30 @@ def test_fix_code_handles_missing_converted_file(project):
         "file": "a.sql", "input": str(project / "input" / "a.sql"), "final": str(project / "output" / "final" / "a.sql"),
         "status": "ready", "fixed": 0, "findings": []}]})
     at = ready_app(project)
-    at.session_state["go_step"] = 4
+    at.session_state["go_step"] = "fix"
     at.run()
     assert not at.exception
     assert any("not on disk" in i.value for i in at.info)
+
+
+def test_migration_settings_need_target_and_source(project):
+    import yaml
+
+    raw = yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))
+    raw["data"].update(source_catalog="", tables=[])  # no source connection, nothing to copy yet
+    (project / "project.yml").write_text(yaml.safe_dump(raw), encoding="utf-8")
+    at = ready_app(project).run()
+    nxt = next(b for b in at.button if b.label.startswith("Next: add the code"))
+    assert nxt.disabled
+    msg = " ".join(e.value for e in at.error)
+    assert "Fill these in" in msg and "Source database" in msg and "at least one table" in msg
+
+
+def test_assessment_ends_with_sending_the_zip(project):
+    text = (project / "project.yml").read_text(encoding="utf-8")
+    (project / "project.yml").write_text(text + "\nphase: assessment\n", encoding="utf-8")
+    at = ready_app(project).run()
+    assert not at.exception
+    steps = [b.label.replace("✓ ", "") for b in at.button if b.key and b.key.startswith("step-")]
+    assert steps == ["1 · Settings", "2 · Code", "3 · Run", "4 · Send the zip"]
+    assert not next(b for b in at.button if b.label.startswith("Next: add the code")).disabled  # nothing else needed

@@ -147,3 +147,48 @@ def test_package_is_made_even_without_conversion(tmp_path):
     (cfg.input_dir / "a.sql").write_text("CREATE TABLE dbo.T (a INT);", encoding="utf-8")
     names = set(zipfile.ZipFile(build_package(cfg)).namelist())  # nothing analyzed or converted yet
     assert {"README.txt", "report.html", "code_overview.html", "original_code/a.sql"} <= names
+
+
+def test_mail_addresses_and_message():
+    from wishbridge import mailer
+
+    assert mailer.split_addresses("a@x.com; b@y.org , c@z.in") == ["a@x.com", "b@y.org", "c@z.in"]
+    assert mailer.invalid_addresses(["a@x.com", "not-an-address", "b@y"]) == ["not-an-address", "b@y"]
+    subject, body = mailer.default_message("acme", {"overview": {"files": 3, "lines": 120, "tables": 2, "procedures": 1,
+                                                                 "views": 0, "functions": 0},
+                                                    "convert": {"summary": {"ready": 2, "review": 1, "needs_fix": 0}}},
+                                           "acme.zip")
+    assert subject == "WishBridge assessment - acme" and "acme.zip" in body and "2 files ready" in body
+
+
+def test_smtp_sends_the_zip(tmp_path, monkeypatch):
+    from wishbridge import mailer
+
+    sent = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout):
+            sent["host"] = host
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def starttls(self):
+            sent["tls"] = True
+
+        def login(self, user, pw):
+            sent["user"] = user
+
+        def send_message(self, msg):
+            sent["msg"] = msg
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP", FakeSMTP)
+    z = tmp_path / "p.zip"
+    z.write_bytes(b"PK")
+    mailer.send_smtp("smtp.x.com", 587, "me@x.com", "pw", "me@x.com", ["me@x.com"], ["client@c.com"], "S", "B", z)
+    msg = sent["msg"]
+    assert msg["To"] == "me@x.com" and msg["Cc"] == "client@c.com" and sent["tls"]
+    assert [p.get_filename() for p in msg.iter_attachments()] == ["p.zip"]

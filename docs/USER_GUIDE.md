@@ -150,10 +150,17 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   cannot succeed here (e.g. an office network blocks downloads), tick **Continue anyway**: steps that need the missing
   tool are skipped with a note. Every check and install is saved to `~/.wishbridge/system_check.json`.
   Same from the command line: `wishbridge setup` (`-c project.yml` for a project).
-- **Steps:** a project is worked through in order - **1 Settings → 2 Code → 3 Run → 4 Results → 5 Fix code (later)**.
-  A step opens only when the one before it is complete (Settings confirmed with *Next*, code present, something run).
-  **Run** works in the background: you can wait on the Run step and watch each step's progress; the other steps stay
-  locked until it has finished, so nothing is interrupted.
+- **Steps:** a project is worked through in order, and a step opens only when the one before it is complete.
+  - *Assessment* (at the client): **1 Settings → 2 Code → 3 Run → 4 Send the zip**. Settings need only the source
+    system. Run makes the zip; **Send the zip** opens an Outlook message with the zip attached (To: you, CC: the
+    client if wanted) for you to check and send, or sends it through the company mail server (SMTP; the password
+    is never saved). The addresses are remembered for the project. Projects opened from a package also get
+    **Fix code**.
+  - *Migration*: **1 Settings → 2 Code → 3 Run → 4 Results → 5 Fix code**. *Next* on Settings stays locked until the
+    workspace login (signed in), catalog and test schema, the source database connection (or files folder) and at
+    least one table to copy are filled in; the page lists what is missing.
+  - **Run** works in the background: you can wait on the Run step and watch each step's progress; the other steps
+    stay locked until it has finished, so nothing is interrupted.
 - **Good fit**: a data warehouse / ETL code base. Migrate it all.
 - **Application database**: not a warehouse. Do not migrate it; if the warehouse needs its data, add it as a
   new source (Lakehouse Federation, Lakeflow Connect or CDC).
