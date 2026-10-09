@@ -118,7 +118,7 @@ def test_etl_export_formats_are_detected_and_explained(tmp_path):
                      encoding="utf-8")
         return load_config(p)
 
-    with pytest.raises(ConfigError, match="exported as XML"):
+    with pytest.raises(ConfigError, match="read as XML exports"):
         staged(project("dsx", "datastage", ["j.dsx"]))
     with pytest.raises(ConfigError, match="export packages"):
         staged(project("infaxml", "informatica-cloud", ["m.xml"]))

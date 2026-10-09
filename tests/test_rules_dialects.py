@@ -130,6 +130,6 @@ def test_transpile_log_parsing(tmp_path: Path):
         encoding="utf-8")
     notes = _transpile_notes(log)
     assert list(notes) == ["a.sql"]
-    assert notes["a.sql"][0].startswith("LakeBridge could not parse 2 part(s) of this file")
+    assert notes["a.sql"][0].startswith("The converter could not parse 2 part(s) of this file")
     assert "'WHEN' was unexpected expecting one of: ASSIGN" in notes["a.sql"][0]
     assert notes["a.sql"][1] == "No equivalent to X"

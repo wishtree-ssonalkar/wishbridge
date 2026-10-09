@@ -84,12 +84,12 @@ def check_export_format(cfg: ProjectConfig, files: list[Path]) -> None:
     suffixes = {f.suffix.lower() for f in files}
     if cfg.source.key == "datastage" and ".xml" not in suffixes and suffixes & {".dsx", ".isx"}:
         raise ConfigError(
-            "LakeBridge reads DataStage jobs exported as XML, and this folder has only .dsx/.isx exports. "
+            "DataStage jobs are read as XML exports, and this folder has only .dsx/.isx exports. "
             "In DataStage Designer select the jobs, choose Export > DataStage Components, tick "
             "'Export job designs' and set the file type to XML (.xml), then put the .xml files here.")
     if cfg.source.key == "informatica-cloud" and ".zip" not in suffixes:
         raise ConfigError(
-            "LakeBridge reads Informatica Cloud (IICS) assets as export packages (.zip). In Informatica Cloud "
+            "Informatica Cloud (IICS) assets are read as export packages (.zip). In Informatica Cloud "
             "Data Integration select the mappings / taskflows, choose Export, download the .zip and put it here "
             "(do not unzip it). PowerCenter XML exports belong to the source 'informatica'.")
 

@@ -172,7 +172,7 @@ def converter_summary(source_key: str) -> str:
     if s.dialect in CONVERTER_DIALECTS[other]:
         return (f"{names[s.transpiler]} converts {s.analyzer_tech}; any file it can't fully convert is also tried "
                 f"with {names[other]}, and the better result is kept.")
-    return f"{names[s.transpiler]} converts {s.analyzer_tech} (the only LakeBridge converter for it)."
+    return f"{names[s.transpiler]} converts {s.analyzer_tech} (the only converter for it)."
 
 
 def load_config(path: str | Path) -> ProjectConfig:

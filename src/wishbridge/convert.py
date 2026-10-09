@@ -32,7 +32,7 @@ def _transpile_notes(error_log: Path) -> dict[str, list[str]]:
             target.setdefault(Path(path).name, []).append(text)
     for name, errs in parse_errors.items():
         examples = "; ".join(errs[:2]) + ("; ..." if len(errs) > 2 else "")
-        notes.setdefault(name, []).insert(0, f"LakeBridge could not parse {len(errs)} part(s) of this file, which were "
+        notes.setdefault(name, []).insert(0, f"The converter could not parse {len(errs)} part(s) of this file, which were "
                                              f"left as comments - rewrite them manually (e.g. {examples})")
     return notes
 

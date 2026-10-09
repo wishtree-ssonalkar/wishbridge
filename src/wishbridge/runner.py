@@ -19,7 +19,7 @@ from .config import ProjectConfig
 
 STEP_LABELS = {
     "describe": "Describe the code (fit check and code overview)",
-    "analyze": "Analyze (LakeBridge)",
+    "analyze": "Analyze the code",
     "convert": "Convert",
     "deploy": "Deploy to the test schema",
     "load": "Copy the data",

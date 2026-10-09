@@ -30,7 +30,7 @@ def _databricks_cli() -> str:
 
 def _fail(command: str, out: str) -> LakeBridgeError:
     tail = "\n".join(out.strip().splitlines()[-15:])
-    return LakeBridgeError(f"`lakebridge {command}` failed:\n{tail}")
+    return LakeBridgeError(f"The {command} step failed:\n{tail}")
 
 
 OFFLINE_COMMANDS = frozenset({"analyze", "transpile"})
@@ -111,12 +111,12 @@ def transpile(cfg: ProjectConfig, output_folder: Path, error_file: Path) -> str:
     if not output_folder.exists() or not any(p.is_file() for p in output_folder.rglob("*")):
         if cfg.source.key == "informatica-cloud" and ("INFACLOUD" in out or "registered its transpile capability" in out):
             raise LakeBridgeError(
-                "LakeBridge cannot convert Informatica Cloud yet (two LakeBridge issues): its BladeBridge converter "
+                "Informatica Cloud cannot be converted yet (two issues in the Databricks Labs converter): it "
                 "only generates PySpark for Informatica Cloud but is started without that choice ('No mapping for "
                 "source tech INFACLOUD and target tech SQL'), and the transpiler reads the .zip export packages as "
                 "text and skips them. Analyze works. Until Databricks fixes this, rebuild the mappings by hand in "
                 "overrides/ (WishBridge still deploys, runs and reconciles them) or ask your Databricks contact "
-                "about a LakeBridge update.")
+                "about an update of the Databricks Labs migration toolkit.")
         raise _fail("transpile", out)
     return out
 

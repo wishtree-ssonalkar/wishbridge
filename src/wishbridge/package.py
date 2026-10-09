@@ -36,7 +36,7 @@ Read it now (nothing to install):
   files.csv                Every converted file with its status (ready / review / needs-fix)
   fit_check.csv            Is this a data warehouse? Recommendation and reasons for every object
   inventory_tables.csv     Source tables with row counts and sizes (when the DBA inventory was imported)
-  analysis.xlsx            LakeBridge analyzer workbook (complexity per file, functions used)
+  analysis.xlsx            Analyzer workbook (complexity per file, functions used)
   original_code/           The source code before conversion
   converted_code/          The code converted for Databricks (hand fixes from overrides/ included)
 

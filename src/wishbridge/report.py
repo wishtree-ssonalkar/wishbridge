@@ -155,7 +155,7 @@ def build_report(cfg: ProjectConfig) -> Path:
     # 2. Conversion
     parts.append("<h2>2. Code conversion</h2>")
     if c:
-        parts.append(f'<p class="muted">Transpiler: {escape(c["transpiler"])} (Databricks Labs LakeBridge) + WishBridge rules. '
+        parts.append(f'<p class="muted">Transpiler: {escape(c["transpiler"])} + WishBridge rules. '
                      f'Converted code: <code>{escape(_rel(c["final_dir"], base))}</code></p>')
         conv_names = {"morph": "Morph", "bladebridge": "BladeBridge", "manual": "hand-written"}
         parts.append(_table(["File", "Converter", "Status", "Auto-fixed", "Open errors", "Open warnings", "AI suggestion"], [
@@ -248,7 +248,7 @@ def build_report(cfg: ProjectConfig) -> Path:
             rows.append([f'<code>{escape(t["target"])}</code>', _pill(t["status"]), detail])
         parts.append(_table(["Table", "Result", "Details"], rows))
     elif r:
-        parts.append('<p>Full LakeBridge reconciliation ran; results are in the reconcile tables and dashboard in Databricks.</p>')
+        parts.append('<p>Full reconciliation ran; results are in the reconcile tables and dashboard in Databricks.</p>')
     else:
         parts.append('<p class="skip">Not run — <code>wishbridge reconcile</code></p>')
 
@@ -259,7 +259,7 @@ def build_report(cfg: ProjectConfig) -> Path:
 <p class="sub">{escape(cfg.source.analyzer_tech)} → Databricks · generated {generated} · Wishtree WishBridge {__version__}</p>
 {''.join(parts)}
 <footer>Effort figures are estimates based on the configured hours per file and per open item.
-Prepared with Wishtree WishBridge by Wishtree Technologies. Conversion is powered by Databricks Labs LakeBridge; WishBridge adds rule-based fixes, validation, data loading and reconciliation.</footer>
+Prepared with Wishtree WishBridge by Wishtree Technologies. Conversion uses the Databricks Labs migration toolkit; WishBridge adds rule-based fixes, validation, data loading and reconciliation.</footer>
 </main></body></html>"""
     out = cfg.out("report.html")
     out.write_text(html, encoding="utf-8")

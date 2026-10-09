@@ -187,7 +187,7 @@ with st.sidebar:
 
 
 st.title("Wishtree WishBridge")
-st.caption(f"{PURPOSE} Assess, convert, deploy, copy the data and prove it matches — built on Databricks Labs LakeBridge.")
+st.caption(f"{PURPOSE} Assess, convert, deploy, copy the data and prove it matches.")
 
 
 def show_scope() -> None:

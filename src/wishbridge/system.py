@@ -133,7 +133,7 @@ def requirements() -> list[Requirement]:
     osn = _os()
     reqs = [
         Requirement(
-            "cli", "Databricks CLI", "runs LakeBridge",
+            "cli", "Databricks CLI", "runs the migration toolkit",
             lambda: shutil.which("databricks"),
             lambda: _winget("Databricks.DatabricksCLI") if osn == "windows" else
             [["brew", "tap", "databricks/tap"], ["brew", "install", "databricks"]] if osn == "mac" and shutil.which("brew") else [],
@@ -152,7 +152,7 @@ def requirements() -> list[Requirement]:
              "linux": "sudo apt install openjdk-17-jre-headless   (or: sudo dnf install java-17-openjdk-headless)"}[osn],
             version=_java_version, minimum="11", compatible=lambda v: not v or _major(v) >= 11),
         Requirement(
-            "lakebridge", "LakeBridge", "Databricks' migration toolkit (analyzer and converters)",
+            "lakebridge", "Migration toolkit", "Databricks Labs analyzer and converters",
             lambda: str(LABS / "lakebridge") if (LABS / "lakebridge").exists() else None,
             lambda: [_cli() + ["labs", "install", "lakebridge"]],
             "databricks labs install lakebridge", after=("cli",),
