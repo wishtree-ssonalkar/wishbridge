@@ -128,13 +128,20 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   - *Assessment* (offline): only the source system and the converter (leave it on *Automatic*: it picks the right
     converter and retries files it can't convert with the other one). Schema names and AI / estimates
     are folded away. Nothing here needs Databricks.
-  - *Migration*: also the **Databricks workspace** (pick the saved login for the client's workspace, or *Connect to
-    another workspace* to sign in; *Load warehouses and catalogs* fills the lists), the test schema, what to
-    deploy, the source database connection and how to copy the data. Which tables go where is chosen later, in
-    *Map the data*. Required fields carry a red * and a red note until they are filled in. Press *Next: add the
-    code* - it saves the settings and opens the Code tab (bad values are refused and the old settings kept). Saving
-    records the workspace URL in the project: from then on WishBridge refuses to deploy, load or reconcile with a
-    login for any other workspace.
+  - *Migration*: the settings come in four parts, **one after the other** - the next part appears when the one
+    before it is filled in, and each finished part is saved right away (ticked ✅):
+    1. **Databricks workspace** - pick the saved login for the client's workspace, or *Connect to another
+       workspace* to sign in; *Load warehouses and catalogs* fills the lists. If the project belongs to another
+       workspace, *Move this project to ...* is an explicit choice.
+    2. **Target in Databricks** - SQL warehouse, catalog, test schema (production-looking names are refused) and
+       what to deploy.
+    3. **Source data** - copy from the source database directly (create the Lakehouse Federation connection, or
+       use an existing federation catalog) or from exported files in a volume.
+    4. **Copy options** - append or overwrite. Which tables go where is chosen later, in *Map the data*.
+    Required fields carry a red * and a red note until they are filled in. *Next: add the code* appears with
+    part 4; it saves the settings and opens the Code tab (bad values are refused and the old settings kept). The
+    project records the workspace URL: from then on WishBridge refuses to deploy, load or reconcile with a login
+    for any other workspace.
 - **2 · Code:** the **code overview** (a document describing how the system is built), upload more files and preview
   them, and **Read from the database (optional) - tables and code** - for clients without a code repository (or
   with only part of it). This works in the assessment phase too: it needs a read-only login to the client's

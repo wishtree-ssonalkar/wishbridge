@@ -99,11 +99,14 @@ def test_migration_settings_need_target_and_source(project):
     raw["data"].update(source_catalog="", tables=[])  # no source connection, nothing to copy yet
     (project / "project.yml").write_text(yaml.safe_dump(raw), encoding="utf-8")
     at = ready_app(project).run()
-    nxt = next(b for b in at.button if b.label.startswith("Next: add the code"))
-    assert nxt.disabled
+    assert not at.exception
+    # the parts appear one by one: workspace and target are filled in, the source data is not
+    headings = [m.value for m in at.markdown if m.value.startswith("#### ")]
+    assert headings == ["#### 1 · Databricks workspace ✅", "#### 2 · Target in Databricks ✅", "#### 3 · Source data"]
+    assert not any(b.label.startswith("Next: add the code") for b in at.button)  # appears once all parts are done
     notes = " ".join(m.value for m in at.markdown)
-    assert "Fill in the fields marked *" in notes  # short line next to Next
     assert "create the connection" in notes  # red note under the field; tables are chosen in Map the data
+    assert any("next part appears" in c.value for c in at.caption)
     assert any(t.label.endswith(":red[*]") for t in at.text_input)  # required fields carry a red *
 
 
@@ -267,3 +270,16 @@ def test_choose_between_code_files_and_database_code(project):
     next(r for r in at.radio if r.label == "Code to assess").set_value("The code files").run()
     raw = yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))
     assert raw["input"] == "input" and "code_files_input" not in raw
+
+
+def test_migration_settings_start_with_the_workspace_only(project):
+    import yaml
+
+    raw = yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))
+    raw["databricks"]["profile"] = "NOT_SET_UP_HERE"
+    (project / "project.yml").write_text(yaml.safe_dump(raw), encoding="utf-8")
+    at = ready_app(project).run()
+    assert not at.exception
+    headings = [m.value for m in at.markdown if m.value.startswith("#### ")]
+    assert headings == ["#### 1 · Databricks workspace"]  # target and source appear after a login is chosen
+    assert not any(t.label.startswith("Test schema") for t in at.text_input)
