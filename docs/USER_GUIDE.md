@@ -116,26 +116,31 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   to make a desktop shortcut), or run `wishbridge ui`. It opens at http://localhost:8501 and runs only on
   your computer; close the black window to stop it.
 - **Sidebar:** *Open a folder* takes either a WishBridge project or **any folder of client code** — a Git
-  repository, a Visual Studio database project, an export. For client code the app detects the source system
-  (from `.sqlproj`, `.dtsx`, Informatica XML, or the SQL keywords), finds separate databases inside it (e.g.
-  TenantDB, AuditDB) and offers to create one project per database in `C:\migrations`. The client's folder is
-  only read, never written to. *Create new* makes an empty project to upload code into.
+  repository, a Visual Studio database project, an ETL export. For client code the app detects the source system
+  (from `.sqlproj`, `.dtsx`, Informatica or DataStage XML, Informatica Cloud `.zip`, or the SQL keywords), finds
+  separate databases inside it (e.g. TenantDB, AuditDB) and offers to create one project per database in
+  `C:\migrations`. By default it **takes a copy of the code** into the project with a receipt, so the client's
+  folder is needed only once (untick it to read their folder in place). The client's folder is never written to.
+  New projects start in the **assessment phase**. *Create new* makes an empty project to upload code into.
   Same from the command line: `wishbridge init acme --code C:\client-repo --dir C:\migrations`.
-- **1 · Settings:** the source system — the converter is then chosen automatically (leave it on *Automatic*: it
-  picks the right LakeBridge converter and retries files it can't convert with the other one) — then the
-  **Databricks workspace**: pick the saved login for the
-  client's workspace (each shows its URL and whether it is still signed in), or open *Connect to another
-  workspace* to sign in to a new one in the browser. Press *Load warehouses and catalogs* — the app shows
-  *Connected as &lt;user&gt; on &lt;workspace&gt;* and fills the SQL warehouse and catalog lists. Then the test schema,
-  schema mapping, data method and the tables to copy. Press *Save settings* (bad values are refused and the old
-  settings kept). Saving records the workspace URL in the project: from then on WishBridge refuses to deploy,
-  load or reconcile with a login for any other workspace, so a client project can't touch the wrong workspace.
-- **2 · Code:** upload the legacy code files and preview them.
-- **3 · Run:** tick the steps (analyze, convert, deploy, copy data, reconcile, report) and press *Start*.
+- **1 · Settings:** the **Phase** comes first and saves as soon as you change it.
+  - *Assessment* (offline): only the source system and the converter (leave it on *Automatic*: it picks the right
+    LakeBridge converter and retries files it can't convert with the other one). Schema names and AI / estimates
+    are folded away. Nothing here needs Databricks.
+  - *Migration*: also the **Databricks workspace** (pick the saved login for the client's workspace, or *Connect to
+    another workspace* to sign in; *Load warehouses and catalogs* fills the lists), the test schema, what to
+    deploy, the source database connection and the tables to copy. Press *Save settings* (bad values are refused
+    and the old settings kept). Saving records the workspace URL in the project: from then on WishBridge refuses
+    to deploy, load or reconcile with a login for any other workspace.
+- **2 · Code:** the code received (receipt and whether the copy changed), the **source database inventory** (download
+  the read-only query for the DBA, import their CSV), upload more files and preview them.
+- **3 · Run:** tick the steps (analyze, convert, deploy, copy data, reconcile, report) and press *Start*. In the
+  assessment phase only analyze, convert and report can run (offline).
   Each step shows its result; a failed step stops the run and says why. Copying data only happens when
   *really copy* is ticked.
-- **4 · Results:** the numbers, file statuses, open items, deployment errors, reconciliation and the full
-  report, with a download button.
+- **4 · Results:** the numbers, the fit check (*Is this a data warehouse?*), file statuses, open items,
+  deployment errors, reconciliation and the full report, plus *Build the review package* (one zip with the report,
+  open items, converted and original code).
 - **5 · Manual fixes:** pick a file, see its open items and the original next to the Databricks version, edit it
   and press *Save as manual fix*. Then run Convert again.
 - **Environment:** checks the Databricks CLI, Java, LakeBridge, the converters and your login, with the command
@@ -315,7 +320,7 @@ deploy again. Re-running is safe; add `--recreate` to rebuild objects that alrea
 Code alone can't copy data: WishBridge needs to know **where the old database is and how to log in**.
 Copying data is optional — skip this step and WishBridge still converts and deploys the code.
 
-**Connect the source database (recommended).** In the app: *Settings → Source database*. Choose the database
+**Connect the source database (recommended).** In the app (migration phase): *Settings → Source database*. Choose the database
 type, enter the server, port, database (or Oracle service name) and a read-only user and password, then press
 **Create connection**. WishBridge stores the password in Databricks secrets (never in `project.yml` or on your
 computer), creates a Lakehouse Federation connection and a catalog `wb_<project>_source` that shows the old
