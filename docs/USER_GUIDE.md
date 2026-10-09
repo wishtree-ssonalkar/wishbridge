@@ -3,10 +3,24 @@
 This guide takes you from a fresh laptop to a finished migration report. Follow the steps in order.
 Commands are for **Windows PowerShell**; Mac/Linux differences are noted where they matter.
 
-**What WishBridge does:** you give it the SQL code of an old system (SQL Server, Snowflake, Oracle,
-Teradata, …). It assesses the code, converts it to Databricks SQL, fixes or flags what the converter got
-wrong, deploys it to a test schema in Databricks, copies the data, checks the data matches, and writes an
-HTML report you can share with the client.
+**What WishBridge does:** it migrates a **data warehouse** and the ETL that loads it to Databricks. You give
+it the warehouse code (SQL Server, Oracle, Teradata, Snowflake, … or SSIS / Informatica / DataStage jobs). It
+assesses the code, converts it to Databricks, fixes or flags what the converter got wrong, deploys it to a test
+schema in Databricks, copies the data, checks the data matches, and writes an HTML report you can share with
+the client.
+
+**What WishBridge migrates:** data warehouses and the ETL that loads them.
+
+| What the client has | Migrate with WishBridge? |
+|---|---|
+| SQL Server used as a data warehouse (fact/dimension tables, SSIS loads, Power BI or SSRS reports) | Yes |
+| Oracle used as a data warehouse (often Exadata, PL/SQL loads, Informatica) | Yes |
+| Teradata, Snowflake, Azure Synapse, Amazon Redshift, Google BigQuery, IBM Netezza | Yes |
+| SSIS, Informatica or DataStage jobs that load a warehouse | Yes |
+| SQL Server or Oracle behind a live application (order entry, bookings, HR screens) | No: it stays where it is |
+
+SQL Server and Oracle are general database products, so the same software can hold a warehouse or an
+application's data. Analyze runs a **fit check** that confirms the code is a warehouse and warns when it is not.
 
 ---
 
@@ -212,11 +226,11 @@ Every file gets a status:
 The terminal and the report's **Open items** table list each problem with its line number and what to use
 on Databricks instead. The converted code is in `output\final\`.
 
-### C4a. Check what belongs on Databricks (migration fit)
+### C4a. Check it really is a data warehouse (fit check)
 
-Databricks is the home for reporting, ETL, dashboards and AI. It is **not** a replacement for the database
-behind a live application. Client folders often hold both kinds of code, so **Analyze** also runs a fit check
-(or run it on its own in seconds: `wishbridge fit --details`). Every object gets a recommendation with its reasons:
+WishBridge migrates data warehouses, not the databases behind live applications. Clients do not always say
+which one they are handing over, so **Analyze** also runs a fit check (or run it on its own in seconds:
+`wishbridge fit --details`). Every object gets a recommendation with its reasons:
 
 | Recommendation | Typical objects | What to do |
 |---|---|---|
@@ -228,10 +242,10 @@ behind a live application. Client folders often hold both kinds of code, so **An
 
 It also gives a verdict for the whole database:
 
-- **Application database**: keep it (and the app) on the source, feed its data to Databricks (Lakehouse
-  Federation, Lakeflow Connect or CDC) and move only the reporting / ETL objects.
-- **Good fit**: a warehouse / reporting / ETL code base; migrate it all.
-- **Mixed**: move the reporting / ETL part, keep the application part.
+- **Good fit**: a data warehouse / ETL code base. Migrate it all.
+- **Application database**: not a warehouse. Do not migrate it; if the warehouse needs its data, add it as a
+  new source (Lakehouse Federation, Lakeflow Connect or CDC).
+- **Mixed**: migrate the warehouse part (`scope: recommended`), leave the application part.
 
 To deploy only what belongs on Databricks, set `scope: recommended` in `project.yml` (or **What to deploy**
 in the app's Settings). The fit check uses names and code patterns, so read the reasons before you rely on it.

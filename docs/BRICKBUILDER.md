@@ -1,5 +1,9 @@
 # Path to a Databricks Brickbuilder Solution: Wishtree WishBridge
 
+**Positioning:** WishBridge is a *data warehouse migration* solution: SQL Server, Oracle, Teradata, Snowflake,
+Synapse, Redshift, BigQuery and Netezza warehouses, and the SSIS, Informatica and DataStage jobs that load them,
+moved to Databricks with the data reconciled. Application databases are out of scope (the fit check flags them).
+
 Brickbuilder Solutions are partner-built migration and industry solutions that Databricks reviews and
 features on databricks.com. **They are granted to a Databricks consulting partner, not to a piece of
 software.** The tool is one part of the submission; your company's partner status and customer track record

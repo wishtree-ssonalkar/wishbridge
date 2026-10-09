@@ -10,7 +10,8 @@ import yaml
 import streamlit as st
 
 from wishbridge import __version__
-from wishbridge.config import CONVERTER_DIALECTS, SOURCES, ConfigError, converter_summary, load_config
+from wishbridge.config import (CONVERTER_DIALECTS, PURPOSE, SCOPE_ROWS, SOURCES, ConfigError, converter_summary,
+                               load_config)
 from wishbridge import discover
 from wishbridge import source_db as sd
 from wishbridge.dbx import SqlError, Warehouse
@@ -43,7 +44,7 @@ def project_ok() -> bool:
 # ----------------------------------------------------------------- sidebar
 
 with st.sidebar:
-    st.markdown(f"### 🌉 Wishtree WishBridge\nMigration to Databricks · v{__version__}")
+    st.markdown(f"### 🌉 Wishtree WishBridge\nData warehouse migration to Databricks · v{__version__}")
     mode = st.radio("Project", ["Open a folder", "Create new"], horizontal=True, label_visibility="collapsed")
     if mode == "Open a folder":
         folder = st.text_input("Project or client code folder", value=ss.project,
@@ -73,7 +74,7 @@ with st.sidebar:
     else:
         with st.form("new-project"):
             name = st.text_input("Project name", placeholder="acme-dw")
-            source = st.selectbox("Source system", list(SOURCES), format_func=lambda k: f"{SOURCES[k].analyzer_tech} ({k})")
+            source = st.selectbox("Source system", list(SOURCES), format_func=lambda k: SOURCES[k].label)
             parent = st.text_input("Create in folder", value=r"C:\migrations")
             if st.form_submit_button("Create project", width="stretch"):
                 try:
@@ -88,7 +89,12 @@ with st.sidebar:
 
 
 st.title("Wishtree WishBridge")
-st.caption("Assess, convert, deploy, load and reconcile legacy SQL and ETL on Databricks — built on Databricks Labs LakeBridge.")
+st.caption(f"{PURPOSE} Assess, convert, deploy, copy the data and prove it matches — built on Databricks Labs LakeBridge.")
+
+
+def show_scope() -> None:
+    st.markdown("**What WishBridge migrates**")
+    st.table(pd.DataFrame(SCOPE_ROWS, columns=["What the client has", "Migrate it?"]).set_index("What the client has"))
 
 info = ss.get("code_info")
 if info and not project_ok():
@@ -99,12 +105,15 @@ if info and not project_ok():
                 f"({info.sql_files} SQL). WishBridge only **reads** this folder; the project and everything it produces "
                 f"go in a separate folder.")
     (st.success if det.confidence == "high" else st.info if det.confidence == "medium" else st.warning)(
-        f"Detected source system: **{SOURCES[det.source].analyzer_tech}** ({det.confidence} confidence) - {det.reason}")
+        f"Detected source system: **{SOURCES[det.source].label}** ({det.confidence} confidence) - {det.reason}")
+    if det.source in ("mssql", "oracle"):
+        st.caption("SQL Server and Oracle are migrated when they hold a **data warehouse**. Analyze runs a fit check "
+                   "that warns if this is an application's database instead.")
     with st.form("code-project"):
         c1, c2 = st.columns(2)
         src_keys = list(SOURCES)
         source = c1.selectbox("Source system", src_keys, index=src_keys.index(det.source),
-                              format_func=lambda k: f"{SOURCES[k].analyzer_tech} ({k})")
+                              format_func=lambda k: SOURCES[k].label)
         name = c2.text_input("Project name", value=discover.suggested_name(info.path))
         c1, c2 = st.columns(2)
         parent = c1.text_input("Create projects in", value=r"C:\migrations")
@@ -132,11 +141,13 @@ if info and not project_ok():
     st.stop()
 
 if not project_ok():
-    st.info("Open a project folder - or any folder of client code - or create a new project in the sidebar to begin.")
+    st.info("Open the client's warehouse code (a project folder, a repository, a database project or an ETL export) "
+            "or create a new project in the sidebar to begin.")
     st.markdown(
-        "**How it works:** 1. create a project · 2. fill in the settings · 3. upload the legacy code · "
-        "4. run the steps · 5. review the results and fix what is left · 6. share the report."
+        "**How it works:** 1. open the warehouse code · 2. fill in the settings · 3. analyze (is it a warehouse? how big?) · "
+        "4. convert and deploy · 5. copy the data and reconcile · 6. share the report."
     )
+    show_scope()
     st.stop()
 
 try:
@@ -166,7 +177,7 @@ with tab_settings:
     with c1:
         src_keys = list(SOURCES)
         source = st.selectbox("Source system", src_keys, index=src_keys.index(cfg.source.key),
-                              format_func=lambda k: f"{SOURCES[k].analyzer_tech} ({k})")
+                              format_func=lambda k: SOURCES[k].label)
     with c2:
         # Only converters that support the chosen source are offered; "auto" is the default and the recommendation.
         conv_options = ["auto"] + [c for c in ("morph", "bladebridge") if SOURCES[source].dialect in CONVERTER_DIALECTS[c]]
@@ -532,7 +543,7 @@ with tab_results:
         if fit:
             from wishbridge.fit import CATEGORY_LABELS
 
-            st.markdown("#### Migration fit: what belongs on Databricks")
+            st.markdown("#### Is this a data warehouse? (fit check)")
             (st.warning if fit["verdict"] == "application" else st.info if fit["verdict"] == "mixed" else st.success)(
                 f"**{fit['headline']}**\n\n" + "\n".join(f"- {x}" for x in fit["advice"]))
             fm = st.columns(len(CATEGORY_LABELS))

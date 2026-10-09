@@ -3,6 +3,19 @@
 **End-to-end migration accelerator from legacy data warehouses and ETL to Databricks, by Wishtree Technologies.**
 Built on [Databricks Labs LakeBridge](https://github.com/databrickslabs/lakebridge).
 
+**What WishBridge migrates:** data warehouses and the ETL that loads them.
+
+| What the client has | Migrate with WishBridge? |
+|---|---|
+| SQL Server used as a data warehouse (fact/dimension tables, SSIS loads, Power BI or SSRS reports) | Yes |
+| Oracle used as a data warehouse (often Exadata, PL/SQL loads, Informatica) | Yes |
+| Teradata, Snowflake, Azure Synapse, Amazon Redshift, Google BigQuery, IBM Netezza | Yes |
+| SSIS, Informatica or DataStage jobs that load a warehouse | Yes |
+| SQL Server or Oracle behind a live application (order entry, bookings, HR screens) | No: it stays where it is |
+
+SQL Server and Oracle are general database products, so the same software can hold a warehouse or an
+application's data. Analyze runs a **fit check** that confirms the code is a warehouse and warns when it is not.
+
 **New to WishBridge? Start with the step-by-step [User Guide](docs/USER_GUIDE.md).**
 Prefer forms to commands? Double-click `Start WishBridge.cmd` (or run `wishbridge ui`) to open the WishBridge app
 in your browser: create a project, fill in the settings, upload code, press Start and review the results.

@@ -245,7 +245,7 @@ def classify(cfg: ProjectConfig) -> dict[str, Any]:
     if move >= 3 and keep == 0:
         wh_ev.append(f"all {move} classified routines are reporting / ETL")
 
-    source = cfg.source.analyzer_tech
+    source = cfg.source.analyzer_tech.removeprefix("MS ")
     if cfg.source.key in ETL_SOURCES:
         verdict = "warehouse"
     elif app_ev and not wh_ev:
@@ -258,23 +258,23 @@ def classify(cfg: ProjectConfig) -> dict[str, Any]:
         verdict = "application" if keep > move else ("warehouse" if keep == 0 else "mixed")
 
     if verdict == "application":
-        headline = "This is an application's database - do not move it as a whole."
+        headline = "Not a data warehouse: this is an application's database. WishBridge does not migrate it."
         advice = [
             f"Keep the database (and the application using it) on {source}.",
-            "Copy its tables to Databricks with a data feed: Lakehouse Federation for reads, "
-            "Lakeflow Connect or another CDC tool for continuous replication.",
-            (f"Move the {move} reporting / ETL object(s) marked 'Move to Databricks' so heavy reports run on Databricks "
-             "against the copied data." if move else "No reporting or ETL logic was found: only the data needs to come across."),
+            "If the client's warehouse needs this data, add the database as a new source of the warehouse: "
+            "copy its tables with Lakehouse Federation, Lakeflow Connect or another CDC tool.",
+            (f"{move} reporting object(s) marked 'Move to Databricks' could be rebuilt on that copied data."
+             if move else "No reporting or ETL logic was found here."),
         ]
     elif verdict == "warehouse":
-        headline = "Good fit: this is reporting / data-warehouse / ETL code."
+        headline = "Good fit: this is data-warehouse / ETL code. Migrate it."
         advice = ["Migrate the code and the data to Databricks.",
                   "Point reports and dashboards at Databricks once reconciliation passes."]
     else:
-        headline = "Mixed: application logic and reporting / ETL in the same database."
-        advice = [f"Move the {move} object(s) marked 'Move to Databricks' and copy the tables.",
-                  f"Keep the {keep} object(s) marked 'Keep on source' with the application on {source}.",
-                  "Feed the application's data to Databricks continuously (Lakeflow Connect or CDC)."]
+        headline = "Mixed: warehouse / reporting code and application code in the same database."
+        advice = [f"Migrate the warehouse part: the {move} object(s) marked 'Move to Databricks' and the tables they use "
+                  "(set scope: recommended to deploy only these).",
+                  f"Leave the {keep} application object(s) marked 'Keep on source' on {source}."]
     if counts["review"]:
         advice.append(f"Decide the {counts['review']} object(s) marked 'Decide'.")
 

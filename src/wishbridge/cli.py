@@ -51,9 +51,15 @@ def main() -> None:
 
 @main.command()
 def sources() -> None:
-    """List supported source systems."""
+    """List supported source systems (data warehouses and the ETL tools that load them)."""
+    from .config import PURPOSE, SCOPE_ROWS
+
+    click.echo(PURPOSE)
     for s in SOURCES.values():
-        click.echo(f"  {s.key:<18} {s.analyzer_tech:<20} transpiler={s.transpiler}")
+        click.echo(f"  {s.key:<18} {s.label:<32} transpiler={s.transpiler}")
+    click.echo("What to migrate:")
+    for what, answer in SCOPE_ROWS:
+        click.echo(f"  - {what}: {answer}")
 
 
 @main.command()
@@ -123,7 +129,7 @@ def _print_fit(fit: dict | None, cfg) -> None:
         return
     from .fit import CATEGORY_LABELS
 
-    click.echo(f"Migration fit: {fit['headline']}")
+    click.echo(f"Is this a data warehouse? {fit['headline']}")
     for line in fit["advice"]:
         click.echo(f"  - {line}")
     click.echo("  " + " | ".join(f"{CATEGORY_LABELS[k]}: {v}" for k, v in fit["counts"].items() if v))

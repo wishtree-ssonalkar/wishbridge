@@ -21,7 +21,8 @@ def project(tmp_path):
 def test_welcome_without_project():
     at = st_testing.AppTest.from_file(APP, default_timeout=60).run()
     assert not at.exception
-    assert any("Open a project folder" in i.value for i in at.info)
+    assert any("warehouse code" in i.value for i in at.info)
+    assert any("SQL Server used as a data warehouse" in str(t.value) for t in at.table)
 
 
 def test_all_tabs_render_for_a_project(project):

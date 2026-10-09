@@ -115,11 +115,11 @@ def build_report(cfg: ProjectConfig) -> Path:
     if fit:
         from .fit import CATEGORY_LABELS
 
-        parts.append("<h2>Migration fit: what belongs on Databricks</h2>")
+        parts.append("<h2>Is this a data warehouse? (fit check)</h2>")
         parts.append(f'<p><b>{escape(fit["headline"])}</b></p><ul>' +
                      "".join(f"<li>{escape(x)}</li>" for x in fit["advice"]) + "</ul>")
         for key, label in (("app_evidence", "Signs of an application database"),
-                           ("warehouse_evidence", "Signs of reporting / warehouse use")):
+                           ("warehouse_evidence", "Signs of a data warehouse")):
             if fit.get(key):
                 parts.append(f'<p class="muted">{label}: ' + "; ".join(escape(x) for x in fit[key]) + "</p>")
         parts.append('<p class="muted">' + " · ".join(f"{CATEGORY_LABELS[k]}: {v}" for k, v in fit["counts"].items() if v) +

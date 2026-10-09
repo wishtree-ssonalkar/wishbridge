@@ -20,6 +20,38 @@ class Source:
     transpiler: str  # "morph" or "bladebridge"
     dialect: str  # value for `lakebridge transpile --source-dialect`
 
+    @property
+    def label(self) -> str:
+        """What the user sees: WishBridge migrates data warehouses and the ETL that loads them."""
+        return SOURCE_LABELS.get(self.key, self.analyzer_tech)
+
+
+SOURCE_LABELS = {
+    "mssql": "SQL Server data warehouse",
+    "synapse": "Azure Synapse",
+    "snowflake": "Snowflake",
+    "oracle": "Oracle data warehouse",
+    "teradata": "Teradata",
+    "redshift": "Amazon Redshift",
+    "bigquery": "Google BigQuery",
+    "netezza": "IBM Netezza",
+    "datastage": "IBM DataStage (ETL)",
+    "informatica": "Informatica PowerCenter (ETL)",
+    "informatica-cloud": "Informatica Cloud (ETL)",
+    "ssis": "SSIS (ETL)",
+}
+
+# What WishBridge is for, in one place (shown by the app, the CLI and the docs).
+PURPOSE = "Migrate your data warehouse and the ETL that loads it to Databricks."
+SCOPE_ROWS = [
+    ("SQL Server used as a data warehouse (fact/dimension tables, SSIS loads, Power BI or SSRS reports)", "Yes"),
+    ("Oracle used as a data warehouse (often Exadata, PL/SQL loads, Informatica)", "Yes"),
+    ("Teradata, Snowflake, Azure Synapse, Amazon Redshift, Google BigQuery, IBM Netezza", "Yes"),
+    ("SSIS, Informatica or DataStage jobs that load a warehouse", "Yes"),
+    ("SQL Server or Oracle behind a live application (order entry, bookings, HR screens)",
+     "No - it stays; the fit check warns if you open one"),
+]
+
 
 # Analyzer names come from lakebridge Analyzer.supported_source_technologies();
 # dialects come from each transpiler's lib/config.yml.
