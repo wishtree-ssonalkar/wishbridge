@@ -455,9 +455,39 @@ def detect(sql: str, dialect: str | None = None) -> list[Finding]:
     return _dedupe(findings)
 
 
-def apply_rules(sql: str, schema_map: dict[str, str] | None = None, dialect: str | None = None) -> tuple[str, list[Finding]]:
+_BOOLEAN_COLUMN = re.compile(r"`?(\w+)`?\s+BOOLEAN\b", I)
+
+
+def boolean_columns(sql: str) -> set[str]:
+    """Column names declared BOOLEAN in converted CREATE TABLE statements (SQL Server BIT columns end up here)."""
+    return {m.group(1).lower() for m in _BOOLEAN_COLUMN.finditer(mask(sql, keep_idents=True))}
+
+
+def _fix_bool_compare(sql: str, bool_columns: set[str] | frozenset[str]) -> tuple[str, list[Finding]]:
+    """`IsActive = 1` -> `IsActive = true` for columns known to be BOOLEAN (Databricks rejects BOOLEAN = INT)."""
+    if not bool_columns:
+        return sql, []
+    pat = re.compile(r"(?<![\w.`])((?:`?\w+`?\.)?`?(\w+)`?)(\s*(?:=|<>|!=)\s*)([01])\b(?!\s*\.)")
+
+    def repl(m: re.Match) -> str:
+        if m.group(2).lower() not in bool_columns:
+            return m.group(0)
+        return f"{m.group(1)}{m.group(3)}{'true' if m.group(4) == '1' else 'false'}"
+
+    hits = [h.start() for h in pat.finditer(mask(sql, keep_idents=True)) if h.group(2).lower() in bool_columns]
+    if not hits:
+        return sql, []
+    new, _ = _sub_code(sql, pat, repl, keep_idents=True)
+    return new, [Finding("boolean-compare", INFO, line_of(sql, hits[0]),
+                         f"Compared BOOLEAN columns (BIT on the source) with true/false instead of 1/0 ({len(hits)}x)", True)]
+
+
+def apply_rules(sql: str, schema_map: dict[str, str] | None = None, dialect: str | None = None,
+                bool_columns: set[str] | frozenset[str] = frozenset()) -> tuple[str, list[Finding]]:
     findings: list[Finding] = []
     sql, f = _fix_schema_map(sql, schema_map or {})
+    findings += f
+    sql, f = _fix_bool_compare(sql, bool_columns)
     findings += f
     for rule, scope, pat, repl, msg in _SIMPLE_FIXES:
         if not _applies(scope, dialect):
@@ -512,7 +542,8 @@ _NB_DETECTORS: list[tuple[str, str, re.Pattern, str]] = [
 ]
 
 
-def check_notebook(text: str, schema_map: dict[str, str] | None = None) -> tuple[str, list[Finding]]:
+def check_notebook(text: str, schema_map: dict[str, str] | None = None,
+                   bool_columns: set[str] | frozenset[str] = frozenset()) -> tuple[str, list[Finding]]:
     """Fix and flag ETL expression leftovers inside the Spark SQL strings of a converted notebook,
     and rename source schemas (schema_map) there."""
     findings: list[Finding] = []
@@ -525,6 +556,10 @@ def check_notebook(text: str, schema_map: dict[str, str] | None = None) -> tuple
             if new != sql:
                 counts.setdefault("schema-map", []).append(line_of(text, m.start(1)))
                 sql = new
+        new, _ = _fix_bool_compare(sql, bool_columns)
+        if new != sql:
+            counts.setdefault("boolean-compare", []).append(line_of(text, m.start(1)))
+            sql = new
         for rule, pat, repl, _msg in _NB_FIXES:
             new = pat.sub(repl, sql)
             if new != sql:
@@ -537,6 +572,9 @@ def check_notebook(text: str, schema_map: dict[str, str] | None = None) -> tuple
         out += [text[pos:m.start(1)], sql]
         pos = m.end(1)
     out.append(text[pos:])
+    if "boolean-compare" in counts:
+        findings.append(Finding("boolean-compare", INFO, counts["boolean-compare"][0],
+                                f"Compared BOOLEAN columns (BIT on the source) with true/false ({len(counts['boolean-compare'])} step(s))", True))
     if "schema-map" in counts:
         findings.append(Finding("schema-map", INFO, counts["schema-map"][0],
                                 f"Mapped source schemas to Databricks ({len(counts['schema-map'])} step(s))", True))

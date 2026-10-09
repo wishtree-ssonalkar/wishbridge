@@ -68,11 +68,15 @@ def sources() -> None:
               help="Source system (detected from --code when omitted).")
 @click.option("--dir", "directory", default=".", type=click.Path(file_okay=False), help="Parent directory.")
 @click.option("--code", "code", default=None, type=click.Path(exists=True, file_okay=False),
-              help="Client code folder (repository, database project, export) to read in place.")
+              help="Client code folder (repository, database project, export).")
 @click.option("--split/--no-split", default=True, show_default=True,
               help="With --code: one project per database when the code holds several.")
+@click.option("--copy/--read-in-place", "copy_code", default=True, show_default=True,
+              help="With --code: copy the code into the project with a receipt (so the client's folder is needed only "
+                   "once), or read the client's folder in place.")
 @click.option("--catalog", default="main", show_default=True, help="Databricks catalog for the test schema.")
-def init(name: str, source: str | None, directory: str, code: str | None, split: bool, catalog: str) -> None:
+def init(name: str, source: str | None, directory: str, code: str | None, split: bool, copy_code: bool,
+         catalog: str) -> None:
     """Create a new migration project folder - or projects for an existing folder of client code."""
     if code:
         from . import discover
@@ -87,10 +91,14 @@ def init(name: str, source: str | None, directory: str, code: str | None, split:
             _fail("Couldn't tell the source system for sure - re-run with --source <system>")
         if info.databases:
             click.echo("Databases: " + ", ".join(f"{n} ({c} files)" for n, _, c in info.databases))
-        made = _guard(discover.create_projects_for_code, info, directory, name, chosen, split, catalog)
+        try:
+            made = discover.create_projects_for_code(info, directory, name, chosen, split, catalog, copy_code=copy_code)
+        except (ValueError, OSError) as e:
+            _fail(str(e))
         for p in made:
-            _ok(f"Created {p}  (reads {discover.load_config(p / 'project.yml').input_dir})")
-        click.echo(f"  Next: cd {made[0]}  then  wishbridge run")
+            how = "code copied into" if copy_code else "reads"
+            _ok(f"Created {p}  ({how} {discover.load_config(p / 'project.yml').input_dir}; phase: assessment, offline)")
+        click.echo(f"  Next: cd {made[0]}  then  wishbridge assess")
         return
     if not source:
         _fail("Give --source <system>, or --code <folder> to detect it")
@@ -305,6 +313,92 @@ def reconcile(config_path: str, full: bool) -> None:
         _ok(f"{s['matched']}/{s['tables']} tables match ({s['mismatched']} mismatched, {s['errors']} errors)")
     else:
         _ok("LakeBridge reconcile finished - see the reconcile dashboard in Databricks")
+
+
+@main.command()
+@config_option
+def assess(config_path: str) -> None:
+    """Offline first visit: analyze + convert + report. Nothing goes to Databricks or the client's database."""
+    from .analysis import run_analyze
+    from .convert import run_convert
+    from .report import build_report
+
+    cfg = _load(config_path)
+    click.echo(f"Assessing {cfg.input_dir} offline as {cfg.source.label} ...")
+    a = _guard(run_analyze, cfg)
+    _ok(f"Analyzed {len(a['programs'])} files; manual estimate {a['estimated_hours_baseline']} h")
+    from .state import load_state
+
+    _print_fit(load_state(cfg).get("fit"), cfg)
+    c = _guard(run_convert, cfg, False)
+    s = c["summary"]
+    _ok(f"Converted {s['files']} files: {s['ready']} ready, {s['review']} to review, {s['needs_fix']} need fixes")
+    _ok(f"Report: {_guard(build_report, cfg)}")
+    click.echo("  Next: review and fix, then `wishbridge package` to hand the results over.")
+
+
+@main.command()
+@config_option
+def snapshot(config_path: str) -> None:
+    """Copy the client's code into the project (with a receipt), so their folder is not needed again."""
+    from .snapshot import copy_project_code
+
+    cfg = _load(config_path)
+    try:
+        rec = copy_project_code(cfg.path)
+    except (ValueError, OSError) as e:
+        _fail(str(e))
+    _ok(f"Copied {rec['files']} files ({rec['bytes'] // 1024} KB) from {rec['copied_from']} into "
+        f"{cfg.path.parent / 'input'}; fingerprint {rec['fingerprint'][:16]}")
+    for f in rec["skipped_large_files"]:
+        click.echo(f"  skipped large file: {f}")
+
+
+@main.command()
+@config_option
+@click.option("--script", "make_script", is_flag=True, help="Write the read-only inventory query for the client's DBA.")
+@click.option("--db", default=None, help="Database type for --script (sqlserver, synapse, oracle, snowflake, teradata, "
+                                         "redshift, bigquery, netezza). Default: from the source system.")
+@click.option("--import", "import_file", default=None, type=click.Path(exists=True, dir_okay=False),
+              help="Import the CSV the DBA sent back.")
+def inventory(config_path: str, make_script: bool, db: str | None, import_file: str | None) -> None:
+    """Source database inventory (tables, columns, row counts, sizes) without connecting to the database."""
+    from . import inventory as inv
+
+    cfg = _load(config_path)
+    if not make_script and not import_file:
+        make_script = True
+    if make_script:
+        try:
+            name, text = inv.script(cfg, db)
+        except ValueError as e:
+            _fail(str(e))
+        out = cfg.out("inventory", name)
+        out.write_text(text, encoding="utf-8")
+        _ok(f"Inventory query for the DBA: {out}")
+        click.echo("  It only reads the database catalog. Ask the DBA to run it and send back the result as CSV, then:")
+        click.echo(f"  wishbridge inventory --import <file.csv>")
+    if import_file:
+        try:
+            res = inv.import_file(cfg, import_file)
+        except (ValueError, OSError) as e:
+            _fail(str(e))
+        s = res["summary"]
+        _ok(f"{s['tables']} tables, {s['columns']} columns, {s['rows']:,} rows, {s['size_mb']:,} MB "
+            f"in schemas {', '.join(s['schemas'])}")
+        for t in res["tables"][:10]:
+            click.echo(f"  {t['schema']}.{t['table']:<40} {int(t['rows'] or 0):>14,} rows {t['size_mb'] or 0:>10,} MB")
+
+
+@main.command()
+@config_option
+@click.option("--no-original", is_flag=True, help="Leave the client's original code out of the package.")
+def package(config_path: str, no_original: bool) -> None:
+    """Zip the review package: report, open items, fit check, inventory, converted (and original) code."""
+    from .package import build_package
+
+    cfg = _load(config_path)
+    _ok(f"Review package: {_guard(build_package, cfg, not no_original)}")
 
 
 @main.command()

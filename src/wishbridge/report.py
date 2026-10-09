@@ -110,6 +110,30 @@ def build_report(cfg: ProjectConfig) -> Path:
     else:
         parts.append('<p class="skip">Not run — <code>wishbridge analyze</code></p>')
 
+    # Code received (copy taken on the first visit) and the DBA's inventory
+    from .snapshot import check_copy, receipt
+
+    rec = receipt(cfg.path.parent)
+    if rec:
+        diff = check_copy(cfg.path.parent, cfg.input_dir)
+        changed = [f"{k}: {', '.join(v[:5])}{' …' if len(v) > 5 else ''}" for k, v in diff.items() if v]
+        parts.append("<h2>Code received</h2>")
+        parts.append(f'<p>{rec["files"]} files ({rec["bytes"] // 1024:,} KB) copied from <code>{escape(rec["copied_from"])}</code> '
+                     f'on {escape(rec["copied_at"].replace("T", " "))}. Fingerprint <code>{rec["fingerprint"][:16]}</code>.</p>'
+                     + (f'<p class="warn">The copy differs from what was received — {escape("; ".join(changed))}. '
+                        'Hand fixes belong in overrides/, not in the copy.</p>' if changed else
+                        '<p class="muted">The copy is unchanged since it was received.</p>'))
+    inv = state.get("inventory")
+    if inv:
+        s = inv["summary"]
+        parts.append("<h2>Source database inventory</h2>")
+        parts.append(f'<p>{s["tables"]} tables, {s["columns"]} columns, {s["rows"]:,} rows, {s["size_mb"]:,} MB '
+                     f'(schemas: {escape(", ".join(s["schemas"]))}). From the DBA\'s catalog query, imported '
+                     f'{escape(inv["imported_at"].replace("T", " "))}; no connection to the database was needed.</p>')
+        parts.append(_table(["Table", "Rows", "Size (MB)", "Columns"], [
+            [f'<code>{escape(t["schema"] + "." + t["table"])}</code>', f'{int(t["rows"]):,}' if t["rows"] is not None else "—",
+             f'{t["size_mb"]:,}' if t["size_mb"] is not None else "—", str(len(t["columns"]))] for t in inv["tables"][:200]]))
+
     # 1b. Migration fit
     fit = state.get("fit")
     if fit:

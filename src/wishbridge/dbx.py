@@ -36,6 +36,12 @@ class Warehouse:
     def __init__(self, cfg: ProjectConfig):
         from databricks.sdk import WorkspaceClient
 
+        if cfg.phase == "assessment":
+            raise SqlError(
+                "This project is in the assessment phase: nothing is sent to Databricks or the client's database. "
+                "Analyze, convert, review and fix the code first. When it is ready, switch the project to the "
+                "migration phase (Settings > Phase, or `phase: migration` in project.yml).")
+
         self.w = WorkspaceClient(profile=cfg.profile)
         check_workspace(cfg, self.w.config.host)
         self.warehouse_id = cfg.warehouse_id or self._pick_warehouse()

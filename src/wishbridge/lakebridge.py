@@ -33,11 +33,30 @@ def _fail(command: str, out: str) -> LakeBridgeError:
     return LakeBridgeError(f"`lakebridge {command}` failed:\n{tail}")
 
 
+OFFLINE_COMMANDS = frozenset({"analyze", "transpile"})
+
+
+def offline_profile() -> Path:
+    """A Databricks config file whose only profile points nowhere (used for the offline steps)."""
+    path = Path.home() / ".wishbridge" / "offline.databrickscfg"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Used by WishBridge for analyze/convert, which run offline.\n"
+                        "[DEFAULT]\nhost = https://wishbridge-offline.invalid\ntoken = offline\n", encoding="utf-8")
+    return path
+
+
 def run(cfg: ProjectConfig, *args: str, strict: bool = True) -> str:
     """Run a lakebridge command. strict=False tolerates per-file ERROR lines (the caller checks the output)."""
     # UTF-8 mode: on Windows LakeBridge otherwise writes files in the ANSI code page and crashes on characters such
     # as non-breaking or em spaces, which real client code contains (it then stops converting the remaining files).
     env = {**os.environ, "DATABRICKS_CONFIG_PROFILE": cfg.profile, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    if args and args[0] in OFFLINE_COMMANDS:
+        # Analyze and transpile never call Databricks, but LakeBridge refuses to start without a login profile.
+        # Give them a placeholder one: they work on a laptop with no Databricks login, and cannot reach a workspace.
+        for key in [k for k in env if k.startswith("DATABRICKS_") and k != "DATABRICKS_CLI_PATH"]:
+            env.pop(key)
+        env.update(DATABRICKS_CONFIG_FILE=str(offline_profile()), DATABRICKS_CONFIG_PROFILE="DEFAULT")
     cmd = [_databricks_cli(), "labs", "lakebridge", *args]
     proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     out = _ANSI.sub("", (proc.stdout or "") + (proc.stderr or ""))

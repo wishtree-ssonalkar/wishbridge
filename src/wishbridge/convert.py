@@ -44,13 +44,13 @@ NOTEBOOK_NOTES = {
 }
 
 
-def notebook_findings(text: str, kind: str, fix: bool = True,
-                      schema_map: dict[str, str] | None = None) -> tuple[str, list[Finding]]:
+def notebook_findings(text: str, kind: str, fix: bool = True, schema_map: dict[str, str] | None = None,
+                      bool_columns: frozenset[str] = frozenset()) -> tuple[str, list[Finding]]:
     """Notebook / helper note plus the ETL-expression checks (and fixes) inside the notebook's Spark SQL."""
     note = Finding("notebook", INFO, 1, NOTEBOOK_NOTES[kind])
     if kind != "notebook":
         return text, [note]
-    fixed, findings = check_notebook(text, schema_map)
+    fixed, findings = check_notebook(text, schema_map, bool_columns)
     if not fix:
         return text, [note] + [f for f in findings if not f.fixed]
     return fixed, [note] + findings
@@ -74,6 +74,23 @@ def orchestration_findings(rel: Path, text: str, orchestrators: dict[str, list[s
     return []
 
 
+def known_boolean_columns(cfg: ProjectConfig, raw_dir: Path) -> frozenset[str]:
+    """BOOLEAN columns of this migration: declared BOOLEAN in converted / hand-written tables, or BIT in the
+    DBA's inventory. Comparisons such as `IsActive = 1` on them are rewritten to `= true`."""
+    from .rules import boolean_columns
+    from .state import load_state
+
+    cols: set[str] = set()
+    for folder in (raw_dir, cfg.overrides_dir):
+        if folder and folder.exists():
+            for p in folder.rglob("*.sql"):
+                cols |= boolean_columns(p.read_text(encoding="utf-8-sig", errors="replace"))
+    inv = load_state(cfg).get("inventory") or {}
+    cols |= {c["name"].lower() for t in inv.get("tables", []) for c in t["columns"]
+             if c["type"].lower() in ("bit", "boolean", "bool")}
+    return frozenset(cols)
+
+
 def file_kind(rel: Path, text: str) -> str:
     """sql, notebook (Databricks notebook source) or python (helper module)."""
     if rel.suffix.lower() == ".py":
@@ -91,9 +108,9 @@ def file_status(findings: list[Finding]) -> str:
 
 
 def check_sql(cfg: ProjectConfig, rel: Path, text: str, notes: list[str],
-              source_file: Path | None) -> tuple[str, list[Finding]]:
+              source_file: Path | None, bool_columns: frozenset[str] = frozenset()) -> tuple[str, list[Finding]]:
     """Apply the rules to one converted SQL file and add the converter's own notes and the dropped-statement check."""
-    fixed, findings = apply_rules(text, cfg.schema_map, cfg.source.key)
+    fixed, findings = apply_rules(text, cfg.schema_map, cfg.source.key, bool_columns)
     added: set[str] = set()
     for msg in notes:
         # Most transpiler warnings are also written into the code as FIXME comments (possibly with guidance added).
@@ -221,6 +238,7 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
     tnotes = _transpile_notes(error_log)
     converters = choose_best_converter(scfg, raw_dir, tnotes)
     prep = prepared_notes(cfg)
+    bools = known_boolean_columns(cfg, raw_dir)
     from .orchestration import ssis_plan
 
     plan = ssis_plan(cfg) if cfg.source.key == "ssis" else {"orchestrators": {}}
@@ -235,10 +253,11 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
         text = src.read_text(encoding="utf-8-sig", errors="replace") if src.exists() else ""
         kind = file_kind(rel, text)
         if kind == "sql":
-            fixed, findings = check_sql(cfg, rel, text, tnotes.get(rel.name, []), scfg.input_dir / rel if src.exists() else None)
+            fixed, findings = check_sql(cfg, rel, text, tnotes.get(rel.name, []), scfg.input_dir / rel if src.exists() else None,
+                                        bools)
             findings += [Finding(n["rule"], n["severity"], 1, n["message"]) for n in prep.get(rel.as_posix(), [])]
         else:
-            fixed, findings = notebook_findings(text, kind, schema_map=cfg.schema_map)
+            fixed, findings = notebook_findings(text, kind, schema_map=cfg.schema_map, bool_columns=bools)
             if kind == "notebook":
                 findings += orchestration_findings(rel, fixed, plan["orchestrators"])
 

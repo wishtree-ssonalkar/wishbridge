@@ -133,6 +133,7 @@ class ProjectConfig:
     hours_per_file: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_HOURS_PER_FILE))
     hours_per_issue: float = 0.5
     scope: str = "all"  # all | recommended: deploy leaves out objects the fit check says stay on the source
+    phase: str = "migration"  # assessment (offline: analyze + convert only) | migration (deploy, data, reconcile)
 
     @property
     def target_schema(self) -> str:
@@ -224,7 +225,10 @@ def load_config(path: str | Path) -> ProjectConfig:
         hours_per_file={**DEFAULT_HOURS_PER_FILE, **(est.get("hours_per_file") or {})},
         hours_per_issue=float(est.get("hours_per_issue", 0.5)),
         scope=str(raw.get("scope") or "all").lower(),
+        phase=str(raw.get("phase") or "migration").lower(),
     )
+    if cfg.phase not in ("assessment", "migration"):
+        raise ConfigError("phase must be 'assessment' or 'migration'")
     if cfg.scope not in ("all", "recommended"):
         raise ConfigError("scope must be 'all' or 'recommended'")
     if cfg.data_method not in ("federation", "files"):
@@ -248,6 +252,8 @@ input: input                # put the legacy SQL / ETL files here
 output: output              # everything WishBridge produces goes here
 overrides: overrides        # hand-fixed versions of converted files (same file names) - kept across runs
 scope: all                  # all | recommended: deploy only what belongs on Databricks (see the fit check)
+phase: assessment           # assessment: offline - analyze and convert only, nothing goes to Databricks or the client
+                            # database. Change to migration when the code is ready to deploy and the data to copy.
 
 databricks:
   profile: DEFAULT          # profile in ~/.databrickscfg

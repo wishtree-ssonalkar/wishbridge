@@ -125,9 +125,13 @@ if info and not project_ok():
             st.markdown(f"The code holds **{len(info.databases)} databases**: {dbs}.")
             split = st.radio("Projects", [True, False], horizontal=True,
                              format_func=lambda s: "One project per database (recommended)" if s else "One project for everything")
+        copy_code = st.checkbox("Take a copy of the code into the project (recommended)", value=True,
+                                help="Copies the code once, with a receipt (date, file count, fingerprint of every file), "
+                                     "so you never need access to the client's folder again. Untick to read their folder in place.")
         if st.form_submit_button("Create project" + ("s" if info.databases and split else ""), type="primary"):
             try:
-                made = discover.create_projects_for_code(info, parent, name, source, split, catalog.strip() or "main")
+                made = discover.create_projects_for_code(info, parent, name, source, split, catalog.strip() or "main",
+                                                         copy_code=copy_code)
             except (ValueError, OSError, ConfigError) as e:
                 st.error(str(e))
             else:
@@ -193,6 +197,14 @@ with tab_settings:
                              index=list(scope_labels).index(cur_scope) if cur_scope in scope_labels else 0,
                              help="The fit check (run with Analyze) marks application logic to keep on the source "
                                   "and objects Databricks does not need. 'Only what belongs' leaves those out of deploy.")
+        phase_labels = {"assessment": "Assessment (offline: analyze and convert only)",
+                        "migration": "Migration (deploy, copy the data, reconcile)"}
+        cur_phase = str(raw.get("phase") or "migration").lower()
+        phase = st.selectbox("Phase", list(phase_labels), format_func=phase_labels.get,
+                             index=list(phase_labels).index(cur_phase) if cur_phase in phase_labels else 1,
+                             help="Assessment: nothing is sent to Databricks or the client's database - work on the "
+                                  "copied code at Wishtree. Switch to Migration for the visit where the code is deployed "
+                                  "and the data copied.")
 
     # --- Databricks workspace: which saved login (profile) this project uses
     st.markdown("**Databricks workspace** — the client workspace this project migrates into.")
@@ -419,6 +431,7 @@ with tab_settings:
         else:
             new["transpiler"] = transpiler
         new["scope"] = scope
+        new["phase"] = phase
         host = (ws or {}).get("host") or chosen_host or project_host
         new["databricks"] = {**dbx, "profile": profile, "host": host, "warehouse_id": warehouse,
                              "catalog": catalog, "schema": schema}
@@ -439,8 +452,62 @@ with tab_settings:
 # ----------------------------------------------------------------- code
 
 with tab_code:
+    from wishbridge import inventory as inv_mod
+    from wishbridge.snapshot import check_copy, copy_project_code, receipt
+
     st.subheader("Legacy code")
     st.caption(f"Files in {cfg.input_dir}. Only code goes here — data is copied in the Run step.")
+    rec = receipt(ss.project)
+    if rec:
+        diff = check_copy(ss.project, cfg.input_dir)
+        msg = (f"**Code received** {rec['copied_at'].replace('T', ' ')} from `{rec['copied_from']}` — "
+               f"{rec['files']} files, fingerprint `{rec['fingerprint'][:16]}`. ")
+        if any(diff.values()):
+            st.warning(msg + "The copy has changed since: " + "; ".join(f"{k} {len(v)}" for k, v in diff.items() if v)
+                       + ". Put hand fixes in overrides/, not in the copy.")
+        else:
+            st.success(msg + "Unchanged since it was received.")
+    elif Path(ss.project).resolve() not in cfg.input_dir.parents:
+        st.info(f"This project reads the client's folder in place (`{cfg.input_dir}`). Take a copy now so you do not "
+                "need their folder again.")
+        if st.button("Take a copy of the code into the project"):
+            try:
+                r_ = copy_project_code(h.project_file(ss.project))
+                st.success(f"Copied {r_['files']} files.")
+                st.rerun()
+            except (ValueError, OSError, ConfigError) as e:
+                st.error(str(e))
+
+    with st.expander("Source database inventory — no connection needed", expanded=False):
+        st.markdown("Get the list of tables, columns, row counts and sizes **without connecting** to the client's "
+                    "database: give their DBA this read-only query, and import the CSV they send back.")
+        db_types = list(inv_mod.QUERIES)
+        default_db = (cfg.source_db or {}).get("type") or inv_mod.DEFAULT_DB.get(cfg.source.key, "sqlserver")
+        db = st.selectbox("Database type", db_types, index=db_types.index(default_db) if default_db in db_types else 0)
+        fname, text = inv_mod.script(cfg, db)
+        st.download_button("Download the query for the DBA", text, file_name=fname, mime="text/plain")
+        up = st.file_uploader("Import the DBA's CSV", type=["csv", "txt"], key="inventory_csv")
+        if up is not None and st.button("Import inventory"):
+            tmp = cfg.out("inventory", "upload_" + Path(up.name).name)
+            tmp.write_bytes(up.getvalue())
+            try:
+                inv_mod.import_file(cfg, tmp)
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+        inv = load_state(cfg).get("inventory")
+        if inv:
+            s = inv["summary"]
+            st.success(f"{s['tables']} tables · {s['columns']} columns · {s['rows']:,} rows · {s['size_mb']:,} MB "
+                       f"(imported {inv['imported_at'].replace('T', ' ')})")
+            st.dataframe(pd.DataFrame([{"table": f"{t['schema']}.{t['table']}", "rows": t["rows"], "size (MB)": t["size_mb"],
+                                        "columns": len(t["columns"])} for t in inv["tables"]]), width="stretch", hide_index=True)
+            if st.button("Use these tables for the data copy"):
+                new = dict(raw)
+                new.setdefault("data", {})["tables"] = inv_mod.table_list(inv)
+                h.save_raw(ss.project, new)
+                st.success("Saved to Settings > Data. Load targets follow the schema map.")
+                st.rerun()
     uploads = st.file_uploader("Add files", accept_multiple_files=True, type=h.INPUT_EXTENSIONS)
     if uploads and st.button(f"Add {len(uploads)} file(s) to the project"):
         for up in uploads:
@@ -472,19 +539,25 @@ def run_step(label: str, fn, summary) -> bool:
 
 
 with tab_run:
-    st.subheader("Run the migration")
+    offline = cfg.phase == "assessment"
+    st.subheader("Assess the code (offline)" if offline else "Run the migration")
+    if offline:
+        st.info("**Assessment phase** — Analyze, Convert and the report run on this computer only: nothing is sent to "
+                "Databricks or the client's database. Review and fix the converted code, then download the review "
+                "package from the Results tab. Switch to the Migration phase in Settings when the code is ready.")
     c1, c2, c3 = st.columns(3)
     with c1:
         do_analyze = st.checkbox("1. Analyze the code", value=True)
         do_convert = st.checkbox("2. Convert to Databricks SQL", value=True)
-        use_ai = st.checkbox("…with Claude suggestions", value=cfg.ai_enabled, disabled=not do_convert)
+        use_ai = st.checkbox("…with Claude suggestions", value=cfg.ai_enabled and not offline, disabled=not do_convert or offline,
+                             help="Not in the assessment phase: it sends code to the Claude API.")
     with c2:
-        do_deploy = st.checkbox("3. Deploy to the test schema", value=False)
+        do_deploy = st.checkbox("3. Deploy to the test schema", value=False, disabled=offline)
         recreate = st.checkbox("…rebuild objects that already exist", value=False, disabled=not do_deploy)
-        do_load = st.checkbox("4. Copy the data", value=False)
+        do_load = st.checkbox("4. Copy the data", value=False, disabled=offline)
         execute = st.checkbox("…really copy (otherwise only write the plan)", value=False, disabled=not do_load)
     with c3:
-        do_reconcile = st.checkbox("5. Reconcile the data", value=False)
+        do_reconcile = st.checkbox("5. Reconcile the data", value=False, disabled=offline)
         do_report = st.checkbox("6. Build the report", value=True)
     st.caption(f"Target: `{cfg.target_schema}` · converter: {'automatic, ' if cfg.auto_converter else ''}{cfg.transpiler}"
                + (" first" if cfg.auto_converter else "") + f" · source: {cfg.source.analyzer_tech}")
@@ -526,6 +599,22 @@ with tab_results:
     if not state:
         st.info("Nothing has run yet. Use the Run tab.")
     else:
+        if state.get("convert"):
+            pc1, pc2 = st.columns([1, 2])
+            with_original = pc2.checkbox("Include the client's original code", value=True,
+                                         help="Reviewers can compare original and converted code side by side.")
+            if pc1.button("📦 Build the review package"):
+                from wishbridge.package import build_package
+
+                try:
+                    ss.review_package = str(build_package(cfg, with_original))
+                except STEP_ERRORS as e:
+                    st.error(str(e))
+            if ss.get("review_package") and Path(ss.review_package).is_file():
+                pkg = Path(ss.review_package)
+                st.download_button(f"Download {pkg.name}", pkg.read_bytes(), file_name=pkg.name, mime="application/zip")
+                st.caption("Report, open items, fit check, inventory, converted code (and the original) in one zip — "
+                           "reviewers need nothing installed.")
         a, c, d, ld, r = (state.get(k) for k in ("analyze", "convert", "deploy", "load", "reconcile"))
         m = st.columns(5)
         if a:

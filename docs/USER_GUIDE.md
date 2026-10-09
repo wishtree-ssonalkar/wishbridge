@@ -170,6 +170,37 @@ If your workspace has no `workspace` catalog, open `project.yml` and replace `wo
 
 ## Part C – Migrate your own code
 
+### How an engagement runs: two visits
+
+Clients rarely let us onto their systems again and again, so WishBridge collects everything in **one first
+visit** and does the rest at Wishtree.
+
+**Visit 1 – collect (one time, at the client)**
+
+1. Open the client's code folder in the app (or `wishbridge init <name> --code <folder>`). WishBridge **takes a
+   copy of the code** into the project with a receipt (`code_received.json`: date, file count and a fingerprint of
+   every file), so their folder is never needed again. The project starts in the **assessment phase**.
+2. Give the client's DBA the **inventory query** (app: *Code > Source database inventory*, or
+   `wishbridge inventory`). It only reads the database catalog: tables, columns, data types, row counts, sizes.
+   Import the CSV they send back (`wishbridge inventory --import file.csv`). No connection to their database.
+
+**At Wishtree – offline**
+
+3. `wishbridge assess` (app: *Run > Start*): analyze + convert + report on this computer only. Nothing is sent to
+   Databricks or the client's database; it works even without a Databricks login.
+4. Review and fix the code (overrides/), then `wishbridge package` (app: *Results > Build the review package*):
+   one zip with the report, open items, fit check, inventory, converted and original code.
+
+**Visit 2 – migrate**
+
+5. Switch the project to the **migration phase** (Settings > Phase, or `phase: migration`). Then deploy, copy the
+   data from the dev database once, run the ETL and reconcile (steps C6–C8). The inventory's row counts are the
+   baseline.
+
+While a project is in the assessment phase WishBridge refuses every step that would reach Databricks or the
+client's database.
+
+
 ### C1. Create a project
 
 Keep client projects outside the WishBridge folder, e.g. in `C:\migrations`:
@@ -387,6 +418,10 @@ reconciliation.
 | Command | What it does |
 |---|---|
 | `wishbridge init NAME --source X` | Create a project |
+| `wishbridge assess` | Offline first visit: analyze + convert + report |
+| `wishbridge inventory [--import FILE]` | Read-only inventory query for the DBA / import their CSV |
+| `wishbridge package` | Review package zip (report, open items, converted + original code) |
+| `wishbridge snapshot` | Copy the client's code into the project (for projects that read it in place) |
 | `wishbridge run` | Assess + convert + report |
 | `wishbridge run --deploy --load` | The whole pipeline |
 | `wishbridge analyze` | Assess the legacy code (includes the fit check) |

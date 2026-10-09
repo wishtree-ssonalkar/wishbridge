@@ -176,8 +176,11 @@ def _slug(text: str) -> str:
 
 
 def create_project_for_code(code_dir: str | Path, parent: str | Path, name: str, source: str,
-                            catalog: str = "main", host: str = "") -> Path:
-    """Create a WishBridge project in parent/name that reads code_dir in place."""
+                            catalog: str = "main", host: str = "", copy_code: bool = True) -> Path:
+    """Create a WishBridge project in parent/name for the code in code_dir.
+
+    copy_code (default): take a copy of the code into the project with a receipt (snapshot.py), so the
+    client's folder is needed only once. Otherwise the project reads code_dir in place."""
     if source not in SOURCES:
         raise ValueError(f"Unknown source '{source}'")
     name = name.strip()
@@ -192,23 +195,30 @@ def create_project_for_code(code_dir: str | Path, parent: str | Path, name: str,
     root.mkdir(parents=True, exist_ok=True)
     raw = yaml.safe_load(render_template(name, source))
     schema = "wishbridge_" + re.sub(r"[^a-z0-9_]", "_", name.lower())
-    raw["input"] = str(code_dir)
+    if copy_code:
+        from .snapshot import RECEIPT, take_copy
+
+        rec = take_copy(code_dir, root / "input")
+        raw["input"] = "input"
+    else:
+        raw["input"] = str(code_dir)
     raw["databricks"].update({"catalog": catalog, "schema": schema, **({"host": host} if host else {})})
     raw["schema_map"] = {"dbo": f"{catalog}.{schema}"} if source in ("mssql", "synapse") else {}
-    text = (f"# WishBridge project for the code in {code_dir}\n"
-            "# The client's folder is only read; everything WishBridge produces goes into this folder.\n")
+    text = f"# WishBridge project for the code in {code_dir}\n" + (
+        f"# Code copied into input/ on {rec['copied_at']} ({rec['files']} files, receipt in {RECEIPT}).\n" if copy_code
+        else "# The client's folder is only read; everything WishBridge produces goes into this folder.\n")
     (root / "project.yml").write_text(text + yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8")
     load_config(root / "project.yml")  # fail now if anything is off
     return root
 
 
 def create_projects_for_code(info: CodeFolder, parent: str | Path, base_name: str, source: str,
-                             split: bool, catalog: str = "main", host: str = "") -> list[Path]:
+                             split: bool, catalog: str = "main", host: str = "", copy_code: bool = True) -> list[Path]:
     """One project for the whole folder, or one per database when split is True."""
     if split and info.databases:
-        return [create_project_for_code(path, parent, f"{base_name}-{_slug(db)}", source, catalog, host)
+        return [create_project_for_code(path, parent, f"{base_name}-{_slug(db)}", source, catalog, host, copy_code)
                 for db, path, _ in info.databases]
-    return [create_project_for_code(info.path, parent, base_name, source, catalog, host)]
+    return [create_project_for_code(info.path, parent, base_name, source, catalog, host, copy_code)]
 
 
 def suggested_name(folder: str | Path) -> str:

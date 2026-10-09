@@ -52,19 +52,42 @@ def test_unknown_code_is_low_confidence(tmp_path):
     assert det.confidence == "low"
 
 
-def test_projects_are_created_outside_the_code_and_read_it_in_place(tmp_path):
+def test_projects_are_created_outside_the_code_with_a_copy_of_it(tmp_path):
+    from wishbridge.snapshot import check_copy, receipt
+
     repo = vs_repo(tmp_path)
     info = discover.inspect(repo)
     made = discover.create_projects_for_code(info, tmp_path / "migrations", "acme", "mssql", split=True, catalog="workspace")
     assert [p.name for p in made] == ["acme-tenantdb", "acme-auditdb"]
     cfg = load_config(made[0] / "project.yml")
-    assert cfg.input_dir == (repo / "SalesDB" / "TenantDB").resolve()
+    assert cfg.input_dir == (made[0] / "input").resolve()
+    assert cfg.phase == "assessment"  # new projects start offline
+    rec = receipt(made[0])
+    assert rec["copied_from"] == str((repo / "SalesDB" / "TenantDB").resolve()) and rec["files"] >= 3
+    assert all(len(h) == 64 for h in rec["sha256"].values())
+    assert check_copy(made[0], cfg.input_dir) == {"changed": [], "missing": [], "added": []}
+    first = next(iter(rec["sha256"]))
+    (cfg.input_dir / first).write_text("changed", encoding="utf-8")
+    assert check_copy(made[0], cfg.input_dir)["changed"] == [first]
     assert cfg.target_schema == "workspace.wishbridge_acme_tenantdb"
     assert cfg.schema_map == {"dbo": "workspace.wishbridge_acme_tenantdb"}
     assert not any(p.name == "project.yml" for p in repo.rglob("*"))  # the client's folder is untouched
 
-    single = discover.create_projects_for_code(info, tmp_path / "migrations", "acme-all", "mssql", split=False)
+    single = discover.create_projects_for_code(info, tmp_path / "migrations", "acme-all", "mssql", split=False,
+                                               copy_code=False)
     assert load_config(single[0] / "project.yml").input_dir == repo.resolve()
+
+
+def test_existing_project_can_take_a_copy_later(tmp_path):
+    from wishbridge.snapshot import copy_project_code
+
+    repo = vs_repo(tmp_path)
+    root = discover.create_project_for_code(repo, tmp_path / "m", "late", "mssql", copy_code=False)
+    rec = copy_project_code(root / "project.yml")
+    cfg = load_config(root / "project.yml")
+    assert cfg.input_dir == (root / "input").resolve() and rec["files"] == sum(1 for p in cfg.input_dir.rglob("*") if p.is_file())
+    with pytest.raises(ValueError, match="already inside"):
+        copy_project_code(root / "project.yml")
 
 
 def test_project_inside_the_code_folder_is_refused(tmp_path):
