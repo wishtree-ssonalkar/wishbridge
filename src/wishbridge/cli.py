@@ -316,6 +316,25 @@ def reconcile(config_path: str, full: bool) -> None:
 
 
 @main.command()
+@click.option("--check-only", is_flag=True, help="Only report; do not install anything.")
+def setup(check_only: bool) -> None:
+    """Check this computer and install what is missing (Databricks CLI, Java, LakeBridge, converters)."""
+    from . import system
+
+    statuses = system.check() if check_only else system.install_missing(lambda m: click.echo(f"  {m}"))
+    for s in statuses:
+        click.secho(f"  {'ok  ' if s.ok else 'MISS'} {s.name:<24} {s.detail}", fg="green" if s.ok else "red")
+        if not s.ok:
+            click.echo(f"       by hand: {s.manual}")
+            for line in s.log[-2:]:
+                click.echo("       " + line.strip().splitlines()[-1][:300] if line.strip() else "")
+    if all(s.ok for s in statuses):
+        _ok("This computer is ready")
+    else:
+        _fail("Some requirements are missing (see above)")
+
+
+@main.command()
 @config_option
 def assess(config_path: str) -> None:
     """Offline first visit: analyze + convert + report. Nothing goes to Databricks or the client's database."""

@@ -44,8 +44,41 @@ def project_ok() -> bool:
 
 # ----------------------------------------------------------------- sidebar
 
+def system_check() -> None:
+    """Check this computer once per session; install whatever is missing without asking the user to type commands."""
+    from wishbridge import system
+
+    if "system" not in ss or ss.get("system_recheck"):
+        ss.pop("system_recheck", None)
+        ss.system = system.check()
+        if not all(s.ok for s in ss.system) and not ss.get("system_installed"):
+            ss.system_installed = True  # try once automatically; the user can retry
+            with st.status("Setting up this computer…", expanded=True) as box:
+                ss.system = system.install_missing(lambda m: st.write(m))
+                ok = all(s.ok for s in ss.system)
+                box.update(label="This computer is ready" if ok else "Setup needs attention",
+                           state="complete" if ok else "error", expanded=not ok)
+    missing = [s for s in ss.system if not s.ok]
+    if not missing:
+        st.caption("✅ This computer is ready")
+    else:
+        st.warning("Missing: " + ", ".join(s.name for s in missing))
+    with st.expander("System check", expanded=bool(missing)):
+        for s in ss.system:
+            st.markdown(f"{'✅' if s.ok else '❌'} **{s.name}** — {s.why}")
+            if not s.ok:
+                st.code(s.manual, language="powershell")
+                for line in s.log[-2:]:
+                    st.caption(line[-600:])
+        if st.button("Check again" if not missing else "Install missing again", width="stretch"):
+            ss.system_recheck = True
+            ss.pop("system_installed", None)
+            st.rerun()
+
+
 with st.sidebar:
     st.markdown(f"### 🌉 Wishtree WishBridge\nData warehouse migration to Databricks · v{__version__}")
+    system_check()
     mode = st.radio("Project", ["Open a folder", "Open a package", "Create new"], horizontal=True,
                     label_visibility="collapsed")
     if mode == "Open a folder":
@@ -145,13 +178,9 @@ if info and not project_ok():
             st.markdown(f"The code holds **{len(info.databases)} databases**: {dbs}.")
             split = st.radio("Projects", [True, False], horizontal=True,
                              format_func=lambda s: "One project per database (recommended)" if s else "One project for everything")
-        copy_code = st.checkbox("Take a copy of the code into the project (recommended)", value=True,
-                                help="Copies the code once, with a receipt (date, file count, fingerprint of every file), "
-                                     "so you never need access to the client's folder again. Untick to read their folder in place.")
         if st.form_submit_button("Create project" + ("s" if info.databases and split else ""), type="primary"):
             try:
-                made = discover.create_projects_for_code(info, parent, name, source, split, catalog.strip() or "main",
-                                                         copy_code=copy_code)
+                made = discover.create_projects_for_code(info, parent, name, source, split, catalog.strip() or "main")
             except (ValueError, OSError, ConfigError) as e:
                 st.error(str(e))
             else:
@@ -185,8 +214,8 @@ except (ConfigError, yaml.YAMLError, KeyError, TypeError, ValueError) as e:
                 "instead - the app can create a fresh project for it.")
     st.stop()
 
-tab_settings, tab_code, tab_run, tab_results, tab_fixes, tab_env = st.tabs(
-    ["1 · Settings", "2 · Code", "3 · Run", "4 · Results", "5 · Fix code (later)", "Environment"])
+tab_settings, tab_code, tab_run, tab_results, tab_fixes = st.tabs(
+    ["1 · Settings", "2 · Code", "3 · Run", "4 · Results", "5 · Fix code (later)"])
 
 
 # ----------------------------------------------------------------- settings
@@ -496,30 +525,22 @@ with tab_settings:
 
 with tab_code:
     from wishbridge import inventory as inv_mod
-    from wishbridge.snapshot import check_copy, copy_project_code, receipt
 
-    st.subheader("Legacy code")
-    st.caption(f"Files in {cfg.input_dir}. Only code goes here — data is copied in the Run step.")
-    rec = receipt(ss.project)
-    if rec:
-        diff = check_copy(ss.project, cfg.input_dir)
-        msg = (f"**Code received** {rec['copied_at'].replace('T', ' ')} from `{rec['copied_from']}` — "
-               f"{rec['files']} files, fingerprint `{rec['fingerprint'][:16]}`. ")
-        if any(diff.values()):
-            st.warning(msg + "The copy has changed since: " + "; ".join(f"{k} {len(v)}" for k, v in diff.items() if v)
-                       + ". Put hand fixes in overrides/, not in the copy.")
-        else:
-            st.success(msg + "Unchanged since it was received.")
-    elif Path(ss.project).resolve() not in cfg.input_dir.parents:
-        st.info(f"This project reads the client's folder in place (`{cfg.input_dir}`). Take a copy now so you do not "
-                "need their folder again.")
-        if st.button("Take a copy of the code into the project"):
-            try:
-                r_ = copy_project_code(h.project_file(ss.project))
-                st.success(f"Copied {r_['files']} files.")
-                st.rerun()
-            except (ValueError, OSError, ConfigError) as e:
-                st.error(str(e))
+    st.subheader("Code overview")
+    ov = load_state(cfg).get("overview")
+    if ov:
+        st.markdown(f"**{ov['files']} files** · {ov['lines']:,} lines · {ov['tables']} tables · {ov['procedures']} "
+                    f"procedures · {ov['views']} views · {ov['functions']} functions"
+                    + (f" · schemas: {', '.join(ov['schemas'])}" if ov.get("schemas") else ""))
+        if ov.get("headline"):
+            st.caption(ov["headline"])
+        ovf = Path(ov["file"])
+        if ovf.is_file():
+            st.download_button("📘 Open the code overview (structure, tables, procedures, data flows)",
+                               ovf.read_bytes(), file_name=ovf.name, mime="text/html")
+    else:
+        st.caption("Run Analyze to get a description of the code base: structure, tables, procedures, data flows "
+                   "and what needs attention.")
 
     with st.expander("Source database inventory — no connection needed", expanded=False):
         st.markdown("Get the list of tables, columns, row counts and sizes **without connecting** to the client's "
@@ -589,12 +610,12 @@ with tab_run:
             "One button does it all, on this computer only (nothing goes to Databricks or the client's database):\n"
             "1. **Analyze** the code: size, complexity, effort, and whether it really is a data warehouse.\n"
             "2. **Convert** it to Databricks.\n"
-            "3. Build the **report**.\n"
-            "4. Save **everything in one zip**: the original code, the converted code, the report and the list of "
-            "open items.\n\n"
-            "Nothing needs to be fixed now. Take the zip back to Wishtree, open it there (sidebar > *Open a package*) "
-            "and fix the code in the **Fix code (later)** tab.")
-        keep_original = st.checkbox("Include the client's original code in the zip", value=True)
+            "3. Write the **report** and the **code overview** (how the system is built: structure, tables, "
+            "procedures, data flows).\n"
+            "4. Save **everything in one zip**: the code before and after conversion, the report, the code overview "
+            "and the list of open items.\n\n"
+            "Nothing needs to be fixed now. Open the zip later (sidebar > *Open a package*) and fix the code in the "
+            "**Fix code (later)** tab.")
         if st.button("▶ Assess and save everything", type="primary"):
             from wishbridge.analysis import run_analyze
             from wishbridge.convert import run_convert
@@ -607,7 +628,7 @@ with tab_run:
                 ("Convert", lambda: run_convert(cfg, False),
                  lambda r: f"{r['summary']['ready']} ready, {r['summary']['review']} review, {r['summary']['needs_fix']} need fixes"),
                 ("Report", lambda: build_report(cfg), lambda r: "report.html written"),
-                ("Save everything in one zip", lambda: build_package(cfg, keep_original), lambda r: Path(r).name),
+                ("Save everything in one zip", lambda: build_package(cfg), lambda r: Path(r).name),
             ]
             for label, fn, summary in steps:
                 if not run_step(label, fn, summary):
@@ -678,21 +699,17 @@ with tab_results:
         st.info("Nothing has run yet. Use the Run tab.")
     else:
         if state.get("convert"):
-            pc1, pc2 = st.columns([1, 2])
-            with_original = pc2.checkbox("Include the client's original code", value=True,
-                                         help="Reviewers can compare original and converted code side by side.")
-            if pc1.button("📦 Build the review package"):
+            if st.button("📦 Save everything in one zip"):
                 from wishbridge.package import build_package
 
                 try:
-                    ss.review_package = str(build_package(cfg, with_original))
+                    ss.review_package = str(build_package(cfg))
                 except STEP_ERRORS as e:
                     st.error(str(e))
             if ss.get("review_package") and Path(ss.review_package).is_file():
                 pkg = Path(ss.review_package)
                 st.download_button(f"Download {pkg.name}", pkg.read_bytes(), file_name=pkg.name, mime="application/zip")
-                st.caption("Report, open items, fit check, inventory, converted code (and the original) in one zip — "
-                           "reviewers need nothing installed.")
+                st.caption("Report, code overview, open items, and the code before and after conversion in one zip.")
         a, c, d, ld, r = (state.get(k) for k in ("analyze", "convert", "deploy", "load", "reconcile"))
         m = st.columns(5)
         if a:
@@ -820,20 +837,3 @@ with tab_fixes:
                     ovr.unlink()
                     st.success("Removed. The converted version will be used on the next run.")
                     st.rerun()
-
-
-# ----------------------------------------------------------------- environment
-
-with tab_env:
-    st.subheader("Environment check")
-    st.caption("Everything WishBridge needs on this computer.")
-    if st.button("Check now") or "env" not in ss:
-        with st.spinner("Checking..."):
-            ss.env = h.check_environment(cfg.profile)
-    for chk in ss.env:
-        if chk.ok:
-            st.success(f"**{chk.name}** — {chk.detail}")
-        else:
-            st.error(f"**{chk.name}** — {chk.detail}")
-            if chk.fix:
-                st.code(chk.fix, language="powershell")

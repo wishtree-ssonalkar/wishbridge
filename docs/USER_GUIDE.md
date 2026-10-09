@@ -119,8 +119,9 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   repository, a Visual Studio database project, an ETL export. For client code the app detects the source system
   (from `.sqlproj`, `.dtsx`, Informatica or DataStage XML, Informatica Cloud `.zip`, or the SQL keywords), finds
   separate databases inside it (e.g. TenantDB, AuditDB) and offers to create one project per database in
-  `C:\migrations`. By default it **takes a copy of the code** into the project with a receipt, so the client's
-  folder is needed only once (untick it to read their folder in place). The client's folder is never written to.
+  `C:\migrations`. WishBridge keeps its own working copy of the code inside the project (with a fingerprint of every
+  file, in `code_received.json`), so the client's folder is needed only once; the app does not show this. The
+  client's folder is never written to.
   New projects start in the **assessment phase**. *Create new* makes an empty project to upload code into.
   Same from the command line: `wishbridge init acme --code C:\client-repo --dir C:\migrations`.
 - **1 · Settings:** the **Phase** comes first and saves as soon as you change it.
@@ -132,7 +133,7 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
     deploy, the source database connection and the tables to copy. Press *Save settings* (bad values are refused
     and the old settings kept). Saving records the workspace URL in the project: from then on WishBridge refuses
     to deploy, load or reconcile with a login for any other workspace.
-- **2 · Code:** the code received (receipt and whether the copy changed), the **source database inventory** (download
+- **2 · Code:** the **code overview** (a document describing how the system is built), the **source database inventory** (download
   the read-only query for the DBA, import their CSV), upload more files and preview them.
 - **3 · Run:** tick the steps (analyze, convert, deploy, copy data, reconcile, report) and press *Start*. In the
   assessment phase only analyze, convert and report can run (offline).
@@ -143,8 +144,10 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   open items, converted and original code).
 - **5 · Fix code (later):** pick a file, see its open items and the original next to the Databricks version, edit it
   and press *Save as manual fix*. Then run Convert again.
-- **Environment:** checks the Databricks CLI, Java, LakeBridge, the converters and your login, with the command
-  that fixes anything missing.
+- **System check (sidebar):** when the app starts it checks the Databricks CLI, Java, LakeBridge and both converters,
+  and **installs whatever is missing** (winget on Windows, Homebrew on macOS; LakeBridge and the converters through
+  the Databricks CLI). Downloads need internet access - office networks that inspect HTTPS can block them; the
+  check then says so and *Install missing again* retries. Same from the command line: `wishbridge setup`.
 
 The app and the commands use the same project folders, so you can switch between them at any time.
 
@@ -182,16 +185,17 @@ visit** and does the rest at Wishtree.
 
 **Visit 1 – collect (one time, at the client)**
 
-1. Open the client's code folder in the app (or `wishbridge init <name> --code <folder>`). WishBridge **takes a
-   copy of the code** into the project with a receipt (`code_received.json`: date, file count and a fingerprint of
-   every file), so their folder is never needed again. The project starts in the **assessment phase**.
+1. Open the client's code folder in the app (or `wishbridge init <name> --code <folder>`). WishBridge keeps
+   a working copy of the code in the project (with a fingerprint of every file in `code_received.json`), so their
+   folder is never needed again. The project starts in the **assessment phase**.
 2. Give the client's DBA the **inventory query** (app: *Code > Source database inventory*, or
    `wishbridge inventory`). It only reads the database catalog: tables, columns, data types, row counts, sizes.
    Import the CSV they send back (`wishbridge inventory --import file.csv`). No connection to their database.
 3. Press **Run > Assess and save everything** (or `wishbridge assess` then `wishbridge package`). On this computer
    only - nothing goes to Databricks or the client's database, and no Databricks login is needed - it analyzes,
-   converts, writes the report and saves **everything in one zip**: `original_code/`, `converted_code/`,
-   `report.html`, `open_items.csv`, `files.csv`, `fit_check.csv`, `inventory_tables.csv`, the analyzer workbook
+   converts, writes the report and the **code overview** (`code_overview.html`: structure, every table with its
+   columns, every procedure with the tables it reads and writes, data flows, what needs attention, old and new
+   files) and saves **everything in one zip**: `original_code/`, `converted_code/`, `code_overview.html`, `report.html`, `open_items.csv`, `files.csv`, `fit_check.csv`, `inventory_tables.csv`, the analyzer workbook
    and the project itself. **Nothing has to be fixed at the client.**
 
 **At Wishtree – offline**

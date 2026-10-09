@@ -112,4 +112,7 @@ def run_analyze(cfg: ProjectConfig) -> dict[str, Any]:
 
     fit = run_fit(cfg)
     result["fit"] = {"verdict": fit["verdict"], "headline": fit["headline"], "counts": fit["counts"]}
+    from .overview import build_overview
+
+    result["overview_file"] = str(build_overview(cfg))
     return result

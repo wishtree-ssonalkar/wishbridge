@@ -317,4 +317,7 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
     }
     result = {"summary": summary, "files": files, "transpiler": cfg.transpiler, "final_dir": str(final_dir)}
     save_step(cfg, "convert", result)
+    from .overview import build_overview
+
+    build_overview(cfg)  # now with each file's conversion status
     return result

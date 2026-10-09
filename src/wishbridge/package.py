@@ -30,13 +30,14 @@ README = """WishBridge package - {name}
 Created {when} on {machine}
 
 Read it now (nothing to install):
+  code_overview.html       Open in a browser: how the system is built - structure, tables, procedures, data flows
   report.html              Open in a browser: assessment, fit check, every converted file and its open items
   open_items.csv           One row per issue left in the converted code (file, line, severity, what to do)
   files.csv                Every converted file with its status (ready / review / needs-fix)
   fit_check.csv            Is this a data warehouse? Recommendation and reasons for every object
   inventory_tables.csv     Source tables with row counts and sizes (when the DBA inventory was imported)
   analysis.xlsx            LakeBridge analyzer workbook (complexity per file, functions used)
-  original_code/           The client's code exactly as received ({receipt})
+  original_code/           The source code before conversion
   converted_code/          The code converted for Databricks (hand fixes from overrides/ included)
 
 Continue the work (on any computer with WishBridge):
@@ -81,11 +82,11 @@ def build_package(cfg: ProjectConfig, include_original: bool = True) -> Path:
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         import platform
 
-        z.writestr("README.txt", README.format(
-            name=cfg.name, when=datetime.now().strftime("%Y-%m-%d %H:%M"), machine=platform.node(),
-            receipt=(f"copied {rec['copied_at']} from {rec['copied_from']}" if rec else "copied from the project's input")
-            if include_original else "left out of this package"))
+        z.writestr("README.txt", README.format(name=cfg.name, when=datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                              machine=platform.node()))
         z.write(report, "report.html")
+        if (cfg.output_dir / "code_overview.html").is_file():
+            z.write(cfg.output_dir / "code_overview.html", "code_overview.html")
         z.writestr("files.csv", _csv([{**f, "open_errors": sum(1 for x in f["findings"] if not x["fixed"] and x["severity"] == "error"),
                                        "open_warnings": sum(1 for x in f["findings"] if not x["fixed"] and x["severity"] == "warning")}
                                       for f in c["files"]],
