@@ -274,7 +274,7 @@ except (ConfigError, yaml.YAMLError, KeyError, TypeError, ValueError) as e:
 from wishbridge import runner
 
 LABELS = {"settings": "Settings", "code": "Code", "run": "Run", "results": "Results", "fix": "Fix code",
-          "send": "Send the zip"}
+          "send": "Share the zip"}
 from_package = (Path(ss.project) / "opened_from_package.json").exists()
 if cfg.phase == "assessment":
     # At the client: everything ends up in the zip, so the last step is sending it. Fixing happens later,
@@ -832,7 +832,7 @@ if STEP == "run":
             st.download_button("⬇ Download the zip", pkg.read_bytes(), file_name=pkg.name, mime="application/zip")
         if load_state(cfg):
             if cfg.phase == "assessment":
-                next_button("Next: send the zip →", "send", "next-run")
+                next_button("Next: share the zip →", "send", "next-run")
             else:
                 next_button("Next: see the results →", "results", "next-run")
 
@@ -842,78 +842,50 @@ if STEP == "run":
 if STEP == "send":
     from wishbridge import mailer
 
-    st.subheader("Send the zip")
+    st.subheader("Share the zip")
     if not packages:
         st.info("No zip yet - run *Assess and save everything* first.")
     else:
         pkg = packages[-1]
         size_mb = pkg.stat().st_size / (1024 * 1024)
-        st.markdown(f"**{pkg.name}** · {size_mb:.1f} MB · `{pkg}`")
+        st.markdown("Everything from this visit is in **one zip file**. WishBridge does not send it anywhere: "
+                    "the client's team shares it with Wishtree the way they prefer (e-mail, OneDrive, SharePoint...).")
+        st.markdown(f"**File:** `{pkg.name}` · {size_mb:.1f} MB  \n**Location:** `{pkg}`")
         if size_mb > mailer.MAX_ATTACHMENT_MB:
-            st.warning(f"The zip is larger than {mailer.MAX_ATTACHMENT_MB} MB - many mail servers refuse that. Share it "
-                       "through OneDrive / SharePoint instead, or send it without the code (`wishbridge package --no-original`).")
-        share = raw.get("share") or {}
-        subject_default, body_default = mailer.default_message(cfg.name, load_state(cfg), pkg.name)
-        c1, c2 = st.columns(2)
-        to_text = c1.text_input("To (your e-mail)", value=", ".join(share.get("to", [])), placeholder="you@wishtreetech.com")
-        cc_text = c2.text_input("CC (optional, e.g. the client)", value=", ".join(share.get("cc", [])),
-                                placeholder="name@client.com")
-        subject = st.text_input("Subject", value=subject_default)
-        body = st.text_area("Message", value=body_default, height=220)
-        to, cc = mailer.split_addresses(to_text), mailer.split_addresses(cc_text)
-        problems = []
-        if not to:
-            problems.append("Enter at least one address in To.")
-        bad = mailer.invalid_addresses(to + cc)
-        if bad:
-            problems.append("Not a valid e-mail address: " + ", ".join(bad))
-        for p in problems:
-            st.error(p)
-
-        def remember() -> None:
-            new = dict(raw)
-            new["share"] = {"to": to, "cc": cc}
-            h.save_raw(ss.project, new)
-
-        if "outlook" not in ss:
-            ss.outlook = mailer.outlook_available()
+            st.warning(f"The zip is larger than {mailer.MAX_ATTACHMENT_MB} MB - most mail servers refuse that. Share it "
+                       "through OneDrive / SharePoint / a file share instead.")
         b1, b2 = st.columns(2)
-        if ss.outlook:
-            if b1.button("📧 Open in Outlook with the zip attached", type="primary", disabled=bool(problems)):
-                ok, msg = mailer.open_outlook_draft(to, cc, subject, body, pkg)
-                (st.success if ok else st.error)(msg)
-                if ok:
-                    remember()
-                    ss[f"sent:{ss.project}"] = True
-        else:
-            b1.caption("Outlook is not available on this computer - use the mail server option below.")
-        if b2.button("📂 Show the zip in its folder"):
+        if b1.button("📂 Show the zip in its folder"):
             if os.name == "nt":
                 subprocess.Popen(["explorer", "/select,", str(pkg)])
             else:
                 subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(pkg.parent)])
-        with st.expander("Send through the company mail server (SMTP)", expanded=not ss.outlook):
-            st.caption("Sends the message straight away. The password is used for this send only and never saved.")
-            m1, m2, m3 = st.columns([3, 1, 1])
-            host = m1.text_input("Mail server", value=share.get("smtp_host", ""), placeholder="smtp.office365.com")
-            port = m2.number_input("Port", value=int(share.get("smtp_port", 587)), step=1)
-            tls = m3.checkbox("STARTTLS", value=True)
-            m1, m2, m3 = st.columns(3)
-            sender = m1.text_input("From", value=share.get("from", "") or (to[0] if to else ""))
-            user = m2.text_input("User", value=share.get("smtp_user", "") or sender)
-            password = m3.text_input("Password", type="password")
-            if st.button("Send now", disabled=bool(problems) or not host or not sender):
-                try:
-                    mailer.send_smtp(host, int(port), user, password, sender, to, cc, subject, body, pkg, tls)
-                except Exception as e:  # noqa: BLE001 - show the mail server's answer as it is
-                    st.error(f"Not sent: {e}")
-                else:
-                    new = dict(raw)
-                    new["share"] = {"to": to, "cc": cc, "from": sender, "smtp_host": host, "smtp_port": int(port),
-                                    "smtp_user": user}
-                    h.save_raw(ss.project, new)
-                    ss[f"sent:{ss.project}"] = True
-                    st.success(f"Sent to {', '.join(to + cc)}.")
+        b2.download_button("⬇ Download the zip", pkg.read_bytes(), file_name=pkg.name, mime="application/zip")
+
+        st.markdown("**What is inside**")
+        st.table(pd.DataFrame(mailer.CONTENTS, columns=["In the zip", "What it is"]).set_index("In the zip"))
+
+        st.markdown("**Who to send it to**")
+        share = raw.get("share") or {}
+        c1, c2 = st.columns(2)
+        to_text = c1.text_input("Send to (Wishtree)", value=", ".join(share.get("to", [])),
+                                placeholder="you@wishtreetech.com")
+        cc_text = c2.text_input("CC (optional)", value=", ".join(share.get("cc", [])), placeholder="name@client.com")
+        to, cc = mailer.split_addresses(to_text), mailer.split_addresses(cc_text)
+        bad = mailer.invalid_addresses(to + cc)
+        if bad:
+            st.error("Not a valid e-mail address: " + ", ".join(bad))
+        elif (to, cc) != (share.get("to", []), share.get("cc", [])) and to:
+            new = dict(raw)
+            new["share"] = {"to": to, "cc": cc}
+            h.save_raw(ss.project, new)  # remembered for this project
+
+        subject, body = mailer.default_message(cfg.name, load_state(cfg), pkg.name)
+        st.markdown("**Ready-made message for the client's team** (copy with the button at the top right of each box)")
+        handover = (f"To: {', '.join(to) or '<Wishtree e-mail>'}" + (f"\nCC: {', '.join(cc)}" if cc else "")
+                    + f"\nSubject: {subject}\nAttach: {pkg}\n\n{body}")
+        st.code(handover, language=None)
+        ss[f"sent:{ss.project}"] = True
 
 
 # ----------------------------------------------------------------- results

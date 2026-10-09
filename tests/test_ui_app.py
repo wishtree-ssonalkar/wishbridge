@@ -100,11 +100,11 @@ def test_migration_settings_need_target_and_source(project):
     assert "Fill these in" in msg and "Source database" in msg and "at least one table" in msg
 
 
-def test_assessment_ends_with_sending_the_zip(project):
+def test_assessment_ends_with_sharing_the_zip(project):
     text = (project / "project.yml").read_text(encoding="utf-8")
     (project / "project.yml").write_text(text + "\nphase: assessment\n", encoding="utf-8")
     at = ready_app(project).run()
     assert not at.exception
     steps = [b.label.replace("✓ ", "") for b in at.button if b.key and b.key.startswith("step-")]
-    assert steps == ["1 · Settings", "2 · Code", "3 · Run", "4 · Send the zip"]
+    assert steps == ["1 · Settings", "2 · Code", "3 · Run", "4 · Share the zip"]
     assert not next(b for b in at.button if b.label.startswith("Next: add the code")).disabled  # nothing else needed

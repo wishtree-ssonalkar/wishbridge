@@ -159,36 +159,3 @@ def test_mail_addresses_and_message():
                                                     "convert": {"summary": {"ready": 2, "review": 1, "needs_fix": 0}}},
                                            "acme.zip")
     assert subject == "WishBridge assessment - acme" and "acme.zip" in body and "2 files ready" in body
-
-
-def test_smtp_sends_the_zip(tmp_path, monkeypatch):
-    from wishbridge import mailer
-
-    sent = {}
-
-    class FakeSMTP:
-        def __init__(self, host, port, timeout):
-            sent["host"] = host
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def starttls(self):
-            sent["tls"] = True
-
-        def login(self, user, pw):
-            sent["user"] = user
-
-        def send_message(self, msg):
-            sent["msg"] = msg
-
-    monkeypatch.setattr(mailer.smtplib, "SMTP", FakeSMTP)
-    z = tmp_path / "p.zip"
-    z.write_bytes(b"PK")
-    mailer.send_smtp("smtp.x.com", 587, "me@x.com", "pw", "me@x.com", ["me@x.com"], ["client@c.com"], "S", "B", z)
-    msg = sent["msg"]
-    assert msg["To"] == "me@x.com" and msg["Cc"] == "client@c.com" and sent["tls"]
-    assert [p.get_filename() for p in msg.iter_attachments()] == ["p.zip"]
