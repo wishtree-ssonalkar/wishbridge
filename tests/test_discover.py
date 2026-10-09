@@ -109,15 +109,3 @@ def test_suggested_name_is_free(tmp_path):
     (tmp_path / "ssis" / "project.yml").write_text("source: ssis\n", encoding="utf-8")
     assert discover.suggested_name(tmp_path / "client" / "SSIS", tmp_path) == "ssis-2"
     assert discover.suggested_name(tmp_path / "client" / "Other", tmp_path) == "other"
-
-
-def test_existing_projects_are_found_for_the_code(tmp_path, monkeypatch):
-    monkeypatch.setattr(discover, "REGISTRY", tmp_path / "registry.json")
-    monkeypatch.setattr(discover, "DEFAULT_PARENTS", ())
-    repo = vs_repo(tmp_path)
-    assert discover.existing_projects(repo) == []
-    made = discover.create_projects_for_code(discover.inspect(repo), tmp_path / "elsewhere", "acme", "mssql", split=True)
-    found = discover.existing_projects(repo)  # found through the registry, wherever they were saved
-    assert sorted(p["name"] for p in found) == sorted(p.name for p in made)  # one per database inside the folder
-    assert discover.existing_projects(repo / "SalesDB" / "TenantDB")[0]["name"] == "acme-tenantdb"
-    assert discover.existing_projects(tmp_path / "other") == []

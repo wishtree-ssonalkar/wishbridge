@@ -175,7 +175,4 @@ def open_package(zip_path: str | Path, parent: str | Path, name: str | None = No
     # Remember where it came from: the app then offers "Fix code" for this project.
     (dest / "opened_from_package.json").write_text(json.dumps({**man, "package": str(zip_path.resolve())}, indent=2),
                                                    encoding="utf-8")
-    from .discover import remember_project
-
-    remember_project(dest)
     return dest

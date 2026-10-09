@@ -209,7 +209,6 @@ def create_project_for_code(code_dir: str | Path, parent: str | Path, name: str,
         else "# The client's folder is only read; everything WishBridge produces goes into this folder.\n")
     (root / "project.yml").write_text(text + yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8")
     load_config(root / "project.yml")  # fail now if anything is off
-    remember_project(root)
     return root
 
 
@@ -220,76 +219,6 @@ def create_projects_for_code(info: CodeFolder, parent: str | Path, base_name: st
         return [create_project_for_code(path, parent, f"{base_name}-{_slug(db)}", source, catalog, host, copy_code)
                 for db, path, _ in info.databases]
     return [create_project_for_code(info.path, parent, base_name, source, catalog, host, copy_code)]
-
-
-REGISTRY = Path.home() / ".wishbridge" / "projects.json"
-DEFAULT_PARENTS = (Path("C:/migrations"), Path.home() / "migrations")
-
-
-def remember_project(root: str | Path) -> None:
-    """Keep a list of the projects made on this computer, so they are found again wherever they were saved."""
-    import json
-
-    try:
-        known = json.loads(REGISTRY.read_text(encoding="utf-8")) if REGISTRY.exists() else []
-    except (OSError, ValueError):
-        known = []
-    root = str(Path(root).resolve())
-    if root not in known:
-        REGISTRY.parent.mkdir(parents=True, exist_ok=True)
-        REGISTRY.write_text(json.dumps(known + [root], indent=2), encoding="utf-8")
-
-
-def _code_source(root: Path) -> Path | None:
-    """The client folder a project was made from: its receipt, or the folder it reads in place."""
-    import json
-
-    try:
-        receipt = json.loads((root / "code_received.json").read_text(encoding="utf-8"))
-        return Path(receipt["copied_from"]).resolve()
-    except (OSError, ValueError, KeyError):
-        pass
-    try:
-        raw = yaml.safe_load((root / "project.yml").read_text(encoding="utf-8-sig")) or {}
-        inp = Path(str(raw.get("input") or "input"))
-        return (inp if inp.is_absolute() else root / inp).resolve()
-    except (OSError, yaml.YAMLError):
-        return None
-
-
-def existing_projects(code_dir: str | Path, parents: tuple[Path, ...] = ()) -> list[dict]:
-    """Projects already made from this code folder (or from a database inside it), newest first."""
-    import json
-    from datetime import datetime
-
-    code_dir = Path(code_dir).expanduser().resolve()
-    candidates: set[Path] = set()
-    try:
-        candidates |= {Path(p) for p in json.loads(REGISTRY.read_text(encoding="utf-8"))}
-    except (OSError, ValueError):
-        pass
-    for parent in (*parents, *DEFAULT_PARENTS):
-        parent = Path(parent).expanduser()
-        if parent.is_dir():
-            candidates |= {p.parent for p in parent.glob("*/project.yml")}
-    found = []
-    for root in candidates:
-        if not (root / "project.yml").is_file():
-            continue
-        src = _code_source(root)
-        if src is None or not (src == code_dir or code_dir in src.parents):
-            continue
-        try:
-            state = json.loads((root / "output" / "state.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            state = {}
-        modified = max([(root / "project.yml").stat().st_mtime]
-                       + [p.stat().st_mtime for p in (root / "output" / "state.json",) if p.exists()])
-        found.append({"path": str(root.resolve()), "name": root.name, "code": str(src),
-                      "modified": datetime.fromtimestamp(modified).strftime("%Y-%m-%d %H:%M"),
-                      "steps": [k for k in ("analyze", "convert", "deploy", "load", "reconcile") if k in state],
-                      "packaged": any((root / "output" / "review_package").glob("*.zip"))})
-    return sorted(found, key=lambda p: p["modified"], reverse=True)
 
 
 def suggested_name(folder: str | Path, parent: str | Path | None = None) -> str:
