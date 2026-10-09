@@ -1,0 +1,28 @@
+# WishBridge example: SQL Server Integration Services (SSIS) project -> Databricks notebooks + one Databricks job.
+name: ssis-demo
+source: ssis
+input: input                # input/SalesDW_ETL: a Visual Studio SSIS project (Master + 2 load packages)
+output: output
+overrides: overrides        # target tables (ETL exports carry no DDL) and one hand-fixed notebook
+
+databricks:
+  profile: DEFAULT
+  warehouse_id: ""          # blank = first running SQL warehouse
+  catalog: workspace
+  schema: wishbridge_ssis
+
+# The packages use the source databases' schemas. Sales.* is read where the legacy data lives
+# (here a stand-in schema; in a real migration a Lakehouse Federation catalog over SalesOLTP);
+# stg.* and dw.* become the migrated warehouse.
+schema_map:
+  Sales: workspace.wishbridge_ssis_src
+  stg: workspace.wishbridge_ssis
+  dw: workspace.wishbridge_ssis
+
+data:
+  method: federation
+  source_catalog: workspace
+  mode: append
+  tables:   # compare only: what the legacy SSIS load produced vs what the migrated notebooks produce
+    - {source: wishbridge_ssis_src.DimCustomer_legacy, target: workspace.wishbridge_ssis.DimCustomer, load: false}
+    - {source: wishbridge_ssis_src.FactDailySales_legacy, target: workspace.wishbridge_ssis.FactDailySales, load: false}

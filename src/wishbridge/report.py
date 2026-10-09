@@ -195,10 +195,16 @@ def build_report(cfg: ProjectConfig) -> Path:
         parts.append("<h2>ETL notebooks</h2>")
         parts.append('<p class="muted">Converted ETL jobs run as Databricks notebook jobs; their output tables are '
                      'compared with the legacy ETL output in the reconciliation below.</p>')
-        parts.append(_table(["Notebook", "Result", "Details"], [
-            [f'<code>{escape(x["file"])}</code>', _pill("loaded" if x["status"] == "succeeded" else "failed"),
-             (f'<a href="{escape(x["url"])}">run</a> ' if x.get("url") else "") + escape(x.get("error", ""))]
+        parts.append(_table(["Notebook", "Result", "Runs after", "Details"], [
+            [f'<code>{escape(x["file"])}</code>',
+             _pill({"succeeded": "loaded", "skipped": "skipped"}.get(x["status"], "failed")),
+             escape(", ".join(x.get("depends_on") or [])) or "—",
+             (f'<a href="{escape(x["url"])}">run</a> ' if x.get("url") else "") + escape(x.get("error") or x.get("note") or "")]
             for x in ex["runs"]]))
+        if ex.get("job_definition"):
+            parts.append(f'<p class="muted">Job definition to schedule the migrated workflow: '
+                         f'<code>{escape(_rel(ex["job_definition"], base))}</code> '
+                         f'(<code>databricks jobs create --json @file</code>).</p>')
 
     # 5. Reconciliation
     parts.append("<h2>5. Reconciliation</h2>")

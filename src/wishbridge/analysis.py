@@ -13,6 +13,17 @@ from .config import ProjectConfig
 from .state import save_step
 
 
+def _table_rows(ws, first_header: str) -> list[dict[str, Any]]:
+    """Rows of a sheet as dicts, using the first row that contains `first_header` as the header."""
+    rows = list(ws.iter_rows(values_only=True))
+    idx = next((i for i, r in enumerate(rows) if r and first_header in r), None)
+    if idx is None:
+        return []
+    header = [str(h) if h is not None else "" for h in rows[idx]]
+    key = header.index(first_header)
+    return [dict(zip(header, r)) for r in rows[idx + 1:] if r and len(r) > key and r[key] not in (None, "")]
+
+
 def parse_report(xlsx: Path) -> dict[str, Any]:
     wb = openpyxl.load_workbook(xlsx, read_only=True, data_only=True)
     totals: dict[str, int] = {}
@@ -48,6 +59,24 @@ def parse_report(xlsx: Path) -> dict[str, Any]:
                     "complexity": str(get("Complexity", "UNKNOWN")).upper(),
                     "category": str(get("Script Category", "")),
                 })
+
+    # ETL sources (SSIS, Informatica, DataStage): one row per job / package instead of per SQL program.
+    if not programs and "Job Details" in wb.sheetnames:
+        for job in _table_rows(wb["Job Details"], "Job Name"):
+            if str(job.get("Included") or "YES").upper() == "NO":
+                continue
+            programs.append({
+                "name": str(job["Job Name"]),
+                "source_file": str(job.get("Source File") or ""),
+                "lines": 0,
+                "statements": int(job.get("Number of Nodes") or 0),
+                "complexity": str(job.get("Categorization") or "UNKNOWN").upper(),
+                "category": str(job.get("Job Type") or "Job"),
+            })
+    if "Embedded SQL Programs" in wb.sheetnames:
+        embedded = _table_rows(wb["Embedded SQL Programs"], "Program Name")
+        if embedded:
+            totals["Embedded SQL statements"] = len(embedded)
 
     if "Functions" in wb.sheetnames:
         for r in list(wb["Functions"].iter_rows(values_only=True))[1:]:

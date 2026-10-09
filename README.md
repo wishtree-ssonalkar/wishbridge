@@ -190,6 +190,7 @@ Add rules in [src/wishbridge/rules.py](src/wishbridge/rules.py), each with a tes
 | `examples/mssql-demo` | Full pipeline on Databricks, including overrides for the two files the transpiler gets wrong |
 | `examples/snowflake-demo` | Streams, tasks, stages, VARIANT/FLATTEN |
 | `examples/oracle-demo` | PL/SQL, sequences, CONNECT BY, `(+)` joins, ROWNUM |
+| `examples/ssis-demo` | Visual Studio SSIS project: master package becomes one Databricks job with task dependencies; SSIS expressions fixed in the notebooks; hand fixes for an Aggregate and a BIT flag; output reconciled with the legacy load |
 
 ## Development
 

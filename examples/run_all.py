@@ -28,7 +28,7 @@ from wishbridge.report import build_report
 from wishbridge.sqltext import split_statements
 
 HERE = Path(__file__).parent
-ORDER = ["mssql", "synapse", "oracle", "snowflake", "teradata", "redshift", "bigquery", "netezza", "informatica"]
+ORDER = ["mssql", "synapse", "oracle", "snowflake", "teradata", "redshift", "bigquery", "netezza", "informatica", "ssis"]
 
 
 def run_example(name: str, wh_cache: dict) -> dict:

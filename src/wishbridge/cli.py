@@ -276,10 +276,13 @@ def execute(config_path: str, allow_prod: bool) -> None:
     s = res["summary"]
     _ok(f"{s['succeeded']}/{s['notebooks']} notebooks succeeded")
     for r in res["runs"]:
-        colour = "green" if r["status"] == "succeeded" else "red"
-        click.secho(f"  {r['status']:<9} {r['file']}" + (f"  {r.get('url')}" if r.get("url") else ""), fg=colour)
-        if r.get("error"):
-            click.secho(f"      {r['error']}", fg="red")
+        colour = {"succeeded": "green", "skipped": "yellow"}.get(r["status"], "red")
+        after = f"  (after {', '.join(r['depends_on'])})" if r.get("depends_on") else ""
+        click.secho(f"  {r['status']:<9} {r['file']}{after}" + (f"  {r.get('url')}" if r.get("url") else ""), fg=colour)
+        for key, col in (("error", "red"), ("note", None)):
+            if r.get(key):
+                click.secho(f"      {r[key]}", fg=col)
+    click.echo(f"  Job definition (to schedule it): {res['job_definition']}")
 
 
 @main.command()

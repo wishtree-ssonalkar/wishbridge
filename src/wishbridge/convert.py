@@ -10,7 +10,7 @@ from typing import Any
 
 from . import lakebridge
 from .config import ETL_SOURCES, ProjectConfig, fallback_converter
-from .rules import ERROR, INFO, WARNING, Finding, apply_rules, detect, dropped_statement_check
+from .rules import ERROR, INFO, WARNING, Finding, apply_rules, check_notebook, detect, dropped_statement_check
 from .staging import prepared_notes, read_source, source_files, staged
 from .state import save_step
 
@@ -42,6 +42,36 @@ NOTEBOOK_NOTES = {
                 "`wishbridge execute` runs it on Databricks.",
     "python": "Python helper module used by the converted notebooks; `wishbridge deploy` uploads it next to them.",
 }
+
+
+def notebook_findings(text: str, kind: str, fix: bool = True,
+                      schema_map: dict[str, str] | None = None) -> tuple[str, list[Finding]]:
+    """Notebook / helper note plus the ETL-expression checks (and fixes) inside the notebook's Spark SQL."""
+    note = Finding("notebook", INFO, 1, NOTEBOOK_NOTES[kind])
+    if kind != "notebook":
+        return text, [note]
+    fixed, findings = check_notebook(text, schema_map)
+    if not fix:
+        return text, [note] + [f for f in findings if not f.fixed]
+    return fixed, [note] + findings
+
+
+_NOTEBOOK_WORK = re.compile(r"\bspark\.(?:sql|read|table)\b|\bdbutils\.|\.write\b|\.saveAsTable\b")
+
+
+def orchestration_findings(rel: Path, text: str, orchestrators: dict[str, list[str]]) -> list[Finding]:
+    """Explain an empty master-package notebook; warn about any other notebook with no processing steps."""
+    children = next((c for m, c in orchestrators.items() if m.lower() == rel.stem.lower()), None)
+    if children is not None:
+        return [Finding("orchestration", INFO, 1,
+                        "Master package (Execute Package tasks only). Its order becomes the task order of one Databricks "
+                        f"job: {' -> '.join(children)}. `wishbridge execute` runs that job and writes its definition "
+                        "to output/jobs/ for scheduling; this notebook itself is not run.")]
+    if not _NOTEBOOK_WORK.search(text):
+        return [Finding("empty-notebook", WARNING, 1,
+                        "No processing steps were converted (no spark.sql / read / write). Check the original job: "
+                        "orchestration-only jobs become Databricks job tasks; anything else must be rebuilt by hand.")]
+    return []
 
 
 def file_kind(rel: Path, text: str) -> str:
@@ -191,6 +221,9 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
     tnotes = _transpile_notes(error_log)
     converters = choose_best_converter(scfg, raw_dir, tnotes)
     prep = prepared_notes(cfg)
+    from .orchestration import ssis_plan
+
+    plan = ssis_plan(cfg) if cfg.source.key == "ssis" else {"orchestrators": {}}
 
     files: list[dict[str, Any]] = []
     converted = sorted(p.relative_to(raw_dir) for p in raw_dir.rglob("*") if p.is_file())
@@ -205,7 +238,9 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
             fixed, findings = check_sql(cfg, rel, text, tnotes.get(rel.name, []), scfg.input_dir / rel if src.exists() else None)
             findings += [Finding(n["rule"], n["severity"], 1, n["message"]) for n in prep.get(rel.as_posix(), [])]
         else:
-            fixed, findings = text, [Finding("notebook", INFO, 1, NOTEBOOK_NOTES[kind])]
+            fixed, findings = notebook_findings(text, kind, schema_map=cfg.schema_map)
+            if kind == "notebook":
+                findings += orchestration_findings(rel, fixed, plan["orchestrators"])
 
         # A hand-fixed file in overrides/ replaces the converted one; it is still checked, never rewritten.
         override = cfg.overrides_dir / rel if cfg.overrides_dir else None
@@ -213,7 +248,7 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
         if manual:
             fixed = read_source(override)
             kind = file_kind(rel, fixed)
-            findings = detect(fixed, cfg.source.key) if kind == "sql" else [Finding("notebook", INFO, 1, NOTEBOOK_NOTES[kind])]
+            findings = detect(fixed, cfg.source.key) if kind == "sql" else notebook_findings(fixed, kind, fix=False)[1]
 
         dest = final_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -227,7 +262,7 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
             "converted": str(src) if src.exists() else "",
             "final": str(dest),
             "manual_override": manual,
-            "status": "review" if kind == "notebook" else file_status(findings),
+            "status": file_status(findings) if kind == "sql" else ("needs-fix" if file_status(findings) == "needs-fix" else "review"),
             "fixed": sum(1 for f in findings if f.fixed),
             "findings": [f.to_dict() for f in findings],
         }

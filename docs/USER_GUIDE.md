@@ -319,8 +319,19 @@ wishbridge load --execute     # copies the data
 `wishbridge deploy` uploads them to your workspace folder (`/Workspace/Users/<you>/wishbridge/<project>`), and
 
 ```powershell
-wishbridge execute            # runs each converted notebook as a one-time Databricks job
+wishbridge execute            # runs the converted notebooks as one Databricks job
 ```
+
+**SSIS master packages.** LakeBridge drops Execute Package tasks, so a master package converts to an empty
+notebook. WishBridge reads the order from the packages (Execute Package tasks and precedence constraints) and
+runs the notebooks as **one Databricks job whose tasks depend on each other**, e.g. `LoadDimCustomer -> LoadFactSales`.
+If a task fails, the tasks after it are skipped, as in SSIS. The job definition is written to
+`output\jobs\<project>.json`; create the scheduled job from it with `databricks jobs create --json @output\jobs\<project>.json`.
+
+WishBridge also checks the Spark SQL inside the notebooks. It fixes SSIS expression leftovers (`+` between
+strings, `"x"` literals that became backtick identifiers, `FINDSTRING`, `LEN`, `REPLACENULL`), applies `schema_map`,
+and flags what needs a person: empty column lists (often an Aggregate), `(DT_...)` casts, SSIS functions, and BIT
+flags compared with 1/0 (BIT arrives in Databricks as BOOLEAN). See `examples\ssis-demo`.
 
 runs them after the input tables are loaded. To prove the migrated job produces the same result as the old one,
 list the job's output table with `load: false` and its legacy output as the source:

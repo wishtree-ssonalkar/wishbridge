@@ -288,6 +288,10 @@ _DETECTORS: list[Detector] = [
              "GENERATE STATISTICS: use ANALYZE TABLE ... COMPUTE STATISTICS."),
     Detector("netezza-age", ERROR, NETEZZA, re.compile(r"\bAGE\s*\(", I),
              "AGE() does not exist in Databricks: use datediff() or months_between()."),
+    Detector("bit-flag-compare", WARNING, TSQL | {"ssis"},
+             re.compile(r"\b(?:[A-Za-z_]\w*\.)?`?(?:Is|Has|Can|Should|Allow)[A-Z_]\w*`?\s*(?:=|<>|!=)\s*[01]\b"),
+             "{m}: SQL Server BIT columns arrive in Databricks as BOOLEAN, which cannot be compared with 1/0. "
+             "If this column is a BIT, compare with true / false (or just use the column)."),
     # All sources
     Detector("partition-expression", ERROR, ALL, re.compile(r"\bPARTITIONED\s+BY\s*\([^()]*\(", I),
              "Delta tables partition by columns only: add a generated column (e.g. order_day DATE GENERATED ALWAYS AS "
@@ -470,3 +474,73 @@ def apply_rules(sql: str, schema_map: dict[str, str] | None = None, dialect: str
     sql = re.sub(r"\n{3,}", "\n\n", sql)
     findings += detect(sql, dialect)
     return sql, sorted(findings, key=lambda x: (x.line, x.rule))
+
+
+# --------------------------------------------------------------- notebooks generated from ETL jobs
+# BladeBridge turns ETL jobs (SSIS, Informatica, DataStage) into PySpark notebooks whose logic is Spark SQL in
+# f\"\"\"...\"\"\" strings. Expression languages of the ETL tools leak into that SQL; these rules work only
+# inside those strings, so the Python around them is never changed.
+_NB_SQL = re.compile(r'f?"""(.*?)"""', S)
+_NB_FIXES: list[tuple[str, re.Pattern, str | Callable[[re.Match], str], str]] = [
+    ("etl-quoted-literal", re.compile(r"`([^`A-Za-z0-9_#][^`]{0,20}|)`"), lambda m: "'" + m.group(1).replace("'", "''") + "'",
+     "Turned an ETL string literal that became a `backtick identifier` back into a 'string'"),
+    ("etl-string-concat", re.compile(r"(?<=[')\w])\s*\+\s*(?=')|(?<=')\s*\+\s*(?=[\w(])"), " || ",
+     "Replaced + between strings with || (Spark SQL + only adds numbers)"),
+    ("etl-findstring", re.compile(r"\bFINDSTRING\s*\(\s*([^,()]+(?:\([^()]*\))?)\s*,\s*('[^']*')\s*,\s*1\s*\)", I),
+     r"instr(\1, \2)", "Replaced SSIS FINDSTRING(s, x, 1) with instr(s, x)"),
+    ("etl-len", re.compile(r"\bLEN\s*\(", I), "length(", "Replaced LEN( with length("),
+    ("etl-replacenull", re.compile(r"\bREPLACENULL\s*\(", I), "coalesce(", "Replaced SSIS REPLACENULL with coalesce"),
+]
+_NB_DETECTORS: list[tuple[str, str, re.Pattern, str]] = [
+    ("empty-select", ERROR, re.compile(r"\bSELECT\s+FROM\b", I),
+     "Empty column list: the converter could not translate this ETL step (often an Aggregate). Rebuild it from "
+     "the original component, e.g. SELECT <group columns>, SUM(...) ... GROUP BY <group columns>."),
+    ("etl-cast", ERROR, re.compile(r"\(\s*DT_[A-Z0-9]+\s*(?:,[^)]*)?\)", I),
+     "SSIS type cast {m} left in the SQL: use CAST(x AS STRING / INT / DECIMAL(p,s) / DATE / TIMESTAMP)."),
+    ("etl-function", ERROR, re.compile(r"\b(?:FINDSTRING|TOKENCOUNT|TOKEN|CODEPOINT|REPLACENULL)\s*\(", I),
+     "SSIS function {m} is not Spark SQL: FINDSTRING -> instr/locate, TOKEN -> split(...)[n], TOKENCOUNT -> size(split(...))."),
+    ("etl-datepart", ERROR, re.compile(r"\bDATE(?:PART|ADD|DIFF)\s*\(\s*\"", I),
+     "SSIS date function with a quoted part ({m}...): use dateadd/datediff/date_part with an unquoted unit, e.g. dateadd(DAY, 1, d)."),
+    ("etl-ternary", WARNING, re.compile(r"\?\s*[^:?\n]+\s:\s"),
+     "Looks like an SSIS conditional (cond ? a : b): use CASE WHEN cond THEN a ELSE b END."),
+    ("etl-variable", WARNING, re.compile(r"@\[(?:User|System)::\w+\]", I),
+     "SSIS variable {m}: pass it as a notebook widget / job parameter and reference it in the SQL."),
+    ("bit-flag-compare", WARNING,
+     re.compile(r"\b(?:[A-Za-z_]\w*\.)?`?(?:Is|Has|Can|Should|Allow)[A-Z_]\w*`?\s*(?:=|<>|!=)\s*[01]\b"),
+     "{m}: SQL Server BIT columns arrive in Databricks as BOOLEAN, which cannot be compared with 1/0. "
+     "If this column is a BIT, compare with true / false (or just use the column)."),
+]
+
+
+def check_notebook(text: str, schema_map: dict[str, str] | None = None) -> tuple[str, list[Finding]]:
+    """Fix and flag ETL expression leftovers inside the Spark SQL strings of a converted notebook,
+    and rename source schemas (schema_map) there."""
+    findings: list[Finding] = []
+    counts: dict[str, list[int]] = {}
+    out, pos = [], 0
+    for m in _NB_SQL.finditer(text):
+        sql = m.group(1)
+        if schema_map:
+            new, _ = _fix_schema_map(sql, schema_map)
+            if new != sql:
+                counts.setdefault("schema-map", []).append(line_of(text, m.start(1)))
+                sql = new
+        for rule, pat, repl, _msg in _NB_FIXES:
+            new = pat.sub(repl, sql)
+            if new != sql:
+                counts.setdefault(rule, []).append(line_of(text, m.start(1)))
+                sql = new
+        for rule, sev, pat, msg in _NB_DETECTORS:
+            for d in pat.finditer(sql):
+                line = line_of(text, m.start(1)) + sql.count("\n", 0, d.start())
+                findings.append(Finding(rule, sev, line, msg.format(m=d.group(0).strip())))
+        out += [text[pos:m.start(1)], sql]
+        pos = m.end(1)
+    out.append(text[pos:])
+    if "schema-map" in counts:
+        findings.append(Finding("schema-map", INFO, counts["schema-map"][0],
+                                f"Mapped source schemas to Databricks ({len(counts['schema-map'])} step(s))", True))
+    for rule, pat, repl, msg in _NB_FIXES:
+        if rule in counts:
+            findings.append(Finding(rule, INFO, counts[rule][0], f"{msg} ({len(counts[rule])} step(s))", True))
+    return "".join(out), _dedupe(sorted(findings, key=lambda f: (f.line, f.rule)))
