@@ -164,16 +164,19 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
 - **3 · Run:** in the assessment phase one button does it all, offline. In the migration phase tick the steps
   (analyze, convert, create the tables and code in the test schema, report) and press *Start*. Each step shows its
   result; a failed step stops the run and says why. No data is copied here.
-- **4 · Map the data (migration):** *Propose the mapping* lists the source tables (from the database tables read in
+- **4 · Report:** right after the run, so the overview is there at once. *At a glance* says what the code is
+  (files, lines, tables, procedures, views, functions), whether it is a data warehouse, how the conversion went,
+  the manual effort WishBridge saves and, in the migration phase, what was deployed and whether the copied data
+  matches. Below: the code overview and the report to download, the fit check with every object's
+  recommendation, file statuses, open items, deployment errors, reconciliation and the full report on the page.
+  *Next* goes on to *Share the zip* (assessment) or *Map the data* (migration).
+- **5 · Map the data (migration):** *Propose the mapping* lists the source tables (from the database tables read in
   Code, or through the connection) and the Databricks tables, and pairs them by name; tables that do not exist in
   Databricks yet are flagged. Untick what should not be copied, change a target if needed, then *Save and check
   the columns*: WishBridge reads the columns on both sides. Columns with different names can be paired by hand
   (*Map the columns*; an empty source keeps the column NULL). *Copy the data* is locked while a table is missing on
   either side; it copies in the background (append or overwrite, from Settings), compares source and target, and
-  rebuilds the report.
-- **5 · Results:** the numbers, the fit check (*Is this a data warehouse?*), file statuses, open items,
-  deployment errors, reconciliation and the full report, plus *Build the review package* (one zip with the report,
-  open items, converted and original code).
+  rebuilds the report (*Next: see the updated report*).
 - **6 · Fix code (later):** pick a file, see its open items and the original next to the Databricks version, edit it
   and press *Save as manual fix*. Then run Convert again.
 - **Step 0 · System check (sidebar):** press **Check this computer**. If something is missing, press **Install missing**:
@@ -183,7 +186,7 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   the missing tool are skipped with a note. Every check and install is saved to `~/.wishbridge/system_check.json`.
   Same from the command line: `wishbridge setup` (`-c project.yml` for a project).
 - **Steps:** a project is worked through in order, and a step opens only when the one before it is complete.
-  - *Assessment* (at the client): **1 Settings → 2 Code → 3 Run → 4 Share the zip**. Settings need only the source
+  - *Assessment* (at the client): **1 Settings → 2 Code → 3 Run → 4 Report → 5 Share the zip**. Settings need only the source
     system. Run makes the zip. **Share the zip** does not send anything: it shows where the zip is, its size and
     what is inside, who to send it to (Wishtree, optional CC) and a ready-made message the client's team can copy
     when they share the file (e-mail, OneDrive, SharePoint...). At the bottom, **Send mail with the zip attached**
@@ -193,9 +196,9 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
     zip in OneDrive* copies it to a WishBridge folder there (or *Open OneDrive* to upload it when OneDrive is not set
     up), you share it and paste the link, and *Send mail with the OneDrive link* opens the e-mail with the link in
     the text. Projects opened from a package also get **Fix code**.
-  - *Migration*: **1 Settings → 2 Code → 3 Run → 4 Map the data → 5 Results → 6 Fix code**. *Next* on Settings
+  - *Migration*: **1 Settings → 2 Code → 3 Run → 4 Report → 5 Map the data → 6 Fix code**. *Next* on Settings
     stays locked until the workspace login (signed in), catalog and test schema and the source database connection
-    (or files folder) are filled in. Results opens after the run, with or without copying the data.
+    (or files folder) are filled in. The report opens after the run, with or without copying the data.
   - **Run** and **Copy the data** work in the background: you can wait on the step and watch each step's progress;
     the other steps stay locked until it has finished, so nothing is interrupted.
 - **Good fit**: a data warehouse / ETL code base. Migrate it all.

@@ -281,15 +281,16 @@ except (ConfigError, yaml.YAMLError, KeyError, TypeError, ValueError) as e:
 
 from wishbridge import runner
 
-LABELS = {"settings": "Settings", "code": "Code", "run": "Run", "data": "Map the data", "results": "Results",
+LABELS = {"settings": "Settings", "code": "Code", "run": "Run", "data": "Map the data", "results": "Report",
           "fix": "Fix code", "send": "Share the zip"}
 from_package = (Path(ss.project) / "opened_from_package.json").exists()
 if cfg.phase == "assessment":
     # At the client: everything ends up in the zip, so the last step is sending it. Fixing happens later,
     # in the project opened from that zip.
-    ORDER = ["settings", "code", "run"] + (["fix"] if from_package else []) + ["send"]
+    ORDER = ["settings", "code", "run", "results"] + (["fix"] if from_package else []) + ["send"]
 else:
-    ORDER = ["settings", "code", "run", "data", "results", "fix"]
+    # The report right after the run gives the overview; it is updated again after the data copy.
+    ORDER = ["settings", "code", "run", "results", "data", "fix"]
 state_now = load_state(cfg)
 running = runner.is_running(cfg)
 has_code = bool(h.input_files(ss.project, raw.get("input", "input")))
@@ -1065,9 +1066,9 @@ if STEP == "run":
             st.download_button("⬇ Download the zip", pkg.read_bytes(), file_name=pkg.name, mime="application/zip")
         if load_state(cfg):
             if cfg.phase == "assessment":
-                next_button("Next: share the zip →", "send", "next-run")
+                next_button("Next: see the report →", "results", "next-run")
             else:
-                next_button("Next: map the data →", "data", "next-run")
+                next_button("Next: see the report →", "results", "next-run")
 
 
 # ----------------------------------------------------------------- data
@@ -1186,7 +1187,7 @@ if STEP == "data":
             st.dataframe(pd.DataFrame([{"source": t["source"], "Databricks table": t["target"], "status": t["status"],
                                         "rows": t.get("rows"), "error": t.get("error", "")} for t in ld["tables"]]),
                          hide_index=True, width="stretch")
-            next_button("Next: see the results →", "results", "next-data")
+            next_button("Next: see the updated report →", "results", "next-data")
 
 
 # ----------------------------------------------------------------- send
@@ -1284,6 +1285,44 @@ if STEP == "send":
             st.caption("Paste the OneDrive link above to use this button.")
 
 
+def report_overview(cfg, state) -> None:
+    """At a glance: what the code is, whether it belongs on Databricks, how the conversion went, the effort."""
+    a, c, d, r, fit, ov = (state.get(k) for k in ("analyze", "convert", "deploy", "reconcile", "fit", "overview"))
+    st.subheader("Report — at a glance")
+    lines = []
+    if ov:
+        lines.append(f"**The code:** {ov['files']} files, {ov['lines']:,} lines — {ov['tables']} tables, "
+                     f"{ov['procedures']} procedures, {ov['views']} views, {ov['functions']} functions"
+                     + (f" (schemas: {', '.join(ov['schemas'][:6])})" if ov.get("schemas") else "") + ".")
+    if fit:
+        lines.append(f"**Is it a data warehouse?** {fit['headline']}")
+    if c:
+        s = c["summary"]
+        lines.append(f"**Conversion:** {s['ready']} of {s['files']} files ready, {s['review']} to review, "
+                     f"{s['needs_fix']} need a fix ({s['open_errors']} open errors, {s['open_warnings']} warnings).")
+    if a:
+        lines.append(f"**Effort:** about {a['estimated_hours_baseline']} hours of manual work without WishBridge.")
+    if d:
+        lines.append(f"**Deployed:** {d['summary']['statements_ok']} of {d['summary']['statements']} statements ran in "
+                     f"`{d['summary']['target']}`.")
+    if r and r.get("summary"):
+        lines.append(f"**Data:** {r['summary']['matched']} of {r['summary']['tables']} tables match the source.")
+    if lines:
+        box = st.warning if fit and fit.get("verdict") == "application" else st.info
+        box("\n\n".join(lines))
+    if ov and ov.get("headline") and ov["headline"] != (fit or {}).get("headline"):
+        st.caption(ov["headline"])
+    b1, b2 = st.columns(2)
+    ovf = Path(ov["file"]) if ov and ov.get("file") else None
+    if ovf and ovf.is_file():
+        b1.download_button("📘 Code overview (how the system is built)", ovf.read_bytes(), file_name=ovf.name,
+                           mime="text/html", width="stretch")
+    report = cfg.output_dir / "report.html"
+    if report.exists():
+        b2.download_button("⬇ Download the report", report.read_bytes(), file_name=f"{cfg.name}-report.html",
+                           mime="text/html", width="stretch")
+
+
 # ----------------------------------------------------------------- results
 
 if STEP == "results":
@@ -1291,7 +1330,12 @@ if STEP == "results":
     if not state:
         st.info("Nothing has run yet. Use the Run tab.")
     else:
-        if state.get("convert"):
+        report_overview(cfg, state)
+        if cfg.phase == "assessment":
+            next_button("Next: share the zip →", "send", "next-report")
+        else:
+            next_button("Next: map the data →", "data", "next-report")
+        if cfg.phase == "migration" and state.get("convert"):
             if st.button("📦 Save everything in one zip"):
                 from wishbridge.package import build_package
 
@@ -1371,10 +1415,8 @@ if STEP == "results":
 
         report = cfg.output_dir / "report.html"
         if report.exists():
-            html = report.read_text(encoding="utf-8")
-            st.download_button("⬇ Download report.html", html, file_name=f"{cfg.name}-migration-report.html", mime="text/html")
-            with st.expander("Show the full report"):
-                st.iframe(html, height=900)  # our own generated report, all values HTML-escaped
+            st.markdown("#### The full report")
+            st.iframe(report.read_text(encoding="utf-8"), height=900)  # our own generated report, all values HTML-escaped
 
 
 # ----------------------------------------------------------------- manual fixes

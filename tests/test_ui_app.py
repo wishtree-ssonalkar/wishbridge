@@ -54,10 +54,10 @@ def test_steps_open_in_order(project):
     at = ready_app(project).run()
     assert not at.exception
     steps = {b.label.replace("✓ ", ""): b for b in at.button if b.key and b.key.startswith("step-")}
-    assert list(steps) == ["1 · Settings", "2 · Code", "3 · Run", "4 · Map the data", "5 · Results", "6 · Fix code"]
+    assert list(steps) == ["1 · Settings", "2 · Code", "3 · Run", "4 · Report", "5 · Map the data", "6 · Fix code"]
     assert steps["1 · Settings"].disabled is False
     # nothing opens before Settings are confirmed with Next
-    assert all(steps[k].disabled for k in ("2 · Code", "3 · Run", "4 · Map the data", "5 · Results", "6 · Fix code"))
+    assert all(steps[k].disabled for k in ("2 · Code", "3 · Run", "4 · Report", "5 · Map the data", "6 · Fix code"))
     assert at.selectbox[0].value == "mssql"
 
 
@@ -73,7 +73,7 @@ def test_next_saves_settings_and_opens_code(project):
     assert at.session_state["step"] == "code"  # Next saves and moves on
     steps = {b.label: b for b in at.button if b.key and b.key.startswith("step-")}
     assert steps["1 · ✓ Settings"].disabled is False and steps["2 · ✓ Code"].disabled is False
-    assert steps["4 · Map the data"].disabled and steps["5 · Results"].disabled  # nothing has run yet
+    assert steps["4 · Report"].disabled and steps["5 · Map the data"].disabled  # nothing has run yet
 
 
 def test_fix_code_handles_missing_converted_file(project):
@@ -116,7 +116,7 @@ def test_assessment_ends_with_sharing_the_zip(project):
     at = ready_app(project).run()
     assert not at.exception
     steps = [b.label.replace("✓ ", "") for b in at.button if b.key and b.key.startswith("step-")]
-    assert steps == ["1 · Settings", "2 · Code", "3 · Run", "4 · Share the zip"]
+    assert steps == ["1 · Settings", "2 · Code", "3 · Run", "4 · Report", "5 · Share the zip"]
     assert not next(b for b in at.button if b.label.startswith("Next: add the code")).disabled  # nothing else needed
 
 
