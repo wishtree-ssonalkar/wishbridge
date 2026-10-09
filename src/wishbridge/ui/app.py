@@ -214,16 +214,34 @@ info = ss.get("code_info")
 if info and not project_ok():
     # A folder of client code (no project.yml): offer to create WishBridge project(s) that read it in place.
     det = info.detection
-    st.subheader("Create a project for this code")
-    st.markdown(f"`{info.path}` is client code, not a WishBridge project yet: **{info.files} code files** "
-                f"({info.sql_files} SQL). WishBridge only **reads** this folder; the project and everything it produces "
-                f"go in a separate folder.")
-    (st.success if det.confidence == "high" else st.info if det.confidence == "medium" else st.warning)(
-        f"Detected source system: **{SOURCES[det.source].label}** ({det.confidence} confidence) - {det.reason}")
-    if det.source in ("mssql", "oracle"):
-        st.caption("SQL Server and Oracle are migrated when they hold a **data warehouse**. Analyze runs a fit check "
-                   "that warns if this is an application's database instead.")
-    with st.container(border=True):
+    existing = discover.existing_projects(info.path)
+    if existing:
+        # This code was opened before: continue with its project instead of making another one.
+        st.subheader("This code already has a project")
+        st.markdown(f"`{info.path}` · **{info.files} code files** · {SOURCES[det.source].label}. "
+                    "Open the project to continue where it was left:")
+        for p in existing[:8]:
+            done_ = (", ".join(p["steps"]) if p["steps"] else "nothing run yet") + (" · zip saved" if p["packaged"] else "")
+            c1, c2 = st.columns([4, 1])
+            c1.markdown(f"**{p['name']}** — last used {p['modified']} · {done_}  \n`{p['path']}`")
+            if c2.button("📂 Open", key=f"existing-{p['path']}", type="primary" if p is existing[0] else "secondary",
+                         width="stretch"):
+                ss.project, ss.workspace = p["path"], None
+                ss.pop("code_info", None)
+                st.rerun()
+        if len(existing) > 8:
+            st.caption(f"…and {len(existing) - 8} older project(s) for this code.")
+    else:
+        st.subheader("Create a project for this code")
+        st.markdown(f"`{info.path}` is client code, not a WishBridge project yet: **{info.files} code files** "
+                    f"({info.sql_files} SQL). WishBridge only **reads** this folder; the project and everything it produces "
+                    f"go in a separate folder.")
+        (st.success if det.confidence == "high" else st.info if det.confidence == "medium" else st.warning)(
+            f"Detected source system: **{SOURCES[det.source].label}** ({det.confidence} confidence) - {det.reason}")
+        if det.source in ("mssql", "oracle"):
+            st.caption("SQL Server and Oracle are migrated when they hold a **data warehouse**. Analyze runs a fit check "
+                       "that warns if this is an application's database instead.")
+    with (st.expander("Create a new project anyway") if existing else st.container(border=True)):
         c1, c2 = st.columns(2)
         src_keys = list(SOURCES)
         source = c1.selectbox("Source system :red[*]", src_keys, index=src_keys.index(det.source),
