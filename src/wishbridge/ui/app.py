@@ -697,18 +697,91 @@ if STEP == "settings":
 
 
 
+def code_files_input(raw) -> str:
+    """The folder of the client's code files (not the code read from the database)."""
+    from wishbridge.dbcode import FOLDER
+
+    current = raw.get("input", "input")
+    return raw.get("code_files_input", "input") if current == FOLDER else current
+
+
+def has_code_files(raw) -> bool:
+    return bool(h.input_files(ss.project, code_files_input(raw)))
+
+
+def use_database_code(raw, on: bool) -> None:
+    """Assess the code read from the database (on) or the client's code files; table scripts follow."""
+    from wishbridge import schema as schema_mod
+    from wishbridge.dbcode import FOLDER
+
+    new = dict(raw)
+    current = new.get("input", "input")
+    if on and current != FOLDER:
+        new["code_files_input"], new["input"] = current, FOLDER
+    elif not on and current == FOLDER:
+        new["input"] = new.pop("code_files_input", "input")
+    else:
+        return
+    h.save_raw(ss.project, new)
+    fresh = load_config(h.project_file(ss.project))
+    if load_state(fresh).get("inventory"):
+        schema_mod.build_scripts(fresh)  # skip the tables the chosen code creates
+
+
+def database_code_summary(cfg, raw) -> None:
+    from wishbridge.dbcode import FOLDER
+
+    dc = load_state(cfg).get("dbcode")
+    if not dc:
+        return
+    st.markdown("**Code read from the database**")
+    counts = " · ".join(f"{n} {k.lower()}" for k, n in sorted(dc["counts"].items())) or "no objects"
+    st.markdown(f"{counts} (from {dc['read_from']}, {dc['read_at'].replace('T', ' ')}), saved as one .sql file per object.")
+    if dc.get("encrypted"):
+        st.warning(f"{len(dc['encrypted'])} object(s) are encrypted in the database and cannot be read — ask the client "
+                   f"for their scripts: {', '.join(dc['encrypted'][:10])}")
+    if dc.get("unreadable"):
+        st.warning(f"{len(dc['unreadable'])} object(s) could not be read: the login needs VIEW DEFINITION. "
+                   f"{', '.join(dc['unreadable'][:10])}")
+    using_db = raw.get("input", "input") == FOLDER
+    if not has_code_files(raw):
+        st.caption("The run assesses this code (the project has no other code files).")
+        if not using_db:
+            use_database_code(raw, True)
+            st.rerun()
+        return
+    cmp = load_state(cfg).get("dbcode_compare")
+    if cmp:
+        st.markdown(f"Compared with the code files: **{len(cmp['same'])} the same**, "
+                    f"**{len(cmp['different'])} different**, **{len(cmp['only_in_database'])} only in the database**, "
+                    f"**{len(cmp['only_in_files'])} only in the files**.")
+        if cmp["different"] or cmp["only_in_database"] or cmp["only_in_files"]:
+            with st.expander("What differs"):
+                for label, key in (("Different", "different"), ("Only in the database", "only_in_database"),
+                                   ("Only in the files", "only_in_files")):
+                    if cmp[key]:
+                        st.markdown(f"*{label}:* " + ", ".join(f"`{n}`" for n in cmp[key]))
+                st.caption("The database holds what really runs; the files may be older or newer than it.")
+    options = ["The code files", "The code from the database"]
+    pick = st.radio("Code to assess", options, index=1 if using_db else 0, horizontal=True, key="code_source")
+    if (pick == options[1]) != using_db:
+        use_database_code(raw, pick == options[1])
+        st.rerun()
+
+
 def database_tables(cfg, raw) -> None:
     """Optional: read the source database's tables (catalog only, no data) and make the Databricks table scripts."""
     from wishbridge import inventory as inv_mod
     from wishbridge import schema as schema_mod
 
     inv = load_state(cfg).get("inventory")
-    title = "Database tables (optional) — make the Databricks table scripts from the database"
-    with st.expander(title, expanded=False):
-        st.markdown("Use this when the code has **no table scripts** (or not all of them). WishBridge reads only the "
-                    "list of tables, columns and data types — **no data is read or copied** — and writes a Databricks "
+    title = "Read from the database (optional) — tables and code"
+    with st.expander(title, expanded=bool(load_state(cfg).get("dbcode")) or not has_code_files(raw)):
+        st.markdown("Use this when the client has **no code repository**, or not all of it. WishBridge reads the list "
+                    "of tables, columns and data types and, if you want, the **procedures, views, functions and "
+                    "triggers** stored in the database — **no data is read or copied**. It writes a Databricks "
                     "`CREATE TABLE` script for every table the code does not already create.")
-        how = st.radio("How to read the tables", ["Connect to the database", "Send a query to the client's DBA"],
+        how = st.radio("How to read them", ["Connect to the database", "Send a query to the client's DBA"],
                        horizontal=True, key="schema_how",
                        help="Connecting works for SQL Server, Azure SQL and Synapse. The DBA query works for every "
                             "database WishBridge supports.")
@@ -726,22 +799,36 @@ def database_tables(cfg, raw) -> None:
                                          help="Used once to read the tables; never saved.")
             trust = st.checkbox("Trust the server certificate", key="live_trust",
                                 help="Needed for servers with a self-signed certificate (common on local servers).")
+            with_code = st.checkbox("Also read the code (procedures, views, functions, triggers)", value=True,
+                                    key="live_code", help="Saved as one .sql file per object. Encrypted objects "
+                                                          "cannot be read; they are listed so the client can send them.")
             missing = [n for n, v in [("server", server), ("database", database)] if not v.strip()]
             if login == "User and password":
                 missing += [n for n, v in [("user", user), ("password", password)] if not v.strip()]
             if missing:
                 st.caption(f":red[Fill in the {' and '.join(missing) if len(missing) < 3 else ', '.join(missing)} to read the tables.]")
-            if st.button("🔍 Read the tables", type="primary", disabled=bool(missing), key="live_read"):
-                with st.spinner(f"Reading the table list from {server} / {database}..."):
+            if st.button("🔍 Read the tables and code" if with_code else "🔍 Read the tables", type="primary",
+                         disabled=bool(missing), key="live_read"):
+                with st.spinner(f"Reading from {server} / {database}..."):
                     try:
-                        inv_mod.read_live(cfg, server, database, login == "Windows login", user, password, trust, kind)
+                        inv_mod.read_live(cfg, server, database, login == "Windows login", user, password, trust, kind,
+                                          with_code=with_code)
                     except (RuntimeError, ValueError) as e:
                         st.error(str(e))
                     else:
                         ss.pop("live_pw", None)
+                        if with_code:
+                            if has_code_files(raw):
+                                from wishbridge import dbcode
+
+                                dbcode.compare(cfg, Path(ss.project) / code_files_input(raw))
+                            else:
+                                use_database_code(raw, True)  # nothing else to assess: use what was read
                         st.rerun()
         else:
             st.markdown("Give the client's DBA this read-only query and import the CSV they send back.")
+            st.caption("For the code without a connection: ask the DBA for SSMS › right-click the database › Tasks › "
+                       "Generate Scripts (all procedures, views, functions; schema only) and add the files below.")
             db_types = list(inv_mod.QUERIES)
             default_db = (cfg.source_db or {}).get("type") or inv_mod.DEFAULT_DB.get(cfg.source.key, "sqlserver")
             db = st.selectbox("Database type", db_types, index=db_types.index(default_db) if default_db in db_types else 0)
@@ -764,6 +851,8 @@ def database_tables(cfg, raw) -> None:
                    f"(from {inv.get('read_from', 'the DBA CSV')}, {inv['imported_at'].replace('T', ' ')})")
         st.dataframe(pd.DataFrame([{"table": f"{t['schema']}.{t['table']}", "rows": t["rows"], "size (MB)": t["size_mb"],
                                     "columns": len(t["columns"])} for t in inv["tables"]]), width="stretch", hide_index=True)
+
+        database_code_summary(cfg, raw)
 
         st.markdown("**Databricks table scripts**")
         sch = load_state(cfg).get("schema")
@@ -824,12 +913,12 @@ if STEP == "code":
     uploads = st.file_uploader("Add files", accept_multiple_files=True, type=h.INPUT_EXTENSIONS)
     if uploads and st.button(f"Add {len(uploads)} file(s) to the project"):
         for up in uploads:
-            h.save_upload(ss.project, up.name, up.getvalue(), raw.get("input", "input"))
+            h.save_upload(ss.project, up.name, up.getvalue(), code_files_input(raw))
         st.success(f"Added {len(uploads)} file(s)")
         st.rerun()
     files = h.input_files(ss.project, raw.get("input", "input"))
     if not files:
-        st.info("No code yet. Upload files above, or copy them into the input folder.")
+        st.info("No code yet. Read it from the database above, upload files, or copy them into the input folder.")
     else:
         next_button("Next: run →", "run", "next-code")
         st.dataframe(pd.DataFrame([{"file": str(p.relative_to(cfg.input_dir)), "size (KB)": round(p.stat().st_size / 1024, 1)}

@@ -136,14 +136,21 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
     records the workspace URL in the project: from then on WishBridge refuses to deploy, load or reconcile with a
     login for any other workspace.
 - **2 · Code:** the **code overview** (a document describing how the system is built), upload more files and preview
-  them, and **Database tables (optional)** - for clients without table scripts (or with only some of them):
+  them, and **Read from the database (optional) - tables and code** - for clients without a code repository (or
+  with only part of it). This works in the assessment phase too: it needs a read-only login to the client's
+  database (ask for a dev/test copy or a replica, with VIEW DEFINITION), not Databricks.
   - *Connect to the database* (SQL Server, Azure SQL, Synapse): server, database, Windows login or user and
     password (used once, never saved), and *Trust the server certificate* for servers with a self-signed
-    certificate. *Read the tables* reads only the catalog - table and column names, data types, row counts and
-    sizes - never business data.
+    certificate. Only the catalog is read - table and column names, data types, row counts and sizes - never
+    business data. With *Also read the code* (on by default) the **procedures, views, functions and triggers** are
+    saved too, one `.sql` file per object in `database_code/<schema>/<kind>/`. Encrypted objects cannot be read and
+    are listed so the client can send their scripts; objects the login may not see are listed too.
   - *Send a query to the client's DBA* (every supported database): download the read-only query, import the CSV
-    they send back.
-  Either way WishBridge writes a Databricks `CREATE TABLE IF NOT EXISTS` script for every table the code does not
+    they send back. For the code, the DBA uses SSMS › Tasks › Generate Scripts and you add the files.
+  **Which code is assessed:** when the project has no code files, the run uses the code read from the database.
+  When it has both, WishBridge compares them (the same / different / only in the database / only in the files -
+  the database holds what really runs) and *Code to assess* chooses which one the run uses.
+  WishBridge also writes a Databricks `CREATE TABLE IF NOT EXISTS` script for every table the chosen code does not
   already create (types mapped to Databricks; unknown types become STRING and are marked `review`), one file per
   source schema. The scripts go into the converted code (`_database_schema/`), into the zip, and in the migration
   phase they are created in Databricks first, before the converted code.

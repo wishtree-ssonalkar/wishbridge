@@ -231,8 +231,9 @@ def connection_string(server: str, database: str, windows_login: bool, user: str
 
 def read_live(cfg: ProjectConfig, server: str, database: str, windows_login: bool = True, user: str = "",
               password: str = "", trust_certificate: bool = False, db: str = "sqlserver",
-              timeout_s: int = 30) -> dict[str, Any]:
-    """Run the read-only inventory query on the database and import the result (the password is not kept)."""
+              timeout_s: int = 30, with_code: bool = False) -> dict[str, Any]:
+    """Run the read-only inventory query on the database and import the result (the password is not kept).
+    with_code: also save the procedures, views, functions and triggers as .sql files (dbcode.py)."""
     if db not in LIVE_DATABASES:
         raise ValueError(f"Reading directly works for SQL Server and Synapse; for {db} use the DBA query.")
     if not server.strip() or not database.strip():
@@ -251,11 +252,16 @@ def read_live(cfg: ProjectConfig, server: str, database: str, windows_login: boo
         if "certificate" in raw.lower():
             msg += " Tick 'Trust the server certificate' if this is the client's own server."
         raise RuntimeError(f"Could not connect to {server} / {database}: {msg}") from e
+    label = f"{server.strip()} / {database.strip()}"
     try:
         cur = conn.cursor()
         cur.execute(QUERIES[db])
         names = [c[0] for c in cur.description]
         rows = cur.fetchall()
+        if with_code:
+            from .dbcode import read as read_code
+
+            read_code(cfg, conn, label)
     finally:
         conn.close()
     buf = io.StringIO()
@@ -264,7 +270,7 @@ def read_live(cfg: ProjectConfig, server: str, database: str, windows_login: boo
     w.writerows(["" if v is None else v for v in r] for r in rows)
     dest = cfg.out("inventory", "inventory.csv")
     dest.write_text(buf.getvalue(), encoding="utf-8")
-    return import_file(cfg, dest, db, read_from=f"{server} / {database}")
+    return import_file(cfg, dest, db, read_from=label)
 
 
 def table_list(inv: dict[str, Any]) -> list[str]:

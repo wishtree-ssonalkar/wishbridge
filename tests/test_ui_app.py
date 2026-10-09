@@ -212,3 +212,58 @@ def test_migration_run_stops_before_copying(project):
     labels = [c.label for c in at.checkbox]
     assert not any("Copy the data" in x or "Reconcile" in x for x in labels)  # that is the next step
     assert any(x.startswith("3. Create the tables") for x in labels)
+
+
+def _with_database_code(project):
+    import shutil
+
+    from wishbridge import dbcode
+    from wishbridge.config import load_config
+    from wishbridge.inventory import import_file
+
+    cfg = load_config(project / "project.yml")
+    csv = project / "inv.csv"
+    csv.write_text("schema_name,table_name,column_name,data_type\ndbo,T,id,int\n", encoding="utf-8")
+    import_file(cfg, csv, "sqlserver")
+    dbcode.write_objects(cfg, [("dbo", "usp_A", "P", "CREATE PROCEDURE dbo.usp_A AS SELECT 1", 0)], "srv / db")
+    return cfg, shutil
+
+
+def test_code_from_the_database_is_used_when_there_are_no_files(project):
+    import yaml
+
+    cfg, shutil = _with_database_code(project)
+    shutil.rmtree(project / "input")
+    at = ready_app(project)
+    at.session_state["settings_done:" + str(project)] = True
+    at.session_state["go_step"] = "code"
+    at.run()
+    assert not at.exception
+    raw = yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))
+    assert raw["input"] == "database_code"  # nothing else to assess
+    at.run()
+    assert any("1 procedures" in m.value for m in at.markdown)
+    assert any(b.label == "Next: run →" for b in at.button)  # the code step is complete
+
+
+def test_choose_between_code_files_and_database_code(project):
+    import yaml
+
+    from wishbridge import dbcode
+
+    cfg, _ = _with_database_code(project)
+    dbcode.compare(cfg, project / "input")
+    at = ready_app(project)
+    at.session_state["settings_done:" + str(project)] = True
+    at.session_state["go_step"] = "code"
+    at.run()
+    assert not at.exception
+    assert any("Compared with the code files" in m.value for m in at.markdown)
+    radio = next(r for r in at.radio if r.label == "Code to assess")
+    assert radio.value == "The code files"
+    radio.set_value("The code from the database").run()
+    raw = yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))
+    assert raw["input"] == "database_code" and raw["code_files_input"] == "input"
+    next(r for r in at.radio if r.label == "Code to assess").set_value("The code files").run()
+    raw = yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))
+    assert raw["input"] == "input" and "code_files_input" not in raw
