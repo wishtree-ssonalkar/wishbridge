@@ -47,46 +47,40 @@ def project_ok() -> bool:
 SETUP_STATUS = Path.home() / ".wishbridge" / "setup_status.json"
 
 
-def system_check() -> None:
-    """Check this computer; install what the work needs in the background. Never blocks the app."""
+def system_ready() -> bool:
+    """Projects can be opened once the computer has been checked and is ready (or the user chose to continue)."""
     from wishbridge import system
 
-    project_cfg = None
-    if project_ok():
-        try:
-            project_cfg = load_config(h.project_file(ss.project))
-        except (ConfigError, ValueError, OSError):
-            pass
-    needed = system.needed_for(project_cfg)
-    key = ",".join(sorted(needed))
+    return bool(ss.get("system")) and (system.ready(ss.system) or ss.get("continue_anyway", False))
+
+
+def system_check() -> None:
+    """Step 0: check this computer on request, install what is missing on request, then allow opening a project."""
+    from wishbridge import system
+
     proc = ss.get("setup_proc")
-    running = proc is not None and proc.poll() is None
-    if ss.get("system_key") != key or ss.get("system_recheck") or (proc is not None and not running and not ss.get("setup_read")):
-        ss.pop("system_recheck", None)
-        if proc is not None and not running:
-            ss.setup_read = True
-        ss.system, ss.system_key = system.check(needed), key
-        extra = [project_cfg.output_dir / "logs" / "system_check.json"] if project_cfg else []
-        system.save_report(system.report(ss.system), *extra)
-        attempted = ss.setdefault("setup_attempted", set())
-        if not running and not system.ready(ss.system) and key not in attempted:
-            attempted.add(key)  # try automatically once per need; the user can retry
-            ss.setup_proc, ss.setup_read = system.start_background_install(needed, SETUP_STATUS, extra), False
-            running = True
-    if running:
+    if proc is not None and proc.poll() is None:
         _setup_progress()
         return
-    missing = [s for s in ss.system if s.needed and not (s.ok and s.compatible)]
+    if proc is not None:  # an install just finished: check again and keep the record
+        ss.setup_proc = None
+        ss.system = system.check()
+        system.save_report(system.report(ss.system))
+    if not ss.get("system"):
+        st.info("**Step 0 · System check** — check that this computer has what WishBridge needs before opening a project.")
+        if st.button("🔍 Check this computer", type="primary", width="stretch"):
+            with st.spinner("Checking..."):
+                ss.system = system.check()
+                system.save_report(system.report(ss.system))
+            st.rerun()
+        return
+    missing = [s for s in ss.system if not (s.ok and s.compatible)]
     if not missing:
-        st.caption("✅ This computer is ready")
+        st.success("✅ This computer is ready")
     else:
-        st.warning("Missing: " + ", ".join(s.name for s in missing) + ". You can keep working: only steps that "
-                   "need it will stop with a message. Details are saved for later.")
-    with st.expander("System check", expanded=False):
+        st.warning("Missing: " + ", ".join(s.name for s in missing))
+    with st.expander("System check details", expanded=bool(missing)):
         for s in ss.system:
-            if not s.needed and not s.ok:
-                st.markdown(f"➖ **{s.name}** — not needed for this work")
-                continue
             mark = "✅" if s.ok and s.compatible else "⚠️" if s.ok else "❌"
             ver = f" `{s.version}`" if s.version else ""
             st.markdown(f"{mark} **{s.name}**{ver} — {s.why}")
@@ -97,10 +91,18 @@ def system_check() -> None:
                 for line in s.log[-2:]:
                     st.caption((line.strip().splitlines() or [""])[-1][-300:])
         st.caption(f"Record of every check and install: `{system.REPORT}`")
-        if st.button("Install missing again" if missing else "Check again", width="stretch"):
-            ss.system_recheck = True
-            ss.get("setup_attempted", set()).discard(key)
+    if missing:
+        if st.button("⬇ Install missing", type="primary", width="stretch",
+                     help="Installs in the background (winget / Homebrew / Databricks CLI); the progress shows here."):
+            ss.setup_proc = system.start_background_install({s.key for s in missing}, SETUP_STATUS)
+            ss.install_tried = True
             st.rerun()
+        if ss.get("install_tried"):
+            st.checkbox("Continue anyway - steps that need the missing tools will be skipped", key="continue_anyway")
+    if st.button("Check again", width="stretch"):
+        ss.system = system.check()
+        system.save_report(system.report(ss.system))
+        st.rerun()
 
 
 @st.fragment(run_every="3s")
@@ -110,23 +112,25 @@ def _setup_progress() -> None:
 
     proc = ss.get("setup_proc")
     if proc is None or proc.poll() is not None:
-        st.rerun()  # finished: re-check and show the result
+        st.rerun()  # finished: check again and show the result
     rep = system.load_report(SETUP_STATUS) or {}
-    st.info(f"⏳ Setting up this computer in the background — {rep.get('current') or 'checking…'} "
-            "You can keep working meanwhile.")
+    st.info(f"⏳ Installing in the background — {rep.get('current') or 'starting…'}")
 
 
 with st.sidebar:
     st.markdown(f"### 🌉 Wishtree WishBridge\nData warehouse migration to Databricks · v{__version__}")
     system_check()
+    locked = not system_ready()
+    if locked:
+        st.caption("🔒 Opening a project is available once the system check is done and the computer is ready.")
     mode = st.radio("Project", ["Open a folder", "Open a package", "Create new"], horizontal=True,
-                    label_visibility="collapsed")
+                    label_visibility="collapsed", disabled=locked)
     if mode == "Open a folder":
-        folder = st.text_input("Project or client code folder", value=ss.project,
+        folder = st.text_input("Project or client code folder", value=ss.project, disabled=locked,
                                placeholder=r"C:\migrations\acme-dw  or  C:\client-repo",
                                help="A WishBridge project opens directly. Any other folder of SQL/ETL code (a repository, "
                                     "a Visual Studio database project, an export) gets a project created for it.")
-        if st.button("Open", width="stretch"):
+        if st.button("Open", width="stretch", disabled=locked):
             if h.project_file(folder).exists():
                 ss.project = str(Path(folder).expanduser().resolve())
                 ss.workspace = None
@@ -143,15 +147,15 @@ with st.sidebar:
         if ss.get("created_projects"):
             st.caption("Projects created for the client code:")
             for p in ss.created_projects:
-                if st.button(f"📂 {Path(p).name}", key=f"open-{p}", width="stretch"):
+                if st.button(f"📂 {Path(p).name}", key=f"open-{p}", width="stretch", disabled=locked):
                     ss.project, ss.workspace = p, None
                     st.rerun()
     elif mode == "Open a package":
         st.caption("A zip saved with *Assess and save everything* (or `wishbridge package`) on any computer. "
                    "It becomes a project here, ready to review and fix.")
-        pkg_up = st.file_uploader("Package (.zip)", type=["zip"], key="pkg_upload")
-        pkg_parent = st.text_input("Create the project in", value=r"C:\migrations", key="pkg_parent")
-        if pkg_up is not None and st.button("Open package", width="stretch"):
+        pkg_up = st.file_uploader("Package (.zip)", type=["zip"], key="pkg_upload", disabled=locked)
+        pkg_parent = st.text_input("Create the project in", value=r"C:\migrations", key="pkg_parent", disabled=locked)
+        if pkg_up is not None and st.button("Open package", width="stretch", disabled=locked):
             from wishbridge.package import open_package
 
             tmp = Path(pkg_parent).expanduser() / ".wishbridge-incoming" / Path(pkg_up.name).name
@@ -166,23 +170,27 @@ with st.sidebar:
                 st.error(str(e))
     else:
         with st.form("new-project"):
-            name = st.text_input("Project name", placeholder="acme-dw")
-            source = st.selectbox("Source system", list(SOURCES), format_func=lambda k: SOURCES[k].label)
-            parent = st.text_input("Create in folder", value=r"C:\migrations")
-            if st.form_submit_button("Create project", width="stretch"):
+            name = st.text_input("Project name", placeholder="acme-dw", disabled=locked)
+            source = st.selectbox("Source system", list(SOURCES), format_func=lambda k: SOURCES[k].label, disabled=locked)
+            parent = st.text_input("Create in folder", value=r"C:\migrations", disabled=locked)
+            if st.form_submit_button("Create project", width="stretch", disabled=locked):
                 try:
                     ss.project = str(h.create_project(parent, name, source))
                     ss.workspace = None
                     st.rerun()
                 except (ValueError, OSError) as e:
                     st.error(str(e))
-    if project_ok():
+    if project_ok() and not locked:
         st.success(f"Open: {Path(ss.project).name}")
         st.caption(ss.project)
 
 
 st.title("Wishtree WishBridge")
 st.caption(f"{PURPOSE} Assess, convert, deploy, copy the data and prove it matches — built on Databricks Labs LakeBridge.")
+if not system_ready():
+    st.info("Start with **Step 0 · System check** in the sidebar: *Check this computer*, and *Install missing* if "
+            "anything is not there. Projects open once the computer is ready.")
+    st.stop()
 
 
 def show_scope() -> None:
@@ -261,21 +269,62 @@ except (ConfigError, yaml.YAMLError, KeyError, TypeError, ValueError) as e:
                 "instead - the app can create a fresh project for it.")
     st.stop()
 
-TABS = ["1 · Settings", "2 · Code", "3 · Run", "4 · Results", "5 · Fix code (later)"]
-if ss.get("go_tab"):
-    ss["tab"] = ss.pop("go_tab")  # a Next button asked for the next tab
-tab_settings, tab_code, tab_run, tab_results, tab_fixes = st.tabs(TABS, key="tab", on_change="rerun")
+from wishbridge import runner
+
+STEPS = ["Settings", "Code", "Run", "Results", "Fix code (later)"]
+state_now = load_state(cfg)
+running = runner.is_running(cfg)
+has_code = bool(h.input_files(ss.project, raw.get("input", "input")))
+has_results = any(k in state_now for k in ("analyze", "convert", "fit", "deploy", "reconcile"))
+done = [
+    bool(ss.get(f"settings_done:{ss.project}")) or has_results,  # Settings: confirmed with Next (or used before)
+    has_code,                                                   # Code: there is code to work on
+    has_results and not running,                                # Run: something has run
+    has_results and not running,                                # Results: seen
+    False,
+]
 
 
-def next_button(label: str, tab: str, key: str) -> None:
+def reachable(i: int) -> bool:
+    if running:
+        return i == 2  # while a run is going, stay on Run to follow it
+    if i == 4:
+        return "convert" in state_now and all(done[:2])
+    return all(done[:i])
+
+
+if "step" not in ss or ss.get("step_project") != ss.project:
+    ss.step_project = ss.project
+    ss.step = next((i for i in range(4) if not done[i]), 3)  # first unfinished step
+if ss.get("go_step") is not None:
+    ss.step = ss.pop("go_step")
+if running:
+    ss.step = 2
+if not reachable(ss.step):
+    ss.step = max(i for i in range(5) if reachable(i))
+STEP = ss.step
+
+cols = st.columns(len(STEPS))
+for i, (col, name) in enumerate(zip(cols, STEPS)):
+    mark = "✓ " if done[i] else ""
+    if col.button(f"{i + 1} · {mark}{name}", key=f"step-{i}", width="stretch", disabled=not reachable(i),
+                  type="primary" if i == STEP else "secondary"):
+        ss.step = i
+        st.rerun()
+if running:
+    st.caption("🔒 A run is going in the background - the other steps open when it has finished.")
+st.divider()
+
+
+def next_button(label: str, step: int, key: str) -> None:
     if st.button(label, type="primary", key=key):
-        ss.go_tab = tab
+        ss.go_step = step
         st.rerun()
 
 
 # ----------------------------------------------------------------- settings
 
-with tab_settings:
+if STEP == 0:
     dbx = raw.setdefault("databricks", {})
     data = raw.setdefault("data", {})
     ai = raw.setdefault("autofix", {})
@@ -574,7 +623,8 @@ with tab_settings:
         try:
             h.save_raw(ss.project, new)
             ss.pop("pending_profile", None)
-            ss.go_tab = TABS[1]
+            ss[f"settings_done:{ss.project}"] = True
+            ss.go_step = 1
             st.rerun()
         except (ConfigError, KeyError, ValueError) as e:
             st.error(f"Not saved: {e}")
@@ -582,7 +632,7 @@ with tab_settings:
 
 # ----------------------------------------------------------------- code
 
-with tab_code:
+if STEP == 1:
     from wishbridge import inventory as inv_mod
 
     st.subheader("Code overview")
@@ -641,7 +691,7 @@ with tab_code:
     if not files:
         st.info("No code yet. Upload files above, or copy them into the input folder.")
     else:
-        next_button("Next: run →", TABS[2], "next-code")
+        next_button("Next: run →", 2, "next-code")
         st.dataframe(pd.DataFrame([{"file": str(p.relative_to(cfg.input_dir)), "size (KB)": round(p.stat().st_size / 1024, 1)}
                                    for p in files]), width="stretch", hide_index=True)
         pick = st.selectbox("Preview", [str(p.relative_to(cfg.input_dir)) for p in files])
@@ -650,115 +700,89 @@ with tab_code:
 
 # ----------------------------------------------------------------- run
 
-def run_step(label: str, fn, summary) -> bool:
-    with st.status(label, expanded=False) as box:
-        try:
-            res = fn()
-        except STEP_ERRORS as e:
-            box.update(label=f"{label} — failed", state="error", expanded=True)
-            st.error(str(e))
-            return False
-        box.update(label=f"{label} — {summary(res)}", state="complete")
-        return True
+ICON = {"pending": "⏸", "running": "⏳", "done": "✅", "failed": "❌", "skipped": "➖"}
 
 
-with tab_run:
+def show_run_status(status: dict) -> None:
+    for s in status.get("steps", []):
+        line = f"{ICON.get(s['state'], '•')} **{s['label']}**"
+        if s.get("summary"):
+            line += f" — {s['summary']}"
+        if s["state"] == "running":
+            line += " — working…"
+        st.markdown(line)
+        if s.get("error"):
+            st.caption(f"{'Skipped' if status.get('keep_going') else 'Stopped'}: {s['error']}")
+
+
+@st.fragment(run_every="2s")
+def run_progress() -> None:
+    """Live progress of the background run; when it ends the whole page refreshes (step bar unlocks)."""
+    status = runner.read_status(cfg) or {}
+    if status.get("state") != "running":
+        st.rerun()
+    st.info("⏳ Running in the background. You can wait here; the steps above unlock when it is finished.")
+    show_run_status(status)
+
+
+if STEP == 2:
     offline = cfg.phase == "assessment"
-    if offline:
+    status = runner.read_status(cfg)
+    if runner.is_running(cfg):
+        st.subheader("Running…")
+        run_progress()
+    elif offline:
         st.subheader("First run: assess the code and save everything")
         st.markdown(
             "One button does it all, on this computer only (nothing goes to Databricks or the client's database):\n"
-            "1. **Analyze** the code: size, complexity, effort, and whether it really is a data warehouse.\n"
-            "2. **Convert** it to Databricks.\n"
-            "3. Write the **report** and the **code overview** (how the system is built: structure, tables, "
-            "procedures, data flows).\n"
-            "4. Save **everything in one zip**: the code before and after conversion, the report, the code overview "
+            "1. **Describe** the code: what is there and whether it really is a data warehouse.\n"
+            "2. **Analyze** it: size, complexity and effort.\n"
+            "3. **Convert** it to Databricks.\n"
+            "4. Write the **report** and the **code overview**.\n"
+            "5. Save **everything in one zip**: the code before and after conversion, the report, the code overview "
             "and the list of open items.\n\n"
-            "Nothing needs to be fixed now. Open the zip later (sidebar > *Open a package*) and fix the code in the "
-            "**Fix code (later)** tab.")
+            "Nothing needs to be fixed now. A step that cannot run here is noted and skipped; the rest still runs.")
         if st.button("▶ Assess and save everything", type="primary"):
-            from wishbridge.analysis import run_analyze
-            from wishbridge.convert import run_convert
-            from wishbridge.fit import run_fit
-            from wishbridge.overview import build_overview
-            from wishbridge.package import build_package
-            from wishbridge.report import build_report
-
-            # The visit is about collecting everything: a step that fails (e.g. a converter that could not be
-            # installed here) is noted and skipped; the rest still runs and the zip is always made.
-            steps = [
-                ("Describe the code (fit check and code overview)", lambda: (run_fit(cfg), build_overview(cfg))[0],
-                 lambda r: f"{len(r['objects'])} objects · {r['verdict']}"),
-                ("Analyze (LakeBridge)", lambda: run_analyze(cfg),
-                 lambda r: f"{len(r['programs'])} files, estimate {r['estimated_hours_baseline']} h"),
-                ("Convert", lambda: run_convert(cfg, False),
-                 lambda r: f"{r['summary']['ready']} ready, {r['summary']['review']} review, {r['summary']['needs_fix']} need fixes"),
-                ("Report", lambda: build_report(cfg), lambda r: "report.html written"),
-                ("Save everything in one zip", lambda: build_package(cfg), lambda r: Path(r).name),
-            ]
-            skipped = [label for label, fn, summary in steps if not run_step(label, fn, summary)]
-            if skipped:
-                st.warning("Saved what could be done. Not done: " + ", ".join(skipped) + ". Run it again later "
-                           "(for example after the System check has installed what was missing) - nothing is lost.")
-            pkgs = sorted((cfg.output_dir / "review_package").glob("*.zip"), key=lambda q: q.stat().st_mtime)
-            ss.review_package = str(pkgs[-1]) if pkgs else ""
-        if ss.get("review_package") and Path(ss.review_package).is_file():
-            pkg = Path(ss.review_package)
-            st.success(f"Everything is saved in **{pkg.name}** ({pkg.stat().st_size // 1024:,} KB), also kept at `{pkg}`.")
-            st.download_button("⬇ Download the zip", pkg.read_bytes(), file_name=pkg.name, mime="application/zip",
-                               type="primary")
+            runner.start(cfg, runner.ASSESSMENT_STEPS, {}, keep_going=True)
+            st.rerun()
     else:
         st.subheader("Run the migration")
         c1, c2, c3 = st.columns(3)
         with c1:
             do_analyze = st.checkbox("1. Analyze the code", value=True)
             do_convert = st.checkbox("2. Convert to Databricks SQL", value=True)
-            use_ai = st.checkbox("…with Claude suggestions", value=cfg.ai_enabled and not offline, disabled=not do_convert or offline,
-                                 help="Not in the assessment phase: it sends code to the Claude API.")
+            use_ai = st.checkbox("…with Claude suggestions", value=cfg.ai_enabled, disabled=not do_convert)
         with c2:
-            do_deploy = st.checkbox("3. Deploy to the test schema", value=False, disabled=offline)
+            do_deploy = st.checkbox("3. Deploy to the test schema", value=False)
             recreate = st.checkbox("…rebuild objects that already exist", value=False, disabled=not do_deploy)
-            do_load = st.checkbox("4. Copy the data", value=False, disabled=offline)
+            do_load = st.checkbox("4. Copy the data", value=False)
             execute = st.checkbox("…really copy (otherwise only write the plan)", value=False, disabled=not do_load)
         with c3:
-            do_reconcile = st.checkbox("5. Reconcile the data", value=False, disabled=offline)
+            do_reconcile = st.checkbox("5. Reconcile the data", value=False)
             do_report = st.checkbox("6. Build the report", value=True)
         st.caption(f"Target: `{cfg.target_schema}` · converter: {'automatic, ' if cfg.auto_converter else ''}{cfg.transpiler}"
                    + (" first" if cfg.auto_converter else "") + f" · source: {cfg.source.analyzer_tech}")
-
-        if st.button("▶ Start", type="primary"):
-            from wishbridge.analysis import run_analyze
-            from wishbridge.convert import run_convert
-            from wishbridge.data import run_load
-            from wishbridge.deploy import run_deploy
-            from wishbridge.reconcile import run_reconcile
-            from wishbridge.report import build_report
-
-            steps = [
-                (do_analyze, "Analyze", lambda: run_analyze(cfg),
-                 lambda r: f"{len(r['programs'])} files, estimate {r['estimated_hours_baseline']} h · fit: {r['fit']['verdict']}"),
-                (do_convert, "Convert", lambda: run_convert(cfg, use_ai),
-                 lambda r: f"{r['summary']['ready']} ready, {r['summary']['review']} review, {r['summary']['needs_fix']} need fixes"),
-                (do_deploy, "Deploy", lambda: run_deploy(cfg, recreate=recreate),
-                 lambda r: f"{r['summary']['statements_ok']}/{r['summary']['statements']} statements OK"),
-                (do_load, "Load data", lambda: run_load(cfg, execute=execute),
-                 lambda r: (f"{r['summary']['loaded']}/{r['summary']['tables']} tables loaded" if execute
-                            else f"plan for {r['summary']['tables']} tables written")),
-                (do_reconcile, "Reconcile", lambda: run_reconcile(cfg),
-                 lambda r: f"{r['summary']['matched']}/{r['summary']['tables']} tables match"),
-                (do_report, "Report", lambda: build_report(cfg), lambda r: "report.html updated"),
-            ]
-            for enabled, label, fn, summary in steps:
-                if enabled and not run_step(label, fn, summary):
-                    st.warning("Stopped at the failed step. Fix the problem and start again.")
-                    break
-            else:
-                st.success("Done. Open the Results tab.")
+        chosen = [n for n, on in (("analyze", do_analyze), ("convert", do_convert), ("deploy", do_deploy),
+                                  ("load", do_load), ("reconcile", do_reconcile), ("report", do_report)) if on]
+        if st.button("▶ Start", type="primary", disabled=not chosen):
+            runner.start(cfg, chosen, {"ai": use_ai, "recreate": recreate, "execute": execute}, keep_going=False)
+            st.rerun()
+    if status and status.get("state") in ("done", "interrupted") and not runner.is_running(cfg):
+        st.markdown("#### Last run")
+        if status["state"] == "interrupted":
+            st.warning("The last run stopped before it finished (the app or computer was closed). Start it again.")
+        show_run_status(status)
+        pkg = Path(status.get("package") or "")
+        if status.get("package") and pkg.is_file():
+            st.success(f"Everything is saved in **{pkg.name}** ({pkg.stat().st_size // 1024:,} KB), also kept at `{pkg}`.")
+            st.download_button("⬇ Download the zip", pkg.read_bytes(), file_name=pkg.name, mime="application/zip")
+        if load_state(cfg):
+            next_button("Next: see the results →", 3, "next-run")
 
 
 # ----------------------------------------------------------------- results
 
-with tab_results:
+if STEP == 3:
     state = load_state(cfg)
     if not state:
         st.info("Nothing has run yet. Use the Run tab.")
@@ -851,7 +875,7 @@ with tab_results:
 
 # ----------------------------------------------------------------- manual fixes
 
-with tab_fixes:
+if STEP == 4:
     state = load_state(cfg)
     conv = state.get("convert")
     st.subheader("Fix code (later)")

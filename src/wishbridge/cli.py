@@ -359,6 +359,24 @@ def setup(check_only: bool, config_path: str | None, need: str | None, status_fi
         _fail("Some requirements are missing (see above) - the record has the details")
 
 
+@main.command(hidden=True)
+@config_option
+@click.option("--steps", required=True, help="Comma-separated steps: describe, analyze, convert, deploy, load, reconcile, report, package.")
+@click.option("--options", "options", default="{}", help="JSON options (ai, recreate, execute).")
+@click.option("--keep-going", is_flag=True, help="Note a failed step and continue (the assessment visit).")
+def pipeline(config_path: str, steps: str, options: str, keep_going: bool) -> None:
+    """Run steps and write progress to output/logs/run_status.json (used by the app, in the background)."""
+    import json
+
+    from .runner import run_pipeline
+
+    cfg = _load(config_path)
+    res = run_pipeline(cfg, steps.split(","), json.loads(options), keep_going,
+                       lambda s: None)
+    for st in res["steps"]:
+        click.echo(f"  {st['state']:<8} {st['label']}: {st['summary'] or st['error']}")
+
+
 @main.command()
 @config_option
 def assess(config_path: str) -> None:
