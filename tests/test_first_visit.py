@@ -159,3 +159,31 @@ def test_mail_addresses_and_message():
                                                     "convert": {"summary": {"ready": 2, "review": 1, "needs_fix": 0}}},
                                            "acme.zip")
     assert subject == "WishBridge assessment - acme" and "acme.zip" in body and "2 files ready" in body
+
+
+def test_mail_draft_is_opened_never_sent(tmp_path, monkeypatch):
+    from wishbridge import mailer
+
+    z = tmp_path / "acme.zip"
+    z.write_bytes(b"PK")
+    calls = []
+
+    class Done:
+        returncode, stdout, stderr = 0, "", ""
+
+    # Outlook: one PowerShell script that fills in the message, attaches the zip and only displays it
+    monkeypatch.setattr(mailer, "outlook_available", lambda: True)
+    monkeypatch.setattr(mailer.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or Done())
+    ok, msg = mailer.open_mail_draft(["me@wishtreetech.com"], ["it@client.com"], "S", "It's done", z)
+    script = calls[-1][-1]
+    assert ok and "Attachments.Add" in script and str(z.resolve()) in script and "$m.Display()" in script
+    assert ".Send()" not in script and "It''s done" in script  # quotes escaped for PowerShell
+
+    # No Outlook: the default mail program (mailto) and the zip's folder
+    opened, popped = [], []
+    monkeypatch.setattr(mailer, "outlook_available", lambda: False)
+    monkeypatch.setattr(mailer.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(mailer.subprocess, "Popen", lambda cmd, **kw: popped.append(cmd))
+    ok, msg = mailer.open_mail_draft(["me@wishtreetech.com"], [], "WishBridge assessment", "Hello", z)
+    assert ok and opened[0].startswith("mailto:me@wishtreetech.com?") and "subject=WishBridge%20assessment" in opened[0]
+    assert popped and "drag the zip" in msg

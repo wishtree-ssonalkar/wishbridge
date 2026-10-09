@@ -887,6 +887,15 @@ if STEP == "send":
         st.code(handover, language=None)
         ss[f"sent:{ss.project}"] = True
 
+        st.divider()
+        if st.button("📧 Send mail with the zip attached", type="primary", disabled=not to or bool(bad),
+                     help="Opens a new e-mail with To, CC, subject, message and the zip already attached. "
+                          "Nothing is sent until you check it and press Send in your mail program."):
+            ok, msg = mailer.open_mail_draft(to, cc, subject, body, pkg)
+            (st.success if ok else st.error)(msg)
+        if not to:
+            st.caption("Enter the Wishtree e-mail in *Send to* above to use this button.")
+
 
 # ----------------------------------------------------------------- results
 
