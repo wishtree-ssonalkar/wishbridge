@@ -367,18 +367,34 @@ def assess(config_path: str) -> None:
     from .convert import run_convert
     from .report import build_report
 
+    from .fit import run_fit
+    from .overview import build_overview
+    from .package import build_package
+
     cfg = _load(config_path)
     click.echo(f"Assessing {cfg.input_dir} offline as {cfg.source.label} ...")
-    a = _guard(run_analyze, cfg)
-    _ok(f"Analyzed {len(a['programs'])} files; manual estimate {a['estimated_hours_baseline']} h")
-    from .state import load_state
+    errors = (LakeBridgeError, SqlError, ConfigError, FileNotFoundError, RuntimeError, ValueError, OSError)
+    skipped = []
 
-    _print_fit(load_state(cfg).get("fit"), cfg)
-    c = _guard(run_convert, cfg, False)
-    s = c["summary"]
-    _ok(f"Converted {s['files']} files: {s['ready']} ready, {s['review']} to review, {s['needs_fix']} need fixes")
-    _ok(f"Report: {_guard(build_report, cfg)}")
-    click.echo("  Next: review and fix, then `wishbridge package` to hand the results over.")
+    def step(label: str, fn, done):
+        try:
+            done(fn())
+        except errors as e:  # note it and carry on: the visit is about collecting everything
+            skipped.append(label)
+            click.secho(f"[skipped] {label}: {str(e).splitlines()[0][:300]}", fg="yellow")
+
+    step("fit check", lambda: run_fit(cfg), lambda f: _print_fit(f, cfg))
+    step("code overview", lambda: build_overview(cfg), lambda p: _ok(f"Code overview: {p}"))
+    step("analyze", lambda: run_analyze(cfg),
+         lambda a: _ok(f"Analyzed {len(a['programs'])} files; manual estimate {a['estimated_hours_baseline']} h"))
+    step("convert", lambda: run_convert(cfg, False), lambda c: _ok(
+        f"Converted {c['summary']['files']} files: {c['summary']['ready']} ready, {c['summary']['review']} to review, "
+        f"{c['summary']['needs_fix']} need fixes"))
+    step("report", lambda: build_report(cfg), lambda p: _ok(f"Report: {p}"))
+    step("package", lambda: build_package(cfg), lambda p: _ok(f"Everything in one zip: {p}"))
+    if skipped:
+        click.secho(f"Not done: {', '.join(skipped)} - run `wishbridge assess` again later (e.g. after `wishbridge setup`).",
+                    fg="yellow")
 
 
 @main.command()

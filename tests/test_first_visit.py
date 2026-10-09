@@ -138,3 +138,12 @@ def test_package_opens_as_a_working_project_elsewhere(tmp_path):
     assert load_config(dest / "project.yml").input_dir == (dest / "input").resolve()
     with pytest.raises(ValueError, match="already exists"):
         open_package(pkg, tmp_path / "wishtree", "client-visit-copy")
+
+
+def test_package_is_made_even_without_conversion(tmp_path):
+    from wishbridge.package import build_package
+
+    cfg = project(tmp_path)
+    (cfg.input_dir / "a.sql").write_text("CREATE TABLE dbo.T (a INT);", encoding="utf-8")
+    names = set(zipfile.ZipFile(build_package(cfg)).namelist())  # nothing analyzed or converted yet
+    assert {"README.txt", "report.html", "code_overview.html", "original_code/a.sql"} <= names

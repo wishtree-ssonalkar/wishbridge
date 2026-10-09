@@ -71,14 +71,15 @@ def build_package(cfg: ProjectConfig, include_original: bool = True) -> Path:
     from .snapshot import RECEIPT, receipt
 
     state = load_state(cfg)
-    if not state.get("convert"):
-        raise FileNotFoundError("Nothing to package yet - run Analyze and Convert first.")
+    if not cfg.input_dir.is_dir() and not state:
+        raise FileNotFoundError("Nothing to package yet - there is no code and nothing has run.")
+    # Whatever is there goes in: a first visit may end before conversion (e.g. a converter could not be installed).
     report = build_report(cfg)
     root = cfg.path.parent
     rec = receipt(root)
     stamp = datetime.now().strftime("%Y%m%d-%H%M")
     out = cfg.out("review_package", f"{cfg.name}-{stamp}.zip")
-    c, fit, inv, a = state["convert"], state.get("fit"), state.get("inventory"), state.get("analyze")
+    c, fit, inv, a = state.get("convert") or {"files": [], "final_dir": ""}, state.get("fit"), state.get("inventory"), state.get("analyze")
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         import platform
 
@@ -115,8 +116,8 @@ def build_package(cfg: ProjectConfig, include_original: bool = True) -> Path:
 
             for f in _files(cfg.input_dir):
                 z.write(f, "original_code/" + f.relative_to(cfg.input_dir).as_posix())
-        final = Path(c["final_dir"])
-        if final.is_dir():
+        final = Path(c["final_dir"]) if c["final_dir"] else None
+        if final is not None and final.is_dir():
             _add_tree(z, final, "converted_code")
         if cfg.overrides_dir and cfg.overrides_dir.is_dir():
             _add_tree(z, cfg.overrides_dir, "project/overrides")

@@ -85,7 +85,7 @@ _FRAMEWORK_TABLES = re.compile(r"^(?:__EFMigrationsHistory|__MigrationHistory|sy
                                r"databasechangelog(?:lock)?|schema_migrations|AspNet\w+|HangFire\.\w+|DatabaseLog)$", I)
 _LOG_TABLE = re.compile(r"(?:^|_)(?:exception|error|audit)_?logs?$|ExceptionLogs?$|ErrorLogs?$|_error$", I)
 _WAREHOUSE_TABLE = re.compile(r"^(?:fact|dim|agg|stg|staging|ods|edw|dw)_|^(?:Fact|Dim)[A-Z]|_(?:fact|dim|snapshot)$", I)
-_AUDIT_COLS = re.compile(r"\b(?:Created|Modified|Updated)(?:_?By|_?On|_?Date|_?At)\b|\bIsDeleted\b|\bis_deleted\b", I)
+_AUDIT_COLS = re.compile(r"\b(?:Created|Modified|Updated|LastModified)_?By\b|\bIsDeleted\b|\bis_deleted\b", I)  # who changed a row: apps track users; load dates alone are common in warehouses
 _ROWVERSION = re.compile(r"\bROWVERSION\b|\[?\w+\]?\s+TIMESTAMP\s+NOT\s+NULL", I)
 _TEMPORAL = re.compile(r"\bSYSTEM_VERSIONING\s*=\s*ON\b", I)
 _DEPLOY_SCRIPT = re.compile(r"(?:^|[./\\])Script\.(?:Pre|Post)Deployment", I)
@@ -239,7 +239,7 @@ def classify(cfg: ProjectConfig) -> dict[str, Any]:
     counts = {k: sum(o["category"] == k for o in objects) for k in CATEGORY_LABELS}
     keep, move = counts["keep"], counts["migrate"]
     if tables and audited / tables >= 0.3:
-        app_ev.append(f"{audited} of {tables} tables have audit columns (CreatedBy, ModifiedOn, IsDeleted ...)")
+        app_ev.append(f"{audited} of {tables} tables have user-tracking columns (CreatedBy, ModifiedBy, IsDeleted ...)")
     if keep >= 3:
         app_ev.append(f"{keep} routines are application logic (CRUD, lookups for screens, paging, login, e-mail)")
     if move >= 3 and keep == 0:

@@ -659,24 +659,29 @@ with tab_run:
         if st.button("▶ Assess and save everything", type="primary"):
             from wishbridge.analysis import run_analyze
             from wishbridge.convert import run_convert
+            from wishbridge.fit import run_fit
+            from wishbridge.overview import build_overview
             from wishbridge.package import build_package
             from wishbridge.report import build_report
 
+            # The visit is about collecting everything: a step that fails (e.g. a converter that could not be
+            # installed here) is noted and skipped; the rest still runs and the zip is always made.
             steps = [
-                ("Analyze", lambda: run_analyze(cfg),
-                 lambda r: f"{len(r['programs'])} files, estimate {r['estimated_hours_baseline']} h · fit: {r['fit']['verdict']}"),
+                ("Describe the code (fit check and code overview)", lambda: (run_fit(cfg), build_overview(cfg))[0],
+                 lambda r: f"{len(r['objects'])} objects · {r['verdict']}"),
+                ("Analyze (LakeBridge)", lambda: run_analyze(cfg),
+                 lambda r: f"{len(r['programs'])} files, estimate {r['estimated_hours_baseline']} h"),
                 ("Convert", lambda: run_convert(cfg, False),
                  lambda r: f"{r['summary']['ready']} ready, {r['summary']['review']} review, {r['summary']['needs_fix']} need fixes"),
                 ("Report", lambda: build_report(cfg), lambda r: "report.html written"),
                 ("Save everything in one zip", lambda: build_package(cfg), lambda r: Path(r).name),
             ]
-            for label, fn, summary in steps:
-                if not run_step(label, fn, summary):
-                    st.warning("Stopped at the failed step. Fix the problem and start again.")
-                    break
-            else:
-                pkgs = sorted((cfg.output_dir / "review_package").glob("*.zip"), key=lambda q: q.stat().st_mtime)
-                ss.review_package = str(pkgs[-1]) if pkgs else ""
+            skipped = [label for label, fn, summary in steps if not run_step(label, fn, summary)]
+            if skipped:
+                st.warning("Saved what could be done. Not done: " + ", ".join(skipped) + ". Run it again later "
+                           "(for example after the System check has installed what was missing) - nothing is lost.")
+            pkgs = sorted((cfg.output_dir / "review_package").glob("*.zip"), key=lambda q: q.stat().st_mtime)
+            ss.review_package = str(pkgs[-1]) if pkgs else ""
         if ss.get("review_package") and Path(ss.review_package).is_file():
             pkg = Path(ss.review_package)
             st.success(f"Everything is saved in **{pkg.name}** ({pkg.stat().st_size // 1024:,} KB), also kept at `{pkg}`.")
