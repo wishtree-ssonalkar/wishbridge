@@ -141,7 +141,7 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
 - **4 · Results:** the numbers, the fit check (*Is this a data warehouse?*), file statuses, open items,
   deployment errors, reconciliation and the full report, plus *Build the review package* (one zip with the report,
   open items, converted and original code).
-- **5 · Manual fixes:** pick a file, see its open items and the original next to the Databricks version, edit it
+- **5 · Fix code (later):** pick a file, see its open items and the original next to the Databricks version, edit it
   and press *Save as manual fix*. Then run Convert again.
 - **Environment:** checks the Databricks CLI, Java, LakeBridge, the converters and your login, with the command
   that fixes anything missing.
@@ -188,13 +188,19 @@ visit** and does the rest at Wishtree.
 2. Give the client's DBA the **inventory query** (app: *Code > Source database inventory*, or
    `wishbridge inventory`). It only reads the database catalog: tables, columns, data types, row counts, sizes.
    Import the CSV they send back (`wishbridge inventory --import file.csv`). No connection to their database.
+3. Press **Run > Assess and save everything** (or `wishbridge assess` then `wishbridge package`). On this computer
+   only - nothing goes to Databricks or the client's database, and no Databricks login is needed - it analyzes,
+   converts, writes the report and saves **everything in one zip**: `original_code/`, `converted_code/`,
+   `report.html`, `open_items.csv`, `files.csv`, `fit_check.csv`, `inventory_tables.csv`, the analyzer workbook
+   and the project itself. **Nothing has to be fixed at the client.**
 
 **At Wishtree – offline**
 
-3. `wishbridge assess` (app: *Run > Start*): analyze + convert + report on this computer only. Nothing is sent to
-   Databricks or the client's database; it works even without a Databricks login.
-4. Review and fix the code (overrides/), then `wishbridge package` (app: *Results > Build the review package*):
-   one zip with the report, open items, fit check, inventory, converted and original code.
+4. Open the zip on any computer: app sidebar > **Open a package**, or `wishbridge open-package <zip> --dir C:\migrations`.
+   It becomes a working project again (paths are moved to the new place).
+5. Fix the files that need it in **Fix code (later)**: the open items say what to change and on which line, the
+   original code is shown next to the Databricks version, and *Save as manual fix* keeps your version in
+   `overrides/` for every later run. Run Convert again and build a new package when done.
 
 **Visit 2 – migrate**
 

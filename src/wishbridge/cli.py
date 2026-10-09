@@ -398,7 +398,24 @@ def package(config_path: str, no_original: bool) -> None:
     from .package import build_package
 
     cfg = _load(config_path)
-    _ok(f"Review package: {_guard(build_package, cfg, not no_original)}")
+    _ok(f"Package: {_guard(build_package, cfg, not no_original)}")
+    click.echo("  Everything from this run in one zip. Open it later on any computer: wishbridge open-package <zip>")
+
+
+@main.command("open-package")
+@click.argument("zip_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--dir", "directory", default=".", type=click.Path(file_okay=False), help="Parent folder for the project.")
+@click.option("--name", default=None, help="Project folder name (default: the name in the package).")
+def open_package_cmd(zip_file: str, directory: str, name: str | None) -> None:
+    """Recreate a project from a package, to review and fix the code on this computer."""
+    from .package import open_package
+
+    try:
+        dest = open_package(zip_file, directory, name)
+    except (ValueError, OSError, ConfigError) as e:
+        _fail(str(e))
+    _ok(f"Project ready: {dest}")
+    click.echo(f"  Next: open it in the app (wishbridge ui --project {dest}), or cd {dest} and fix files in overrides/.")
 
 
 @main.command()

@@ -105,3 +105,36 @@ def test_review_package(tmp_path):
     names = zipfile.ZipFile(out).namelist()
     assert {"README.txt", "report.html", "files.csv", "open_items.csv", "converted_code/a.sql", "original_code/a.sql"} <= set(names)
     assert "original_code/a.sql" not in zipfile.ZipFile(build_package(cfg, include_original=False)).namelist()
+
+
+def test_package_opens_as_a_working_project_elsewhere(tmp_path):
+    import json
+
+    from wishbridge.package import build_package, open_package
+    from wishbridge.state import save_step
+
+    visit = tmp_path / "client-visit"
+    visit.mkdir()
+    cfg = project(visit)
+    (cfg.input_dir / "a.sql").write_text("SELECT 1;", encoding="utf-8")
+    final = cfg.output_dir / "final"
+    final.mkdir(parents=True)
+    (final / "a.sql").write_text("SELECT 1;", encoding="utf-8")
+    fwd = str(cfg.output_dir).replace("\\", "/")
+    save_step(cfg, "convert", {"summary": {"files": 1, "ready": 1, "review": 0, "needs_fix": 0, "auto_fixed": 0,
+                                           "open_errors": 0, "open_warnings": 0},
+                               "transpiler": "morph", "final_dir": str(final), "staged": fwd + "/staged_input/a.sql",
+                               "files": [{"file": "a.sql", "kind": "sql", "status": "ready", "fixed": 0, "findings": [],
+                                          "input": str(cfg.input_dir / "a.sql"), "final": str(final / "a.sql")}]})
+    pkg = build_package(cfg)
+    names = zipfile.ZipFile(pkg).namelist()
+    assert {"original_code/a.sql", "converted_code/a.sql", "project/project.yml", "project/output/state.json"} <= set(names)
+    # "<old name>-copy" starts with the old name: paths must not be rewritten twice
+    dest = open_package(pkg, tmp_path / "wishtree", "client-visit-copy")
+    moved = json.loads((dest / "output" / "state.json").read_text(encoding="utf-8"))["convert"]
+    assert moved["files"][0]["final"] == str(dest / "output" / "final" / "a.sql")
+    assert Path(moved["files"][0]["input"]).read_text(encoding="utf-8") == "SELECT 1;"
+    assert moved["staged"] == str(dest / "output").replace("\\", "/") + "/staged_input/a.sql"
+    assert load_config(dest / "project.yml").input_dir == (dest / "input").resolve()
+    with pytest.raises(ValueError, match="already exists"):
+        open_package(pkg, tmp_path / "wishtree", "client-visit-copy")

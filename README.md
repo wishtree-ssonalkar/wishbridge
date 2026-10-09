@@ -127,7 +127,8 @@ file to `output\ai_suggestions\` as a starting point for step 2.
 | `wishbridge init NAME --code DIR` | Project for a client folder: copies the code with a receipt; starts in the offline assessment phase |
 | `wishbridge assess` | Offline first visit: analyze + convert + report (no Databricks, no client database) |
 | `wishbridge inventory [--import FILE]` | Read-only inventory query for the client's DBA / import their CSV |
-| `wishbridge package` | Review package zip: report, open items, fit check, inventory, converted + original code |
+| `wishbridge package` | Everything in one zip: report, open items, fit check, inventory, original + converted code, the project |
+| `wishbridge open-package ZIP --dir DIR` | Turn a package back into a working project on any computer |
 | `wishbridge snapshot` | Copy the code of a project that reads the client's folder in place |
 | `wishbridge sources` | List supported source systems |
 | `wishbridge analyze` | LakeBridge assessment + effort estimate + fit check |

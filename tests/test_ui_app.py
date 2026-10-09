@@ -30,7 +30,7 @@ def test_all_tabs_render_for_a_project(project):
     at.session_state["project"] = str(project)
     at.run()
     assert not at.exception
-    assert [t.label for t in at.tabs] == ["1 · Settings", "2 · Code", "3 · Run", "4 · Results", "5 · Manual fixes", "Environment"]
+    assert [t.label for t in at.tabs] == ["1 · Settings", "2 · Code", "3 · Run", "4 · Results", "5 · Fix code (later)", "Environment"]
     assert at.selectbox[0].value == "mssql"
     assert any(i.value.startswith("Nothing has run yet") for i in at.info)
 

@@ -16,6 +16,7 @@ from wishbridge import discover
 from wishbridge import source_db as sd
 from wishbridge.dbx import SqlError, Warehouse
 from wishbridge.lakebridge import LakeBridgeError
+from wishbridge.staging import read_source
 from wishbridge.state import load_state
 from wishbridge.ui import helpers as h
 
@@ -45,7 +46,8 @@ def project_ok() -> bool:
 
 with st.sidebar:
     st.markdown(f"### 🌉 Wishtree WishBridge\nData warehouse migration to Databricks · v{__version__}")
-    mode = st.radio("Project", ["Open a folder", "Create new"], horizontal=True, label_visibility="collapsed")
+    mode = st.radio("Project", ["Open a folder", "Open a package", "Create new"], horizontal=True,
+                    label_visibility="collapsed")
     if mode == "Open a folder":
         folder = st.text_input("Project or client code folder", value=ss.project,
                                placeholder=r"C:\migrations\acme-dw  or  C:\client-repo",
@@ -71,6 +73,24 @@ with st.sidebar:
                 if st.button(f"📂 {Path(p).name}", key=f"open-{p}", width="stretch"):
                     ss.project, ss.workspace = p, None
                     st.rerun()
+    elif mode == "Open a package":
+        st.caption("A zip saved with *Assess and save everything* (or `wishbridge package`) on any computer. "
+                   "It becomes a project here, ready to review and fix.")
+        pkg_up = st.file_uploader("Package (.zip)", type=["zip"], key="pkg_upload")
+        pkg_parent = st.text_input("Create the project in", value=r"C:\migrations", key="pkg_parent")
+        if pkg_up is not None and st.button("Open package", width="stretch"):
+            from wishbridge.package import open_package
+
+            tmp = Path(pkg_parent).expanduser() / ".wishbridge-incoming" / Path(pkg_up.name).name
+            try:
+                tmp.parent.mkdir(parents=True, exist_ok=True)
+                tmp.write_bytes(pkg_up.getvalue())
+                dest = open_package(tmp, pkg_parent)
+                tmp.unlink(missing_ok=True)
+                ss.project, ss.workspace = str(dest), None
+                st.rerun()
+            except (ValueError, OSError, ConfigError) as e:
+                st.error(str(e))
     else:
         with st.form("new-project"):
             name = st.text_input("Project name", placeholder="acme-dw")
@@ -166,7 +186,7 @@ except (ConfigError, yaml.YAMLError, KeyError, TypeError, ValueError) as e:
     st.stop()
 
 tab_settings, tab_code, tab_run, tab_results, tab_fixes, tab_env = st.tabs(
-    ["1 · Settings", "2 · Code", "3 · Run", "4 · Results", "5 · Manual fixes", "Environment"])
+    ["1 · Settings", "2 · Code", "3 · Run", "4 · Results", "5 · Fix code (later)", "Environment"])
 
 
 # ----------------------------------------------------------------- settings
@@ -563,56 +583,91 @@ def run_step(label: str, fn, summary) -> bool:
 
 with tab_run:
     offline = cfg.phase == "assessment"
-    st.subheader("Assess the code (offline)" if offline else "Run the migration")
     if offline:
-        st.info("**Assessment phase** — Analyze, Convert and the report run on this computer only: nothing is sent to "
-                "Databricks or the client's database. Review and fix the converted code, then download the review "
-                "package from the Results tab. Switch to the Migration phase in Settings when the code is ready.")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        do_analyze = st.checkbox("1. Analyze the code", value=True)
-        do_convert = st.checkbox("2. Convert to Databricks SQL", value=True)
-        use_ai = st.checkbox("…with Claude suggestions", value=cfg.ai_enabled and not offline, disabled=not do_convert or offline,
-                             help="Not in the assessment phase: it sends code to the Claude API.")
-    with c2:
-        do_deploy = st.checkbox("3. Deploy to the test schema", value=False, disabled=offline)
-        recreate = st.checkbox("…rebuild objects that already exist", value=False, disabled=not do_deploy)
-        do_load = st.checkbox("4. Copy the data", value=False, disabled=offline)
-        execute = st.checkbox("…really copy (otherwise only write the plan)", value=False, disabled=not do_load)
-    with c3:
-        do_reconcile = st.checkbox("5. Reconcile the data", value=False, disabled=offline)
-        do_report = st.checkbox("6. Build the report", value=True)
-    st.caption(f"Target: `{cfg.target_schema}` · converter: {'automatic, ' if cfg.auto_converter else ''}{cfg.transpiler}"
-               + (" first" if cfg.auto_converter else "") + f" · source: {cfg.source.analyzer_tech}")
+        st.subheader("First run: assess the code and save everything")
+        st.markdown(
+            "One button does it all, on this computer only (nothing goes to Databricks or the client's database):\n"
+            "1. **Analyze** the code: size, complexity, effort, and whether it really is a data warehouse.\n"
+            "2. **Convert** it to Databricks.\n"
+            "3. Build the **report**.\n"
+            "4. Save **everything in one zip**: the original code, the converted code, the report and the list of "
+            "open items.\n\n"
+            "Nothing needs to be fixed now. Take the zip back to Wishtree, open it there (sidebar > *Open a package*) "
+            "and fix the code in the **Fix code (later)** tab.")
+        keep_original = st.checkbox("Include the client's original code in the zip", value=True)
+        if st.button("▶ Assess and save everything", type="primary"):
+            from wishbridge.analysis import run_analyze
+            from wishbridge.convert import run_convert
+            from wishbridge.package import build_package
+            from wishbridge.report import build_report
 
-    if st.button("▶ Start", type="primary"):
-        from wishbridge.analysis import run_analyze
-        from wishbridge.convert import run_convert
-        from wishbridge.data import run_load
-        from wishbridge.deploy import run_deploy
-        from wishbridge.reconcile import run_reconcile
-        from wishbridge.report import build_report
+            steps = [
+                ("Analyze", lambda: run_analyze(cfg),
+                 lambda r: f"{len(r['programs'])} files, estimate {r['estimated_hours_baseline']} h · fit: {r['fit']['verdict']}"),
+                ("Convert", lambda: run_convert(cfg, False),
+                 lambda r: f"{r['summary']['ready']} ready, {r['summary']['review']} review, {r['summary']['needs_fix']} need fixes"),
+                ("Report", lambda: build_report(cfg), lambda r: "report.html written"),
+                ("Save everything in one zip", lambda: build_package(cfg, keep_original), lambda r: Path(r).name),
+            ]
+            for label, fn, summary in steps:
+                if not run_step(label, fn, summary):
+                    st.warning("Stopped at the failed step. Fix the problem and start again.")
+                    break
+            else:
+                pkgs = sorted((cfg.output_dir / "review_package").glob("*.zip"), key=lambda q: q.stat().st_mtime)
+                ss.review_package = str(pkgs[-1]) if pkgs else ""
+        if ss.get("review_package") and Path(ss.review_package).is_file():
+            pkg = Path(ss.review_package)
+            st.success(f"Everything is saved in **{pkg.name}** ({pkg.stat().st_size // 1024:,} KB), also kept at `{pkg}`.")
+            st.download_button("⬇ Download the zip", pkg.read_bytes(), file_name=pkg.name, mime="application/zip",
+                               type="primary")
+    else:
+        st.subheader("Run the migration")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            do_analyze = st.checkbox("1. Analyze the code", value=True)
+            do_convert = st.checkbox("2. Convert to Databricks SQL", value=True)
+            use_ai = st.checkbox("…with Claude suggestions", value=cfg.ai_enabled and not offline, disabled=not do_convert or offline,
+                                 help="Not in the assessment phase: it sends code to the Claude API.")
+        with c2:
+            do_deploy = st.checkbox("3. Deploy to the test schema", value=False, disabled=offline)
+            recreate = st.checkbox("…rebuild objects that already exist", value=False, disabled=not do_deploy)
+            do_load = st.checkbox("4. Copy the data", value=False, disabled=offline)
+            execute = st.checkbox("…really copy (otherwise only write the plan)", value=False, disabled=not do_load)
+        with c3:
+            do_reconcile = st.checkbox("5. Reconcile the data", value=False, disabled=offline)
+            do_report = st.checkbox("6. Build the report", value=True)
+        st.caption(f"Target: `{cfg.target_schema}` · converter: {'automatic, ' if cfg.auto_converter else ''}{cfg.transpiler}"
+                   + (" first" if cfg.auto_converter else "") + f" · source: {cfg.source.analyzer_tech}")
 
-        steps = [
-            (do_analyze, "Analyze", lambda: run_analyze(cfg),
-             lambda r: f"{len(r['programs'])} files, estimate {r['estimated_hours_baseline']} h · fit: {r['fit']['verdict']}"),
-            (do_convert, "Convert", lambda: run_convert(cfg, use_ai),
-             lambda r: f"{r['summary']['ready']} ready, {r['summary']['review']} review, {r['summary']['needs_fix']} need fixes"),
-            (do_deploy, "Deploy", lambda: run_deploy(cfg, recreate=recreate),
-             lambda r: f"{r['summary']['statements_ok']}/{r['summary']['statements']} statements OK"),
-            (do_load, "Load data", lambda: run_load(cfg, execute=execute),
-             lambda r: (f"{r['summary']['loaded']}/{r['summary']['tables']} tables loaded" if execute
-                        else f"plan for {r['summary']['tables']} tables written")),
-            (do_reconcile, "Reconcile", lambda: run_reconcile(cfg),
-             lambda r: f"{r['summary']['matched']}/{r['summary']['tables']} tables match"),
-            (do_report, "Report", lambda: build_report(cfg), lambda r: "report.html updated"),
-        ]
-        for enabled, label, fn, summary in steps:
-            if enabled and not run_step(label, fn, summary):
-                st.warning("Stopped at the failed step. Fix the problem and start again.")
-                break
-        else:
-            st.success("Done. Open the Results tab.")
+        if st.button("▶ Start", type="primary"):
+            from wishbridge.analysis import run_analyze
+            from wishbridge.convert import run_convert
+            from wishbridge.data import run_load
+            from wishbridge.deploy import run_deploy
+            from wishbridge.reconcile import run_reconcile
+            from wishbridge.report import build_report
+
+            steps = [
+                (do_analyze, "Analyze", lambda: run_analyze(cfg),
+                 lambda r: f"{len(r['programs'])} files, estimate {r['estimated_hours_baseline']} h · fit: {r['fit']['verdict']}"),
+                (do_convert, "Convert", lambda: run_convert(cfg, use_ai),
+                 lambda r: f"{r['summary']['ready']} ready, {r['summary']['review']} review, {r['summary']['needs_fix']} need fixes"),
+                (do_deploy, "Deploy", lambda: run_deploy(cfg, recreate=recreate),
+                 lambda r: f"{r['summary']['statements_ok']}/{r['summary']['statements']} statements OK"),
+                (do_load, "Load data", lambda: run_load(cfg, execute=execute),
+                 lambda r: (f"{r['summary']['loaded']}/{r['summary']['tables']} tables loaded" if execute
+                            else f"plan for {r['summary']['tables']} tables written")),
+                (do_reconcile, "Reconcile", lambda: run_reconcile(cfg),
+                 lambda r: f"{r['summary']['matched']}/{r['summary']['tables']} tables match"),
+                (do_report, "Report", lambda: build_report(cfg), lambda r: "report.html updated"),
+            ]
+            for enabled, label, fn, summary in steps:
+                if enabled and not run_step(label, fn, summary):
+                    st.warning("Stopped at the failed step. Fix the problem and start again.")
+                    break
+            else:
+                st.success("Done. Open the Results tab.")
 
 
 # ----------------------------------------------------------------- results
@@ -717,10 +772,23 @@ with tab_results:
 with tab_fixes:
     state = load_state(cfg)
     conv = state.get("convert")
-    if not conv:
+    st.subheader("Fix code (later)")
+    st.markdown(
+        "Some files cannot be converted completely by a tool. This tab is where the team finishes them - "
+        "**later, at Wishtree, not at the client**.\n\n"
+        "1. Pick a file. Files that need a fix come first; the red and yellow boxes say what to change and on which line.\n"
+        "2. The client's **original** code is on the left, the **Databricks version** on the right. Edit the right side.\n"
+        "3. Press **Save as manual fix**. Your version is kept in the project's `overrides` folder and used on every "
+        "later run, so a new conversion never overwrites it.")
+    if cfg.phase == "assessment" and not ss.get("fixing_now"):
+        st.info("At the client you don't need this tab: *Run > Assess and save everything* puts the code and the list "
+                "of open items in one zip. Open that zip at Wishtree (sidebar > *Open a package*) and fix the code there.")
+        if conv and st.button("I want to fix files now"):
+            ss.fixing_now = True
+            st.rerun()
+    elif not conv:
         st.info("Run Convert first.")
     else:
-        st.caption("Files saved here go into the project's overrides folder and replace the converted file on every run.")
         order = {"needs-fix": 0, "review": 1, "ready": 2}
         files = sorted(conv["files"], key=lambda f: (order.get(f["status"], 3), f["file"]))
         pick = st.selectbox("File", [f["file"] for f in files],
@@ -733,7 +801,7 @@ with tab_fixes:
         with left:
             st.markdown("**Original**")
             orig = Path(f["input"])
-            st.code(orig.read_text(encoding="utf-8-sig", errors="replace") if orig.exists() else "(not found)", language="sql")
+            st.code(read_source(orig) if orig.exists() else "(not found)", language="sql")
         with right:
             ovr = h.override_path(ss.project, f["file"], raw.get("overrides", "overrides"))
             final = Path(f["final"])
