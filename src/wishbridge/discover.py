@@ -221,5 +221,13 @@ def create_projects_for_code(info: CodeFolder, parent: str | Path, base_name: st
     return [create_project_for_code(info.path, parent, base_name, source, catalog, host, copy_code)]
 
 
-def suggested_name(folder: str | Path) -> str:
-    return _slug(Path(folder).name)
+def suggested_name(folder: str | Path, parent: str | Path | None = None) -> str:
+    """A project name from the folder name; with parent, one that is not taken there yet (ssis, ssis-2, ...)."""
+    base = _slug(Path(folder).name)
+    if parent is None:
+        return base
+    parent, name, n = Path(parent).expanduser(), base, 1
+    while (parent / name / "project.yml").exists():
+        n += 1
+        name = f"{base}-{n}"
+    return name

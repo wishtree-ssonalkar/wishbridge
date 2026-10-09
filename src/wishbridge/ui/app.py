@@ -207,11 +207,9 @@ if info and not project_ok():
         src_keys = list(SOURCES)
         source = c1.selectbox("Source system", src_keys, index=src_keys.index(det.source),
                               format_func=lambda k: SOURCES[k].label)
-        name = c2.text_input("Project name", value=discover.suggested_name(info.path))
-        c1, c2 = st.columns(2)
-        parent = c1.text_input("Create projects in", value=r"C:\migrations")
-        catalog = c2.text_input("Databricks catalog", value="main",
-                                help="Newer workspaces use `workspace`; you can change it later in Settings.")
+        default_parent = r"C:\migrations"
+        name = c2.text_input("Project name", value=discover.suggested_name(info.path, default_parent))
+        parent = st.text_input("Create projects in", value=default_parent)
         split = False
         if info.databases:
             dbs = ", ".join(f"{n} ({c} files)" for n, _, c in info.databases)
@@ -220,16 +218,25 @@ if info and not project_ok():
                              format_func=lambda s: "One project per database (recommended)" if s else "One project for everything")
         if st.form_submit_button("Create project" + ("s" if info.databases and split else ""), type="primary"):
             try:
-                made = discover.create_projects_for_code(info, parent, name, source, split, catalog.strip() or "main")
+                made = discover.create_projects_for_code(info, parent, name, source, split)
             except (ValueError, OSError, ConfigError) as e:
+                existing = Path(parent).expanduser() / name.strip()
+                if (existing / "project.yml").exists():
+                    ss.existing_project = str(existing.resolve())
                 st.error(str(e))
             else:
                 ss.created_projects = [str(p) for p in made]
                 ss.project, ss.workspace = str(made[0]), None
                 ss.pop("code_info", None)
                 st.rerun()
+    if ss.get("existing_project"):
+        if st.button(f"📂 Open the existing project {Path(ss.existing_project).name} instead", type="primary"):
+            ss.project, ss.workspace = ss.pop("existing_project"), None
+            ss.pop("code_info", None)
+            st.rerun()
     if st.button("Cancel"):
         ss.pop("code_info", None)
+        ss.pop("existing_project", None)
         st.rerun()
     st.stop()
 
@@ -254,8 +261,16 @@ except (ConfigError, yaml.YAMLError, KeyError, TypeError, ValueError) as e:
                 "instead - the app can create a fresh project for it.")
     st.stop()
 
-tab_settings, tab_code, tab_run, tab_results, tab_fixes = st.tabs(
-    ["1 · Settings", "2 · Code", "3 · Run", "4 · Results", "5 · Fix code (later)"])
+TABS = ["1 · Settings", "2 · Code", "3 · Run", "4 · Results", "5 · Fix code (later)"]
+if ss.get("go_tab"):
+    ss["tab"] = ss.pop("go_tab")  # a Next button asked for the next tab
+tab_settings, tab_code, tab_run, tab_results, tab_fixes = st.tabs(TABS, key="tab", on_change="rerun")
+
+
+def next_button(label: str, tab: str, key: str) -> None:
+    if st.button(label, type="primary", key=key):
+        ss.go_tab = tab
+        st.rerun()
 
 
 # ----------------------------------------------------------------- settings
@@ -535,7 +550,7 @@ with tab_settings:
         est = raw.get("estimate") or {}
         hpi = st.number_input("Hours per open item", value=float(est.get("hours_per_issue", 0.5)), step=0.25)
 
-    if st.button("💾 Save settings", type="primary"):
+    if st.button("Next: add the code →", type="primary", help="Saves the settings and opens the Code tab."):
         new = dict(raw)
         new["source"] = source
         if transpiler == "auto":
@@ -548,6 +563,10 @@ with tab_settings:
         new["databricks"] = {**dbx, "profile": profile, "host": host, "warehouse_id": warehouse,
                              "catalog": catalog, "schema": schema}
         new["schema_map"] = h.rows_to_schema_map(map_df.to_dict("records"))
+        old_cat = str(dbx.get("catalog") or "")
+        if old_cat and catalog != old_cat:  # schema names made from the old catalog follow the new one
+            new["schema_map"] = {k: (f"{catalog}.{v[len(old_cat) + 1:]}" if str(v).startswith(old_cat + ".") else v)
+                                 for k, v in new["schema_map"].items()}
         new["data"] = {**data, "method": method, "source_catalog": source_catalog, "files_root": files_root,
                        "file_format": file_format, "mode": load_mode, "tables": h.rows_to_tables(tables_df.to_dict("records"))}
         new["autofix"] = {"ai": ai_on, "model": model}
@@ -555,7 +574,7 @@ with tab_settings:
         try:
             h.save_raw(ss.project, new)
             ss.pop("pending_profile", None)
-            st.success("Saved project.yml")
+            ss.go_tab = TABS[1]
             st.rerun()
         except (ConfigError, KeyError, ValueError) as e:
             st.error(f"Not saved: {e}")
@@ -622,10 +641,11 @@ with tab_code:
     if not files:
         st.info("No code yet. Upload files above, or copy them into the input folder.")
     else:
+        next_button("Next: run →", TABS[2], "next-code")
         st.dataframe(pd.DataFrame([{"file": str(p.relative_to(cfg.input_dir)), "size (KB)": round(p.stat().st_size / 1024, 1)}
                                    for p in files]), width="stretch", hide_index=True)
         pick = st.selectbox("Preview", [str(p.relative_to(cfg.input_dir)) for p in files])
-        st.code((cfg.input_dir / pick).read_text(encoding="utf-8-sig", errors="replace")[:20000], language="sql")
+        st.code(read_source(cfg.input_dir / pick)[:20000], language="sql")
 
 
 # ----------------------------------------------------------------- run

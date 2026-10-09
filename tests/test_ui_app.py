@@ -57,8 +57,9 @@ def test_save_settings_writes_project_yml(project):
     at.run()
     schema_input = next(t for t in at.text_input if t.label == "Test schema")
     schema_input.set_value("wishbridge_ui_test").run()
-    next(b for b in at.button if b.label.startswith("💾 Save settings")).click().run()
+    next(b for b in at.button if b.label.startswith("Next: add the code")).click().run()
     assert not at.exception
     text = (project / "project.yml").read_text(encoding="utf-8")
     assert "schema: wishbridge_ui_test" in text
     assert "saved from the WishBridge UI" in text
+    assert at.session_state["tab"] == "2 · Code"  # Next saves and moves on

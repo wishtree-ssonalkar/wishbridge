@@ -102,3 +102,10 @@ def test_empty_or_missing_folder(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(ValueError, match="No SQL or ETL code"):
         discover.inspect(tmp_path / "empty")
+
+
+def test_suggested_name_is_free(tmp_path):
+    (tmp_path / "ssis").mkdir()
+    (tmp_path / "ssis" / "project.yml").write_text("source: ssis\n", encoding="utf-8")
+    assert discover.suggested_name(tmp_path / "client" / "SSIS", tmp_path) == "ssis-2"
+    assert discover.suggested_name(tmp_path / "client" / "Other", tmp_path) == "other"

@@ -130,7 +130,7 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
     are folded away. Nothing here needs Databricks.
   - *Migration*: also the **Databricks workspace** (pick the saved login for the client's workspace, or *Connect to
     another workspace* to sign in; *Load warehouses and catalogs* fills the lists), the test schema, what to
-    deploy, the source database connection and the tables to copy. Press *Save settings* (bad values are refused
+    deploy, the source database connection and the tables to copy. Press *Next: add the code* - it saves the settings and opens the Code tab (bad values are refused
     and the old settings kept). Saving records the workspace URL in the project: from then on WishBridge refuses
     to deploy, load or reconcile with a login for any other workspace.
 - **2 · Code:** the **code overview** (a document describing how the system is built), the **source database inventory** (download
