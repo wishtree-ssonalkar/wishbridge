@@ -44,36 +44,76 @@ def project_ok() -> bool:
 
 # ----------------------------------------------------------------- sidebar
 
+SETUP_STATUS = Path.home() / ".wishbridge" / "setup_status.json"
+
+
 def system_check() -> None:
-    """Check this computer once per session; install whatever is missing without asking the user to type commands."""
+    """Check this computer; install what the work needs in the background. Never blocks the app."""
     from wishbridge import system
 
-    if "system" not in ss or ss.get("system_recheck"):
+    project_cfg = None
+    if project_ok():
+        try:
+            project_cfg = load_config(h.project_file(ss.project))
+        except (ConfigError, ValueError, OSError):
+            pass
+    needed = system.needed_for(project_cfg)
+    key = ",".join(sorted(needed))
+    proc = ss.get("setup_proc")
+    running = proc is not None and proc.poll() is None
+    if ss.get("system_key") != key or ss.get("system_recheck") or (proc is not None and not running and not ss.get("setup_read")):
         ss.pop("system_recheck", None)
-        ss.system = system.check()
-        if not all(s.ok for s in ss.system) and not ss.get("system_installed"):
-            ss.system_installed = True  # try once automatically; the user can retry
-            with st.status("Setting up this computer…", expanded=True) as box:
-                ss.system = system.install_missing(lambda m: st.write(m))
-                ok = all(s.ok for s in ss.system)
-                box.update(label="This computer is ready" if ok else "Setup needs attention",
-                           state="complete" if ok else "error", expanded=not ok)
-    missing = [s for s in ss.system if not s.ok]
+        if proc is not None and not running:
+            ss.setup_read = True
+        ss.system, ss.system_key = system.check(needed), key
+        extra = [project_cfg.output_dir / "logs" / "system_check.json"] if project_cfg else []
+        system.save_report(system.report(ss.system), *extra)
+        attempted = ss.setdefault("setup_attempted", set())
+        if not running and not system.ready(ss.system) and key not in attempted:
+            attempted.add(key)  # try automatically once per need; the user can retry
+            ss.setup_proc, ss.setup_read = system.start_background_install(needed, SETUP_STATUS, extra), False
+            running = True
+    if running:
+        _setup_progress()
+        return
+    missing = [s for s in ss.system if s.needed and not (s.ok and s.compatible)]
     if not missing:
         st.caption("✅ This computer is ready")
     else:
-        st.warning("Missing: " + ", ".join(s.name for s in missing))
-    with st.expander("System check", expanded=bool(missing)):
+        st.warning("Missing: " + ", ".join(s.name for s in missing) + ". You can keep working: only steps that "
+                   "need it will stop with a message. Details are saved for later.")
+    with st.expander("System check", expanded=False):
         for s in ss.system:
-            st.markdown(f"{'✅' if s.ok else '❌'} **{s.name}** — {s.why}")
+            if not s.needed and not s.ok:
+                st.markdown(f"➖ **{s.name}** — not needed for this work")
+                continue
+            mark = "✅" if s.ok and s.compatible else "⚠️" if s.ok else "❌"
+            ver = f" `{s.version}`" if s.version else ""
+            st.markdown(f"{mark} **{s.name}**{ver} — {s.why}")
+            if s.ok and not s.compatible:
+                st.caption(f"Version {s.version} is older than the minimum {s.minimum}.")
             if not s.ok:
                 st.code(s.manual, language="powershell")
                 for line in s.log[-2:]:
-                    st.caption(line[-600:])
-        if st.button("Check again" if not missing else "Install missing again", width="stretch"):
+                    st.caption((line.strip().splitlines() or [""])[-1][-300:])
+        st.caption(f"Record of every check and install: `{system.REPORT}`")
+        if st.button("Install missing again" if missing else "Check again", width="stretch"):
             ss.system_recheck = True
-            ss.pop("system_installed", None)
+            ss.get("setup_attempted", set()).discard(key)
             st.rerun()
+
+
+@st.fragment(run_every="3s")
+def _setup_progress() -> None:
+    """Shown while the background install runs; refreshes itself and hands back to the page when done."""
+    from wishbridge import system
+
+    proc = ss.get("setup_proc")
+    if proc is None or proc.poll() is not None:
+        st.rerun()  # finished: re-check and show the result
+    rep = system.load_report(SETUP_STATUS) or {}
+    st.info(f"⏳ Setting up this computer in the background — {rep.get('current') or 'checking…'} "
+            "You can keep working meanwhile.")
 
 
 with st.sidebar:

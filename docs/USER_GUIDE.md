@@ -144,10 +144,14 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   open items, converted and original code).
 - **5 · Fix code (later):** pick a file, see its open items and the original next to the Databricks version, edit it
   and press *Save as manual fix*. Then run Convert again.
-- **System check (sidebar):** when the app starts it checks the Databricks CLI, Java, LakeBridge and both converters,
-  and **installs whatever is missing** (winget on Windows, Homebrew on macOS; LakeBridge and the converters through
-  the Databricks CLI). Downloads need internet access - office networks that inspect HTTPS can block them; the
-  check then says so and *Install missing again* retries. Same from the command line: `wishbridge setup`.
+- **System check (sidebar):** checks this computer when the app starts and installs **only what the work needs** -
+  always the Databricks CLI and LakeBridge; for an open project also its converter(s) (Morph and/or BladeBridge) and,
+  for Morph, Java 11+. Installs run **in the background** (winget on Windows, Homebrew on macOS, LakeBridge and the
+  converters through the Databricks CLI) while you keep working. Versions are checked against the minimum
+  (e.g. Java 11). If something cannot be installed - for example an office network blocks the download - nothing
+  is blocked: steps that need it stop with a message, everything else works, and every check and install attempt is
+  saved to `~/.wishbridge/system_check.json` (and the project's `output/logs/`, so it travels in the zip).
+  *Install missing again* retries. Same from the command line: `wishbridge setup` (`-c project.yml` for a project).
 
 The app and the commands use the same project folders, so you can switch between them at any time.
 

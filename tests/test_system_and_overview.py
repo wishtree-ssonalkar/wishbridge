@@ -80,3 +80,24 @@ def test_overview_describes_the_code_base(tmp_path):
     i = html.index("How data flows")
     assert "dbo.DailySales" in html[i:] and "dbo.usp_load_daily_sales" in html[i:]
     assert not Path(cfg.output_dir / "code_overview.html").read_text(encoding="utf-8").count("copied")
+
+
+def test_only_what_the_work_needs(tmp_path):
+    assert system.needed_for(None) == {"cli", "lakebridge"}
+    (tmp_path / "ssis.yml").write_text("source: ssis\n", encoding="utf-8")
+    (tmp_path / "mssql.yml").write_text("source: mssql\n", encoding="utf-8")
+    assert system.needed_for(load_config(tmp_path / "ssis.yml")) == {"cli", "lakebridge", "converter-bladebridge"}
+    assert system.needed_for(load_config(tmp_path / "mssql.yml")) == \
+        {"cli", "lakebridge", "converter-morph", "converter-bladebridge", "java"}  # Morph runs on Java
+
+
+def test_old_java_is_reported_and_record_is_saved(monkeypatch, tmp_path):
+    java = next(r for r in system.requirements() if r.key == "java")
+    assert java.compatible("17") and java.compatible("26") and not java.compatible("8")
+    monkeypatch.setattr(system, "REPORT", tmp_path / "check.json")
+    statuses = [system.Status("java", "Java", True, "x", "", "", version="8", compatible=False, minimum="11")]
+    assert not system.ready(statuses)
+    system.save_report(system.report(statuses), tmp_path / "project_copy.json")
+    rec = system.load_report(tmp_path / "check.json")
+    assert rec["ready"] is False and rec["requirements"][0]["version"] == "8" and rec["computer"]["os"]
+    assert system.load_report(tmp_path / "project_copy.json") == rec

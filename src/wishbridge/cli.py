@@ -317,21 +317,46 @@ def reconcile(config_path: str, full: bool) -> None:
 
 @main.command()
 @click.option("--check-only", is_flag=True, help="Only report; do not install anything.")
-def setup(check_only: bool) -> None:
-    """Check this computer and install what is missing (Databricks CLI, Java, LakeBridge, converters)."""
+@click.option("-c", "--config", "config_path", default=None,
+              help="Project file: install only what this project needs (its converters, Java for Morph).")
+@click.option("--need", default=None, help="Comma-separated requirement keys to install (used by the app).")
+@click.option("--status-file", default=None, type=click.Path(dir_okay=False), help="Write progress and result here.")
+@click.option("--also-save", multiple=True, type=click.Path(dir_okay=False), help="Also save the record here.")
+def setup(check_only: bool, config_path: str | None, need: str | None, status_file: str | None,
+          also_save: tuple[str, ...]) -> None:
+    """Check this computer and install what the work needs; the record is saved to ~/.wishbridge/system_check.json."""
     from . import system
 
-    statuses = system.check() if check_only else system.install_missing(lambda m: click.echo(f"  {m}"))
+    needed = set(need.split(",")) if need else system.needed_for(_load(config_path) if config_path else None)
+    extra = [Path(p) for p in also_save] + ([Path(status_file)] if status_file else [])
+
+    def progress(msg: str) -> None:
+        click.echo(f"  {msg}")
+        system.save_report(system.report(system.check(needed), "running", msg), *extra)
+
+    if not check_only:
+        system.save_report(system.report(system.check(needed), "running", "Checking..."), *extra)
+    statuses = system.check(needed) if check_only else system.install_missing(progress, needed)
+    system.save_report(system.report(statuses), *extra)
     for s in statuses:
-        click.secho(f"  {'ok  ' if s.ok else 'MISS'} {s.name:<24} {s.detail}", fg="green" if s.ok else "red")
+        if not s.needed and not s.ok:
+            click.echo(f"  -    {s.name:<24} not needed for this work")
+            continue
+        good = s.ok and s.compatible
+        tail = f" {s.version}" if s.version else ""
+        click.secho(f"  {'ok  ' if good else 'MISS' if not s.ok else 'OLD '} {s.name:<24} {s.detail}{tail}",
+                    fg="green" if good else "red")
+        if s.ok and not s.compatible:
+            click.echo(f"       version {s.version} is older than the minimum {s.minimum}")
         if not s.ok:
             click.echo(f"       by hand: {s.manual}")
             for line in s.log[-2:]:
-                click.echo("       " + line.strip().splitlines()[-1][:300] if line.strip() else "")
-    if all(s.ok for s in statuses):
+                click.echo("       " + (line.strip().splitlines() or [""])[-1][:300])
+    click.echo(f"  Record saved: {system.REPORT}")
+    if system.ready(statuses):
         _ok("This computer is ready")
     else:
-        _fail("Some requirements are missing (see above)")
+        _fail("Some requirements are missing (see above) - the record has the details")
 
 
 @main.command()
