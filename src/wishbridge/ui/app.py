@@ -176,6 +176,21 @@ with tab_settings:
     data = raw.setdefault("data", {})
     ai = raw.setdefault("autofix", {})
 
+    phase_labels = {"assessment": "Assessment - offline: analyze and convert the code",
+                    "migration": "Migration - deploy to Databricks, copy the data, reconcile"}
+
+    def _save_phase() -> None:
+        new_ = dict(raw)
+        new_["phase"] = ss.phase_radio
+        h.save_raw(ss.project, new_)
+
+    cur_phase = str(raw.get("phase") or "migration").lower()
+    phase = st.radio("Phase", list(phase_labels), format_func=phase_labels.get, horizontal=True, key="phase_radio",
+                     index=list(phase_labels).index(cur_phase) if cur_phase in phase_labels else 1, on_change=_save_phase,
+                     help="Assessment: nothing is sent to Databricks or the client's database. Switch to Migration for "
+                          "the visit where the code is deployed and the data copied. Changing it saves right away.")
+    offline = phase == "assessment"
+
     st.subheader("Project settings")
     c1, c2 = st.columns(2)
     with c1:
@@ -191,230 +206,238 @@ with tab_settings:
                                   index=conv_options.index(cur_conv) if cur_conv in conv_options else 0)
         st.caption(converter_summary(source) if transpiler == "auto"
                    else "Fixed converter: no second attempt on files it can't convert.")
+
+    with st.expander("Schema names in the converted code (optional)"):
+        st.caption("Rename source schemas in the converted code, e.g. `dbo` -> `main.sales`. WishBridge fills in a "
+                   "sensible default; adjust it once the Databricks catalog is known.")
+        map_df = st.data_editor(pd.DataFrame(h.schema_map_rows(raw) or [{"source_schema": "", "target": ""}]),
+                                num_rows="dynamic", width="stretch", key="schema_map",
+                                column_config={"source_schema": "Source schema", "target": "Target catalog.schema"})
+
+    # Values kept as they are while the migration settings are hidden.
+    profile, warehouse = dbx.get("profile", "DEFAULT"), str(dbx.get("warehouse_id") or "")
+    catalog, schema = dbx.get("catalog", "main"), dbx.get("schema", "wishbridge")
+    scope = str(raw.get("scope") or "all").lower()
+    method, source_catalog = data.get("method", "federation"), data.get("source_catalog", "")
+    files_root, file_format, load_mode = data.get("files_root", ""), data.get("file_format", "PARQUET"), data.get("mode", "append")
+    tables_df = pd.DataFrame(h.table_rows(raw) or [{"source": "", "target": ""}])
+    ws, chosen_host, project_host = None, "", str(dbx.get("host") or "")
+
+    if offline:
+        st.info("Databricks, source database and data-copy settings are not needed for the assessment. "
+                "They appear here when you switch the phase to **Migration**.")
+
+    if not offline:
+        # --- Databricks workspace: which saved login (profile) this project uses
+        st.markdown("**Databricks workspace** — the client workspace this project migrates into.")
+        if "profiles" not in ss:
+            ss.profiles = h.list_profiles()
+        profiles = ss.profiles
+        names = [p["name"] for p in profiles]
+        cur_profile = ss.get("pending_profile") or dbx.get("profile", "DEFAULT")
+        if cur_profile not in names:
+            names = [cur_profile] + names
+        by_name = {p["name"]: p for p in profiles}
+
+        def profile_label(n: str) -> str:
+            p = by_name.get(n)
+            if not p:
+                return f"{n} — not set up on this computer"
+            state = {True: "signed in", False: "login expired", None: "status unknown"}[p["valid"]]
+            return f"{n} — {p['host']} ({state})"
+
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            profile = st.selectbox("Workspace login", names, index=names.index(cur_profile), format_func=profile_label)
+        with c2:
+            st.write("")
+            if st.button("Load warehouses and catalogs", width="stretch"):
+                with st.spinner("Asking the workspace..."):
+                    try:
+                        ss.workspace = h.list_workspace(profile)
+                    except Exception as e:  # SDK raises many types; show the message
+                        ss.workspace = None
+                        st.error(f"Could not reach the workspace: {e}")
+        chosen_host = (by_name.get(profile) or {}).get("host", "")
+        project_host = str(dbx.get("host") or "")
+        if ss.workspace and ss.workspace.get("profile") == profile:
+            st.success(f"Connected as **{ss.workspace['user']}** on **{ss.workspace['host']}**")
+        if project_host and chosen_host and project_host.rstrip("/").lower() != chosen_host.rstrip("/").lower():
+            st.error(f"This project belongs to **{project_host}**, but the selected login is for **{chosen_host}**. "
+                     "Pick the login for the project's workspace. Saving will move the project to the selected workspace.")
+        if by_name.get(profile, {}).get("valid") is False:
+            st.warning("This login has expired. Sign in again below with the same profile name.")
+
+        with st.expander("Connect to another workspace (sign in)"):
+            st.caption("Opens a browser on this computer to sign in. The login is saved in this user's ~/.databrickscfg; "
+                       "WishBridge never sees the password.")
+            n1, n2, n3 = st.columns([3, 2, 1])
+            new_host = n1.text_input("Workspace URL", placeholder="https://adb-1234567890.12.azuredatabricks.net")
+            new_profile = n2.text_input("Profile name", placeholder="CLIENT_ACME")
+            n3.write("")
+            if n3.button("Sign in"):
+                with st.spinner("Finish signing in in the browser window..."):
+                    ok, msg = h.sign_in(new_host, new_profile)
+                (st.success if ok else st.error)(msg)
+                if ok:
+                    ss.profiles = h.list_profiles()
+                    ss.pending_profile = new_profile.strip()
+                    st.rerun()
+
+        st.markdown("**Target in Databricks** — converted objects are created in this test schema.")
+        c1, c2, c3 = st.columns(3)
+        ws = ss.workspace if ss.workspace and ss.workspace.get("profile") == profile else None
+        with c1:
+            if ws and ws["warehouses"]:
+                wh_ids = [""] + [w["id"] for w in ws["warehouses"]]
+                labels = {"": "(first running warehouse)", **{w["id"]: f"{w['name']} · {w['state']}" for w in ws["warehouses"]}}
+                cur = str(dbx.get("warehouse_id") or "")
+                warehouse = st.selectbox("SQL warehouse", wh_ids, index=wh_ids.index(cur) if cur in wh_ids else 0,
+                                         format_func=lambda i: labels[i])
+            else:
+                warehouse = st.text_input("SQL warehouse ID", value=str(dbx.get("warehouse_id") or ""),
+                                          help="Leave blank to use the first running warehouse.")
+        with c2:
+            cats = [c["name"] for c in ws["catalogs"]] if ws else []
+            cur_cat = dbx.get("catalog", "main")
+            if cats:
+                catalog = st.selectbox("Catalog", cats if cur_cat in cats else [cur_cat] + cats,
+                                       index=(cats if cur_cat in cats else [cur_cat] + cats).index(cur_cat))
+            else:
+                catalog = st.text_input("Catalog", value=cur_cat)
+        with c3:
+            schema = st.text_input("Test schema", value=dbx.get("schema", "wishbridge"))
         scope_labels = {"all": "Everything", "recommended": "Only what belongs on Databricks (fit check)"}
-        cur_scope = str(raw.get("scope") or "all").lower()
         scope = st.selectbox("What to deploy", list(scope_labels), format_func=scope_labels.get,
-                             index=list(scope_labels).index(cur_scope) if cur_scope in scope_labels else 0,
+                             index=list(scope_labels).index(scope) if scope in scope_labels else 0,
                              help="The fit check (run with Analyze) marks application logic to keep on the source "
                                   "and objects Databricks does not need. 'Only what belongs' leaves those out of deploy.")
-        phase_labels = {"assessment": "Assessment (offline: analyze and convert only)",
-                        "migration": "Migration (deploy, copy the data, reconcile)"}
-        cur_phase = str(raw.get("phase") or "migration").lower()
-        phase = st.selectbox("Phase", list(phase_labels), format_func=phase_labels.get,
-                             index=list(phase_labels).index(cur_phase) if cur_phase in phase_labels else 1,
-                             help="Assessment: nothing is sent to Databricks or the client's database - work on the "
-                                  "copied code at Wishtree. Switch to Migration for the visit where the code is deployed "
-                                  "and the data copied.")
 
-    # --- Databricks workspace: which saved login (profile) this project uses
-    st.markdown("**Databricks workspace** — the client workspace this project migrates into.")
-    if "profiles" not in ss:
-        ss.profiles = h.list_profiles()
-    profiles = ss.profiles
-    names = [p["name"] for p in profiles]
-    cur_profile = ss.get("pending_profile") or dbx.get("profile", "DEFAULT")
-    if cur_profile not in names:
-        names = [cur_profile] + names
-    by_name = {p["name"]: p for p in profiles}
+        if "prod" in f"{catalog}.{schema}".lower():
+            st.warning("This looks like a production schema. WishBridge will refuse to deploy there.")
 
-    def profile_label(n: str) -> str:
-        p = by_name.get(n)
-        if not p:
-            return f"{n} — not set up on this computer"
-        state = {True: "signed in", False: "login expired", None: "status unknown"}[p["valid"]]
-        return f"{n} — {p['host']} ({state})"
-
-    c1, c2 = st.columns([3, 2])
-    with c1:
-        profile = st.selectbox("Workspace login", names, index=names.index(cur_profile), format_func=profile_label)
-    with c2:
-        st.write("")
-        if st.button("Load warehouses and catalogs", width="stretch"):
-            with st.spinner("Asking the workspace..."):
+        # --- Source database: where the data lives. Optional - only needed to copy the data.
+        st.markdown("**Source database** — optional, only needed to copy the data. WishBridge creates a Lakehouse "
+                    "Federation connection in Databricks; the password goes into Databricks secrets, never into project.yml.")
+        sdb = raw.get("source_db") or {}
+        default_type = sd.DEFAULT_FOR_SOURCE.get(cfg.source.key, "sqlserver")
+        with st.container(border=True):
+            if ss.get("sdb_msg"):
+                kind, msg = ss.pop("sdb_msg")
+                getattr(st, kind)(msg)
+            if default_type is None and not sdb:
+                st.info(sd.NOT_SUPPORTED_HINT)
+            type_keys = list(sd.DB_TYPES)
+            cur_type = sdb.get("type") or default_type or "sqlserver"
+            d1, d2, d3 = st.columns([2, 3, 1])
+            db_type = d1.selectbox("Database type", type_keys, index=type_keys.index(cur_type),
+                                   format_func=lambda k: sd.DB_TYPES[k].label, key="sdb_type")
+            dbt = sd.DB_TYPES[db_type]
+            host = d2.text_input("Server (host)", value=sdb.get("host", ""), placeholder="sqlprod01.client.com", key="sdb_host")
+            port = d3.number_input("Port", value=int(sdb.get("port") or dbt.port), step=1, key="sdb_port")
+            d1, d2, d3 = st.columns(3)
+            database = d1.text_input(dbt.catalog_label, value=sdb.get("database", ""), key="sdb_db",
+                                     disabled=dbt.catalog_option is None,
+                                     help=None if dbt.catalog_option else f"Not needed for {dbt.label}: the whole server is exposed.")
+            user = d2.text_input("User (read-only is enough)", value=sdb.get("user", ""), key="sdb_user")
+            password = d3.text_input("Password", type="password", key="sdb_pw",
+                                     help="Sent straight to Databricks secrets; not saved anywhere else.")
+            extra = {opt: st.text_input(label, value=(sdb.get("options") or {}).get(opt, ""), key=f"sdb_{opt}")
+                     for opt, label in dbt.extra}
+            connected = bool(sdb.get("catalog"))
+            b1, b2, b3 = st.columns(3)
+            if b1.button("🔌 Re-create connection" if connected else "🔌 Create connection", width="stretch"):
+                settings = {"type": db_type, "host": host.strip(), "port": int(port), "database": database.strip(),
+                            "user": user.strip(), "options": extra}
+                with st.spinner("Creating the connection in Databricks..."):
+                    try:
+                        made = sd.create_connection(cfg, settings, password, Warehouse(cfg))
+                    except (SqlError, ValueError) as e:
+                        st.error(f"Connection not created: {e}")
+                    else:
+                        new = dict(raw)
+                        new["source_db"] = {**settings, "connection": made["connection"], "catalog": made["catalog"]}
+                        new["data"] = {**data, "method": "federation", "source_catalog": made["catalog"]}
+                        h.save_raw(ss.project, new)
+                        ss.pop("source_schemas", None)
+                        ss.pop("sdb_pw", None)  # forget the typed password
+                        ss.sdb_msg = ("success", f"Created connection `{made['connection']}` and catalog `{made['catalog']}`. "
+                                                 "Press *Test connection* to check Databricks can reach the database.")
+                        st.rerun()
+            if b2.button("🔎 Test connection", width="stretch", disabled=not connected):
+                with st.spinner("Asking Databricks to read the database's schema list..."):
+                    try:
+                        ss.source_schemas = sd.test_connection(sdb["catalog"], Warehouse(cfg))
+                        st.success(f"Databricks reached the database: {len(ss.source_schemas)} schema(s) found.")
+                    except (SqlError, ValueError) as e:
+                        ss.pop("source_schemas", None)
+                        st.error(f"Databricks could not read the database: {e}")
+                        st.caption("Check the server, port, database and login, and that the database accepts connections "
+                                   "from Databricks (firewall allow-list, VPN or private link - usually an IT change).")
+            if b3.button("🗑 Remove connection", width="stretch", disabled=not connected):
                 try:
-                    ss.workspace = h.list_workspace(profile)
-                except Exception as e:  # SDK raises many types; show the message
-                    ss.workspace = None
-                    st.error(f"Could not reach the workspace: {e}")
-    chosen_host = (by_name.get(profile) or {}).get("host", "")
-    project_host = str(dbx.get("host") or "")
-    if ss.workspace and ss.workspace.get("profile") == profile:
-        st.success(f"Connected as **{ss.workspace['user']}** on **{ss.workspace['host']}**")
-    if project_host and chosen_host and project_host.rstrip("/").lower() != chosen_host.rstrip("/").lower():
-        st.error(f"This project belongs to **{project_host}**, but the selected login is for **{chosen_host}**. "
-                 "Pick the login for the project's workspace. Saving will move the project to the selected workspace.")
-    if by_name.get(profile, {}).get("valid") is False:
-        st.warning("This login has expired. Sign in again below with the same profile name.")
-
-    with st.expander("Connect to another workspace (sign in)"):
-        st.caption("Opens a browser on this computer to sign in. The login is saved in this user's ~/.databrickscfg; "
-                   "WishBridge never sees the password.")
-        n1, n2, n3 = st.columns([3, 2, 1])
-        new_host = n1.text_input("Workspace URL", placeholder="https://adb-1234567890.12.azuredatabricks.net")
-        new_profile = n2.text_input("Profile name", placeholder="CLIENT_ACME")
-        n3.write("")
-        if n3.button("Sign in"):
-            with st.spinner("Finish signing in in the browser window..."):
-                ok, msg = h.sign_in(new_host, new_profile)
-            (st.success if ok else st.error)(msg)
-            if ok:
-                ss.profiles = h.list_profiles()
-                ss.pending_profile = new_profile.strip()
-                st.rerun()
-
-    st.markdown("**Target in Databricks** — converted objects are created in this test schema.")
-    c1, c2, c3 = st.columns(3)
-    ws = ss.workspace if ss.workspace and ss.workspace.get("profile") == profile else None
-    with c1:
-        if ws and ws["warehouses"]:
-            wh_ids = [""] + [w["id"] for w in ws["warehouses"]]
-            labels = {"": "(first running warehouse)", **{w["id"]: f"{w['name']} · {w['state']}" for w in ws["warehouses"]}}
-            cur = str(dbx.get("warehouse_id") or "")
-            warehouse = st.selectbox("SQL warehouse", wh_ids, index=wh_ids.index(cur) if cur in wh_ids else 0,
-                                     format_func=lambda i: labels[i])
-        else:
-            warehouse = st.text_input("SQL warehouse ID", value=str(dbx.get("warehouse_id") or ""),
-                                      help="Leave blank to use the first running warehouse.")
-    with c2:
-        cats = [c["name"] for c in ws["catalogs"]] if ws else []
-        cur_cat = dbx.get("catalog", "main")
-        if cats:
-            catalog = st.selectbox("Catalog", cats if cur_cat in cats else [cur_cat] + cats,
-                                   index=(cats if cur_cat in cats else [cur_cat] + cats).index(cur_cat))
-        else:
-            catalog = st.text_input("Catalog", value=cur_cat)
-    with c3:
-        schema = st.text_input("Test schema", value=dbx.get("schema", "wishbridge"))
-    if "prod" in f"{catalog}.{schema}".lower():
-        st.warning("This looks like a production schema. WishBridge will refuse to deploy there.")
-
-    st.markdown("**Schema mapping** — rename source schemas in the converted code (e.g. `dbo` → `main.sales`).")
-    map_df = st.data_editor(pd.DataFrame(h.schema_map_rows(raw) or [{"source_schema": "", "target": ""}]),
-                            num_rows="dynamic", width="stretch", key="schema_map",
-                            column_config={"source_schema": "Source schema", "target": "Target catalog.schema"})
-
-    # --- Source database: where the data lives. Optional - only needed to copy the data.
-    st.markdown("**Source database** — optional, only needed to copy the data. WishBridge creates a Lakehouse "
-                "Federation connection in Databricks; the password goes into Databricks secrets, never into project.yml.")
-    sdb = raw.get("source_db") or {}
-    default_type = sd.DEFAULT_FOR_SOURCE.get(cfg.source.key, "sqlserver")
-    with st.container(border=True):
-        if ss.get("sdb_msg"):
-            kind, msg = ss.pop("sdb_msg")
-            getattr(st, kind)(msg)
-        if default_type is None and not sdb:
-            st.info(sd.NOT_SUPPORTED_HINT)
-        type_keys = list(sd.DB_TYPES)
-        cur_type = sdb.get("type") or default_type or "sqlserver"
-        d1, d2, d3 = st.columns([2, 3, 1])
-        db_type = d1.selectbox("Database type", type_keys, index=type_keys.index(cur_type),
-                               format_func=lambda k: sd.DB_TYPES[k].label, key="sdb_type")
-        dbt = sd.DB_TYPES[db_type]
-        host = d2.text_input("Server (host)", value=sdb.get("host", ""), placeholder="sqlprod01.client.com", key="sdb_host")
-        port = d3.number_input("Port", value=int(sdb.get("port") or dbt.port), step=1, key="sdb_port")
-        d1, d2, d3 = st.columns(3)
-        database = d1.text_input(dbt.catalog_label, value=sdb.get("database", ""), key="sdb_db",
-                                 disabled=dbt.catalog_option is None,
-                                 help=None if dbt.catalog_option else f"Not needed for {dbt.label}: the whole server is exposed.")
-        user = d2.text_input("User (read-only is enough)", value=sdb.get("user", ""), key="sdb_user")
-        password = d3.text_input("Password", type="password", key="sdb_pw",
-                                 help="Sent straight to Databricks secrets; not saved anywhere else.")
-        extra = {opt: st.text_input(label, value=(sdb.get("options") or {}).get(opt, ""), key=f"sdb_{opt}")
-                 for opt, label in dbt.extra}
-        connected = bool(sdb.get("catalog"))
-        b1, b2, b3 = st.columns(3)
-        if b1.button("🔌 Re-create connection" if connected else "🔌 Create connection", width="stretch"):
-            settings = {"type": db_type, "host": host.strip(), "port": int(port), "database": database.strip(),
-                        "user": user.strip(), "options": extra}
-            with st.spinner("Creating the connection in Databricks..."):
-                try:
-                    made = sd.create_connection(cfg, settings, password, Warehouse(cfg))
+                    sd.remove_connection(cfg, Warehouse(cfg))
                 except (SqlError, ValueError) as e:
-                    st.error(f"Connection not created: {e}")
+                    st.error(f"Could not remove it: {e}")
                 else:
                     new = dict(raw)
-                    new["source_db"] = {**settings, "connection": made["connection"], "catalog": made["catalog"]}
-                    new["data"] = {**data, "method": "federation", "source_catalog": made["catalog"]}
+                    new.pop("source_db", None)
+                    new["data"] = {**data, "source_catalog": ""}
                     h.save_raw(ss.project, new)
                     ss.pop("source_schemas", None)
-                    ss.pop("sdb_pw", None)  # forget the typed password
-                    ss.sdb_msg = ("success", f"Created connection `{made['connection']}` and catalog `{made['catalog']}`. "
-                                             "Press *Test connection* to check Databricks can reach the database.")
+                    ss.sdb_msg = ("success", "Connection, catalog and stored password removed from Databricks.")
                     st.rerun()
-        if b2.button("🔎 Test connection", width="stretch", disabled=not connected):
-            with st.spinner("Asking Databricks to read the database's schema list..."):
-                try:
-                    ss.source_schemas = sd.test_connection(sdb["catalog"], Warehouse(cfg))
-                    st.success(f"Databricks reached the database: {len(ss.source_schemas)} schema(s) found.")
-                except (SqlError, ValueError) as e:
-                    ss.pop("source_schemas", None)
-                    st.error(f"Databricks could not read the database: {e}")
-                    st.caption("Check the server, port, database and login, and that the database accepts connections "
-                               "from Databricks (firewall allow-list, VPN or private link - usually an IT change).")
-        if b3.button("🗑 Remove connection", width="stretch", disabled=not connected):
-            try:
-                sd.remove_connection(cfg, Warehouse(cfg))
-            except (SqlError, ValueError) as e:
-                st.error(f"Could not remove it: {e}")
-            else:
-                new = dict(raw)
-                new.pop("source_db", None)
-                new["data"] = {**data, "source_catalog": ""}
-                h.save_raw(ss.project, new)
-                ss.pop("source_schemas", None)
-                ss.sdb_msg = ("success", "Connection, catalog and stored password removed from Databricks.")
-                st.rerun()
-        if connected:
-            st.caption(f"Connected through catalog `{sdb['catalog']}` ({sd.DB_TYPES.get(sdb.get('type'), dbt).label} "
-                       f"at {sdb.get('host')}:{sdb.get('port')}).")
-        if ss.get("source_schemas"):
-            p1, p2 = st.columns([1, 2])
-            schema_pick = p1.selectbox("Schema", ss.source_schemas, key="sdb_schema")
-            if p1.button("List tables"):
-                try:
-                    ss.source_tables = {schema_pick: sd.list_tables(sdb["catalog"], schema_pick, Warehouse(cfg))}
-                except (SqlError, ValueError) as e:
-                    st.error(str(e))
-            available = (ss.get("source_tables") or {}).get(schema_pick, [])
-            picked = p2.multiselect("Tables to copy", available, key="sdb_tables",
-                                    placeholder="Press List tables first" if not available else "Choose tables")
-            if picked and p2.button(f"➕ Add {len(picked)} table(s) to the copy list"):
-                current = h.rows_to_tables(h.table_rows(raw))
-                have = {t if isinstance(t, str) else t["source"] for t in current}
-                current += [f"{schema_pick}.{t}" for t in picked if f"{schema_pick}.{t}" not in have]
-                new = dict(raw)
-                new["data"] = {**data, "tables": current}
-                h.save_raw(ss.project, new)
-                ss.sdb_msg = ("success", f"Added {len(picked)} table(s) from {schema_pick}. Targets follow the schema mapping.")
-                st.rerun()
+            if connected:
+                st.caption(f"Connected through catalog `{sdb['catalog']}` ({sd.DB_TYPES.get(sdb.get('type'), dbt).label} "
+                           f"at {sdb.get('host')}:{sdb.get('port')}).")
+            if ss.get("source_schemas"):
+                p1, p2 = st.columns([1, 2])
+                schema_pick = p1.selectbox("Schema", ss.source_schemas, key="sdb_schema")
+                if p1.button("List tables"):
+                    try:
+                        ss.source_tables = {schema_pick: sd.list_tables(sdb["catalog"], schema_pick, Warehouse(cfg))}
+                    except (SqlError, ValueError) as e:
+                        st.error(str(e))
+                available = (ss.get("source_tables") or {}).get(schema_pick, [])
+                picked = p2.multiselect("Tables to copy", available, key="sdb_tables",
+                                        placeholder="Press List tables first" if not available else "Choose tables")
+                if picked and p2.button(f"➕ Add {len(picked)} table(s) to the copy list"):
+                    current = h.rows_to_tables(h.table_rows(raw))
+                    have = {t if isinstance(t, str) else t["source"] for t in current}
+                    current += [f"{schema_pick}.{t}" for t in picked if f"{schema_pick}.{t}" not in have]
+                    new = dict(raw)
+                    new["data"] = {**data, "tables": current}
+                    h.save_raw(ss.project, new)
+                    ss.sdb_msg = ("success", f"Added {len(picked)} table(s) from {schema_pick}. Targets follow the schema mapping.")
+                    st.rerun()
 
-    st.markdown("**Data to copy**")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        method = st.selectbox("Method", ["federation", "files"], index=["federation", "files"].index(data.get("method", "federation")),
-                              help="federation: read the source through a Lakehouse Federation catalog. files: COPY INTO from a volume.")
-    with c2:
-        if method == "federation":
-            fed_options = [c["name"] for c in ws["catalogs"]] if ws else []
-            cur_src = data.get("source_catalog", "")
-            if fed_options:
-                opts = [""] + fed_options if cur_src in fed_options or not cur_src else ["", cur_src] + fed_options
-                source_catalog = st.selectbox("Source catalog (federation)", opts, index=opts.index(cur_src))
+        st.markdown("**Data to copy**")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            method = st.selectbox("Method", ["federation", "files"], index=["federation", "files"].index(data.get("method", "federation")),
+                                  help="federation: read the source through a Lakehouse Federation catalog. files: COPY INTO from a volume.")
+        with c2:
+            if method == "federation":
+                fed_options = [c["name"] for c in ws["catalogs"]] if ws else []
+                cur_src = data.get("source_catalog", "")
+                if fed_options:
+                    opts = [""] + fed_options if cur_src in fed_options or not cur_src else ["", cur_src] + fed_options
+                    source_catalog = st.selectbox("Source catalog (federation)", opts, index=opts.index(cur_src))
+                else:
+                    source_catalog = st.text_input("Source catalog (federation)", value=cur_src)
+                files_root, file_format = data.get("files_root", ""), data.get("file_format", "PARQUET")
             else:
-                source_catalog = st.text_input("Source catalog (federation)", value=cur_src)
-            files_root, file_format = data.get("files_root", ""), data.get("file_format", "PARQUET")
-        else:
-            files_root = st.text_input("Files root (volume path)", value=data.get("files_root", ""),
-                                       placeholder="/Volumes/main/landing/acme")
-            file_format = st.selectbox("File format", ["PARQUET", "CSV", "JSON", "AVRO", "ORC"],
-                                       index=["PARQUET", "CSV", "JSON", "AVRO", "ORC"].index(str(data.get("file_format", "PARQUET")).upper()))
-            source_catalog = data.get("source_catalog", "")
-    with c3:
-        load_mode = st.selectbox("Load mode", ["append", "overwrite"], index=["append", "overwrite"].index(data.get("mode", "append")))
-    tables_df = st.data_editor(pd.DataFrame(h.table_rows(raw) or [{"source": "", "target": ""}]),
-                               num_rows="dynamic", width="stretch", key="tables",
-                               column_config={"source": "Source table (schema.table)",
-                                              "target": "Target (optional catalog.schema.table)"})
+                files_root = st.text_input("Files root (volume path)", value=data.get("files_root", ""),
+                                           placeholder="/Volumes/main/landing/acme")
+                file_format = st.selectbox("File format", ["PARQUET", "CSV", "JSON", "AVRO", "ORC"],
+                                           index=["PARQUET", "CSV", "JSON", "AVRO", "ORC"].index(str(data.get("file_format", "PARQUET")).upper()))
+                source_catalog = data.get("source_catalog", "")
+        with c3:
+            load_mode = st.selectbox("Load mode", ["append", "overwrite"], index=["append", "overwrite"].index(data.get("mode", "append")))
+        tables_df = st.data_editor(pd.DataFrame(h.table_rows(raw) or [{"source": "", "target": ""}]),
+                                   num_rows="dynamic", width="stretch", key="tables",
+                                   column_config={"source": "Source table (schema.table)",
+                                                  "target": "Target (optional catalog.schema.table)"})
 
     with st.expander("AI suggestions and estimates"):
         ai_on = st.checkbox("Ask Claude for fix suggestions during convert (needs ANTHROPIC_API_KEY; sends code, not data)",
