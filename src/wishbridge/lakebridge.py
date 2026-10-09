@@ -90,6 +90,14 @@ def transpile(cfg: ProjectConfig, output_folder: Path, error_file: Path) -> str:
         args += ["--target-technology", cfg.target_technology]
     out = run(cfg, *args, strict=False)
     if not output_folder.exists() or not any(p.is_file() for p in output_folder.rglob("*")):
+        if cfg.source.key == "informatica-cloud" and ("INFACLOUD" in out or "registered its transpile capability" in out):
+            raise LakeBridgeError(
+                "LakeBridge cannot convert Informatica Cloud yet (two LakeBridge issues): its BladeBridge converter "
+                "only generates PySpark for Informatica Cloud but is started without that choice ('No mapping for "
+                "source tech INFACLOUD and target tech SQL'), and the transpiler reads the .zip export packages as "
+                "text and skips them. Analyze works. Until Databricks fixes this, rebuild the mappings by hand in "
+                "overrides/ (WishBridge still deploys, runs and reconciles them) or ask your Databricks contact "
+                "about a LakeBridge update.")
         raise _fail("transpile", out)
     return out
 

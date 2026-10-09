@@ -78,6 +78,8 @@ TRANSPILER_DIRS = {"morph": "databricks-morph-plugin", "bladebridge": "bladebrid
 
 # ETL tools: BladeBridge asks which code to generate; WishBridge defaults to SPARKSQL.
 ETL_SOURCES = frozenset({"datastage", "informatica", "informatica-cloud", "ssis"})
+# What BladeBridge can generate for each ETL tool (tech_mapper_main.json): Informatica Cloud only to PySpark.
+ETL_TARGETS = {"datastage": "SPARKSQL", "informatica": "SPARKSQL", "informatica-cloud": "PYSPARK", "ssis": "SPARKSQL"}
 
 # Source dialects each LakeBridge converter accepts (from each transpiler's lib/config.yml).
 CONVERTER_DIALECTS = {
@@ -202,7 +204,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         transpiler=transpiler,
         auto_converter=auto_converter,
         source_db=dict(raw.get("source_db") or {}),
-        target_technology=str(raw.get("target_technology") or ("SPARKSQL" if source.key in ETL_SOURCES else "")).upper(),
+        target_technology=str(raw.get("target_technology") or ETL_TARGETS.get(source.key, "")).upper(),
         input_dir=(base / raw.get("input", "input")).resolve(),
         output_dir=(base / raw.get("output", "output")).resolve(),
         overrides_dir=(base / raw.get("overrides", "overrides")).resolve(),

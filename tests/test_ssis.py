@@ -86,3 +86,41 @@ def test_etl_analyzer_workbook_lists_jobs(tmp_path):
     assert [p["name"] for p in r["programs"]] == ["P.LoadA", "P.LoadB"]
     assert r["complexity"] == {"LOW": 1, "HIGH": 1}
     assert r["totals"]["Embedded SQL statements"] == 1
+
+
+def test_etl_export_formats_are_detected_and_explained(tmp_path):
+    import zipfile
+
+    import pytest
+
+    from wishbridge.config import ConfigError, load_config
+    from wishbridge.discover import detect_source
+    from wishbridge.staging import staged
+
+    ds = tmp_path / "ds"
+    ds.mkdir()
+    (ds / "j.xml").write_text('<?xml version="1.0"?>\n<DSExport><Header/></DSExport>\n', encoding="utf-8")
+    assert detect_source(ds).source == "datastage"
+
+    iics = tmp_path / "iics"
+    iics.mkdir()
+    with zipfile.ZipFile(iics / "m.zip", "w") as z:
+        z.writestr("exportMetadata.v2.json", "{}")
+    assert detect_source(iics).source == "informatica-cloud"
+
+    def project(name, source, files):
+        code = tmp_path / name
+        code.mkdir()
+        for f in files:
+            (code / f).write_text("x", encoding="utf-8")
+        p = tmp_path / f"{name}.yml"
+        p.write_text(f"source: {source}\ninput: '{code.as_posix()}'\noutput: '{(tmp_path / (name + '_out')).as_posix()}'\n",
+                     encoding="utf-8")
+        return load_config(p)
+
+    with pytest.raises(ConfigError, match="exported as XML"):
+        staged(project("dsx", "datastage", ["j.dsx"]))
+    with pytest.raises(ConfigError, match="export packages"):
+        staged(project("infaxml", "informatica-cloud", ["m.xml"]))
+    cloud = load_config(tmp_path / "infaxml.yml")
+    assert cloud.target_technology == "PYSPARK"  # BladeBridge generates Informatica Cloud only as PySpark

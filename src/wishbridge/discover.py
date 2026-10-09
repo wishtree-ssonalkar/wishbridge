@@ -17,7 +17,7 @@ import yaml
 
 from .config import SOURCES, load_config, render_template
 
-CODE_EXTENSIONS = {".sql", ".ddl", ".prc", ".pls", ".pks", ".pkb", ".bteq", ".btq", ".xml", ".dsx", ".isx", ".dtsx"}
+CODE_EXTENSIONS = {".sql", ".ddl", ".prc", ".pls", ".pks", ".pkb", ".bteq", ".btq", ".xml", ".dsx", ".isx", ".dtsx", ".zip"}
 SKIP_DIRS = {".git", ".github", ".vs", ".vscode", ".idea", "bin", "obj", "node_modules", "__pycache__", ".venv", "output"}
 SAMPLE_FILES = 300          # files read for keyword detection
 SAMPLE_BYTES = 20_000       # bytes read per file
@@ -92,7 +92,23 @@ def _project_markers(folder: Path) -> Detection | None:
         head = xml.read_text(encoding="utf-8", errors="ignore")[:4000]
         if "<POWERMART" in head:
             return Detection("informatica", "high", f"Informatica PowerCenter export ({xml.name})")
+        if "<DSExport" in head:
+            return Detection("datastage", "high", f"DataStage XML export ({xml.name})")
+    for z in list(folder.rglob("*.zip"))[:20]:
+        if _is_iics_export(z):
+            return Detection("informatica-cloud", "high", f"Informatica Cloud (IICS) export package ({z.name})")
     return None
+
+
+def _is_iics_export(path: Path) -> bool:
+    """Informatica Cloud exports are .zip packages with an exportMetadata JSON file."""
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(path) as z:
+            return any(Path(n).name.lower().startswith("exportmetadata") for n in z.namelist())
+    except (zipfile.BadZipFile, OSError):
+        return False
 
 
 def detect_source(folder: str | Path) -> Detection:

@@ -15,12 +15,14 @@ import shutil
 from dataclasses import replace
 from pathlib import Path
 
-from .config import ETL_SOURCES, ProjectConfig
+from .config import ETL_SOURCES, ConfigError, ProjectConfig
 
 TSQL_SOURCES = frozenset({"mssql", "synapse"})
 
 SQL_SUFFIXES = {".sql", ".ddl", ".prc", ".pls", ".pks", ".pkb", ".bteq", ".btq"}
 ETL_SUFFIXES = SQL_SUFFIXES | {".xml", ".dsx", ".isx", ".dtsx"}
+# Informatica Cloud is exported as .zip packages (LakeBridge's analyzer reads only those).
+EXTRA_SUFFIXES = {"informatica-cloud": {".zip"}}
 
 
 def read_source(path: Path) -> str:
@@ -39,7 +41,7 @@ def source_files(cfg: ProjectConfig) -> list[Path]:
     """Relative paths of the code files LakeBridge should see (build and tool folders excluded)."""
     from .discover import _walk
 
-    allowed = ETL_SUFFIXES if cfg.source.key in ETL_SOURCES else SQL_SUFFIXES
+    allowed = (ETL_SUFFIXES if cfg.source.key in ETL_SOURCES else SQL_SUFFIXES) | EXTRA_SUFFIXES.get(cfg.source.key, set())
     if not cfg.input_dir.exists():
         return []
     return sorted(p.relative_to(cfg.input_dir) for p in _walk(cfg.input_dir) if p.suffix.lower() in allowed)
@@ -77,6 +79,21 @@ def prepare_tsql(text: str) -> tuple[str, list[dict[str, str]]]:
     return text, list(notes.values())
 
 
+def check_export_format(cfg: ProjectConfig, files: list[Path]) -> None:
+    """LakeBridge reads only some export formats; say which one to produce instead of failing later."""
+    suffixes = {f.suffix.lower() for f in files}
+    if cfg.source.key == "datastage" and ".xml" not in suffixes and suffixes & {".dsx", ".isx"}:
+        raise ConfigError(
+            "LakeBridge reads DataStage jobs exported as XML, and this folder has only .dsx/.isx exports. "
+            "In DataStage Designer select the jobs, choose Export > DataStage Components, tick "
+            "'Export job designs' and set the file type to XML (.xml), then put the .xml files here.")
+    if cfg.source.key == "informatica-cloud" and ".zip" not in suffixes:
+        raise ConfigError(
+            "LakeBridge reads Informatica Cloud (IICS) assets as export packages (.zip). In Informatica Cloud "
+            "Data Integration select the mappings / taskflows, choose Export, download the .zip and put it here "
+            "(do not unzip it). PowerCenter XML exports belong to the source 'informatica'.")
+
+
 def prep_manifest(cfg: ProjectConfig) -> Path:
     return cfg.output_dir / "logs" / "prepared.json"
 
@@ -86,6 +103,7 @@ def staged(cfg: ProjectConfig) -> ProjectConfig:
     files = source_files(cfg)
     if not files:
         raise FileNotFoundError(f"No source code files in {cfg.input_dir}")
+    check_export_format(cfg, files)
     dest = cfg.output_dir / "staged_input"
     if dest.exists():
         shutil.rmtree(dest)
