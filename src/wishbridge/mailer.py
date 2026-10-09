@@ -42,10 +42,33 @@ def _ps(text: str) -> str:
     return "'" + text.replace("'", "''") + "'"
 
 
-def open_mail_draft(to: list[str], cc: list[str], subject: str, body: str, attachment: Path) -> tuple[bool, str]:
-    """Open a new e-mail with everything filled in and the zip attached. Nothing is sent: the person at the
-    computer checks it and presses Send in their mail program."""
-    attachment = Path(attachment).resolve()
+def onedrive_folder() -> Path | None:
+    """The OneDrive folder synced on this computer - the business one first."""
+    for var in ("OneDriveCommercial", "OneDrive", "OneDriveConsumer"):
+        v = os.environ.get(var)
+        if v and Path(v).is_dir():
+            return Path(v)
+    return None
+
+
+def copy_to_onedrive(package: Path) -> Path:
+    """Put the zip in OneDrive/WishBridge (OneDrive uploads it) and return where it is."""
+    import shutil
+
+    base = onedrive_folder()
+    if base is None:
+        raise FileNotFoundError("OneDrive is not set up on this computer")
+    dest = base / "WishBridge" / Path(package).name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(package, dest)
+    return dest
+
+
+def open_mail_draft(to: list[str], cc: list[str], subject: str, body: str,
+                    attachment: Path | None = None) -> tuple[bool, str]:
+    """Open a new e-mail with everything filled in (and the zip attached, when given). Nothing is sent: the person
+    at the computer checks it and presses Send in their mail program."""
+    attachment = Path(attachment).resolve() if attachment else None
     if outlook_available():
         script = "\n".join([
             "$ErrorActionPreference = 'Stop'",
@@ -55,22 +78,23 @@ def open_mail_draft(to: list[str], cc: list[str], subject: str, body: str, attac
             f"$m.CC = {_ps('; '.join(cc))}",
             f"$m.Subject = {_ps(subject)}",
             f"$m.Body = {_ps(body)}",
-            f"[void]$m.Attachments.Add({_ps(str(attachment))})",
-            "$m.Display()",
-        ])
+        ] + ([f"[void]$m.Attachments.Add({_ps(str(attachment))})"] if attachment else []) + ["$m.Display()"])
         try:
             p = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
                                capture_output=True, text=True, timeout=120)
         except (OSError, subprocess.TimeoutExpired) as e:
             return False, str(e)
         if p.returncode == 0:
-            return True, "The e-mail is open in Outlook with the zip attached - check it and press Send."
+            return True, ("The e-mail is open in Outlook" + (" with the zip attached" if attachment else "")
+                          + " - check it and press Send.")
         err = (p.stderr or p.stdout).strip().splitlines()
         return False, err[-1][:300] if err else "Outlook could not open the message."
     # No Outlook: the default mail program with To / CC / subject / text; mailto cannot carry attachments,
     # so the zip's folder is opened next to it to drag the file in.
     query = urlencode({"cc": ",".join(cc), "subject": subject, "body": body}, quote_via=quote)
     webbrowser.open(f"mailto:{','.join(to)}?{query}")
+    if attachment is None:
+        return True, "Your mail program is open with the message filled in - check it and press Send."
     if os.name == "nt":
         subprocess.Popen(["explorer", "/select,", str(attachment)])
     else:
@@ -87,9 +111,11 @@ def invalid_addresses(addresses: list[str]) -> list[str]:
     return [a for a in addresses if not EMAIL.match(a)]
 
 
-def default_message(project: str, state: dict[str, Any], zip_name: str) -> tuple[str, str]:
-    """Subject and plain-text body the client's team can paste when they share the zip."""
-    lines = ["Hello,", "", f"Please find attached the WishBridge assessment package for {project} ({zip_name}).", ""]
+def default_message(project: str, state: dict[str, Any], zip_name: str, link: str = "") -> tuple[str, str]:
+    """Subject and plain-text body for sharing the zip - as an attachment, or as a OneDrive link."""
+    intro = (f"Please download the WishBridge assessment package for {project} ({zip_name}) from OneDrive:\n{link}"
+             if link else f"Please find attached the WishBridge assessment package for {project} ({zip_name}).")
+    lines = ["Hello,", "", intro, ""]
     ov, fit, a, c = (state.get(k) or {} for k in ("overview", "fit", "analyze", "convert"))
     if ov:
         parts = [f"{ov.get('files')} files", f"{ov.get('lines', 0):,} lines"] + [

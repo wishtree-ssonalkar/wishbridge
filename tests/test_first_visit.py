@@ -187,3 +187,27 @@ def test_mail_draft_is_opened_never_sent(tmp_path, monkeypatch):
     ok, msg = mailer.open_mail_draft(["me@wishtreetech.com"], [], "WishBridge assessment", "Hello", z)
     assert ok and opened[0].startswith("mailto:me@wishtreetech.com?") and "subject=WishBridge%20assessment" in opened[0]
     assert popped and "drag the zip" in msg
+
+
+def test_big_zips_go_through_onedrive(tmp_path, monkeypatch):
+    from wishbridge import mailer
+
+    od = tmp_path / "OneDrive - Client"
+    od.mkdir()
+    monkeypatch.setenv("OneDriveCommercial", str(od))
+    z = tmp_path / "big.zip"
+    z.write_bytes(b"PK" * 10)
+    assert mailer.onedrive_folder() == od
+    dest = mailer.copy_to_onedrive(z)
+    assert dest == od / "WishBridge" / "big.zip" and dest.read_bytes() == z.read_bytes()
+
+    calls = []
+
+    class Done:
+        returncode, stdout, stderr = 0, "", ""
+
+    monkeypatch.setattr(mailer, "outlook_available", lambda: True)
+    monkeypatch.setattr(mailer.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or Done())
+    subject, body = mailer.default_message("acme", {}, "big.zip", "https://1drv.ms/u/abc")
+    ok, msg = mailer.open_mail_draft(["me@wishtreetech.com"], [], subject, body)  # no attachment: the link is in the text
+    assert ok and "Attachments.Add" not in calls[-1][-1] and "https://1drv.ms/u/abc" in calls[-1][-1]

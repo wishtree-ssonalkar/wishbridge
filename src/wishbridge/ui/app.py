@@ -851,9 +851,6 @@ if STEP == "send":
         st.markdown("Everything from this visit is in **one zip file**. WishBridge does not send it anywhere: "
                     "the client's team shares it with Wishtree the way they prefer (e-mail, OneDrive, SharePoint...).")
         st.markdown(f"**File:** `{pkg.name}` · {size_mb:.1f} MB  \n**Location:** `{pkg}`")
-        if size_mb > mailer.MAX_ATTACHMENT_MB:
-            st.warning(f"The zip is larger than {mailer.MAX_ATTACHMENT_MB} MB - most mail servers refuse that. Share it "
-                       "through OneDrive / SharePoint / a file share instead.")
         b1, b2 = st.columns(2)
         if b1.button("📂 Show the zip in its folder"):
             if os.name == "nt":
@@ -880,21 +877,59 @@ if STEP == "send":
             new["share"] = {"to": to, "cc": cc}
             h.save_raw(ss.project, new)  # remembered for this project
 
-        subject, body = mailer.default_message(cfg.name, load_state(cfg), pkg.name)
-        st.markdown("**Ready-made message for the client's team** (copy with the button at the top right of each box)")
+        too_big = size_mb > mailer.MAX_ATTACHMENT_MB
+        link = ""
+        if too_big:
+            st.markdown("**Share it through OneDrive**")
+            st.warning(f"The zip is {size_mb:.0f} MB - too big for e-mail (the usual limit is {mailer.MAX_ATTACHMENT_MB} MB). "
+                       "Share it through OneDrive and send the link instead.")
+            od = mailer.onedrive_folder()
+            if od is not None:
+                st.markdown("1. Press **Put the zip in OneDrive** - it goes to the *WishBridge* folder and OneDrive uploads it.\n"
+                            "2. In the folder that opens, right-click the zip → **Share** → **Copy link**.\n"
+                            "3. Paste the link below and send the e-mail.")
+                if st.button("☁ Put the zip in OneDrive"):
+                    try:
+                        with st.spinner("Copying to OneDrive..."):
+                            dest = mailer.copy_to_onedrive(pkg)
+                        if os.name == "nt":
+                            subprocess.Popen(["explorer", "/select,", str(dest)])
+                        st.success(f"Copied to `{dest}`. OneDrive is uploading it - share it once the upload has finished.")
+                    except OSError as e:
+                        st.error(f"Could not copy it: {e}")
+            else:
+                st.markdown("OneDrive is not set up on this computer:\n"
+                            "1. Press **Open OneDrive** and sign in with the company account.\n"
+                            "2. Upload the zip (use *Show the zip in its folder* above to find it).\n"
+                            "3. Share it → **Copy link**, paste the link below and send the e-mail.")
+                st.link_button("☁ Open OneDrive", "https://www.office.com/launch/onedrive")
+            link = st.text_input("OneDrive link to the zip", placeholder="https://...sharepoint.com/... or https://1drv.ms/...",
+                                 key="share_link").strip()
+            if link and not link.lower().startswith("https://"):
+                st.error("The link should start with https://")
+
+        subject, body = mailer.default_message(cfg.name, load_state(cfg), pkg.name, link)
+        st.markdown("**Ready-made message for the client's team** (copy with the button at the top right of the box)")
         handover = (f"To: {', '.join(to) or '<Wishtree e-mail>'}" + (f"\nCC: {', '.join(cc)}" if cc else "")
-                    + f"\nSubject: {subject}\nAttach: {pkg}\n\n{body}")
+                    + f"\nSubject: {subject}" + ("" if too_big else f"\nAttach: {pkg}") + f"\n\n{body}")
         st.code(handover, language=None)
         ss[f"sent:{ss.project}"] = True
 
         st.divider()
-        if st.button("📧 Send mail with the zip attached", type="primary", disabled=not to or bool(bad),
-                     help="Opens a new e-mail with To, CC, subject, message and the zip already attached. "
-                          "Nothing is sent until you check it and press Send in your mail program."):
-            ok, msg = mailer.open_mail_draft(to, cc, subject, body, pkg)
+        if not too_big:
+            label, ready, attach = "📧 Send mail with the zip attached", bool(to) and not bad, pkg
+            hint = "Opens a new e-mail with To, CC, subject, message and the zip attached."
+        else:
+            label, ready, attach = "📧 Send mail with the OneDrive link", bool(to) and not bad and link.startswith("https://"), None
+            hint = "Opens a new e-mail with To, CC, subject and the message including the OneDrive link."
+        if st.button(label, type="primary", disabled=not ready,
+                     help=hint + " Nothing is sent until you check it and press Send in your mail program."):
+            ok, msg = mailer.open_mail_draft(to, cc, subject, body, attach)
             (st.success if ok else st.error)(msg)
         if not to:
             st.caption("Enter the Wishtree e-mail in *Send to* above to use this button.")
+        elif too_big and not link:
+            st.caption("Paste the OneDrive link above to use this button.")
 
 
 # ----------------------------------------------------------------- results

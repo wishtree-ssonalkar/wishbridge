@@ -108,3 +108,34 @@ def test_assessment_ends_with_sharing_the_zip(project):
     steps = [b.label.replace("✓ ", "") for b in at.button if b.key and b.key.startswith("step-")]
     assert steps == ["1 · Settings", "2 · Code", "3 · Run", "4 · Share the zip"]
     assert not next(b for b in at.button if b.label.startswith("Next: add the code")).disabled  # nothing else needed
+
+
+def test_share_page_switches_to_onedrive_for_big_zips(project, monkeypatch):
+    import zipfile
+
+    from wishbridge import mailer
+    from wishbridge.config import load_config
+    from wishbridge.state import save_step
+
+    text = (project / "project.yml").read_text(encoding="utf-8")
+    (project / "project.yml").write_text(text + "\nphase: assessment\n", encoding="utf-8")
+    cfg = load_config(project / "project.yml")
+    save_step(cfg, "fit", {"objects": [], "verdict": "warehouse", "headline": "Good fit"})
+    pkg = cfg.out("review_package", "demo.zip")
+    with zipfile.ZipFile(pkg, "w") as z:
+        z.writestr("README.txt", "x")
+
+    at = ready_app(project)
+    at.session_state["go_step"] = "send"
+    at.run()
+    labels = [b.label for b in at.button]
+    assert "📧 Send mail with the zip attached" in labels  # small zip: e-mail
+
+    monkeypatch.setattr(mailer, "MAX_ATTACHMENT_MB", 0)  # pretend it is too big for e-mail
+    at = ready_app(project)
+    at.session_state["go_step"] = "send"
+    at.run()
+    labels = [b.label for b in at.button]
+    assert "📧 Send mail with the OneDrive link" in labels and "📧 Send mail with the zip attached" not in labels
+    assert any("OneDrive" in w.value for w in at.warning)
+    assert next(b for b in at.button if "OneDrive link" in b.label).disabled  # no link pasted yet
