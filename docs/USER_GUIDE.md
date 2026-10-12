@@ -115,6 +115,12 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
 - **Start it:** double-click `Start WishBridge.cmd` in the WishBridge folder (right-click → *Send to → Desktop*
   to make a desktop shortcut), or run `wishbridge ui`. It opens at http://localhost:8501 and runs only on
   your computer; close the black window to stop it.
+- **First page - what do you want to do?** Choose **Assessment** or **Migration** first (on the page or at the top
+  of the sidebar). The sidebar then offers the ways to start that fit:
+  - *Assessment*: **Open a folder** (the client's code) or **Start from the database** (no code folder: create
+    the project, then read the tables and code in *Code › Read from the database*).
+  - *Migration*: **Open the assessment zip**, **Open a project** or **Create new**.
+  The project you open is set to the chosen phase; changing the phase in Settings changes the choice too.
 - **Sidebar:** *Open a folder* takes either a WishBridge project or **any folder of client code** — a Git
   repository, a Visual Studio database project, an ETL export. For client code the app detects the source system
   (from `.sqlproj`, `.dtsx`, Informatica or DataStage XML, Informatica Cloud `.zip`, or the SQL keywords), finds
@@ -122,7 +128,7 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   `C:\migrations`. WishBridge keeps its own working copy of the code inside the project (with a fingerprint of every
   file, in `code_received.json`), so the client's folder is needed only once; the app does not show this. The
   client's folder is never written to.
-  New projects start in the **assessment phase**. *Create new* makes an empty project to upload code into.
+  New projects start in the phase chosen on the first page. *Create new* makes an empty project to upload code into.
   Same from the command line: `wishbridge init acme --code C:\client-repo --dir C:\migrations`.
 - **1 · Settings:** the **Phase** comes first and saves as soon as you change it.
   - *Assessment* (offline): only the source system and the converter (leave it on *Automatic*: it picks the right

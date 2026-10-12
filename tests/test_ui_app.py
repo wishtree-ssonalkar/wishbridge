@@ -43,11 +43,40 @@ def test_system_check_comes_first():
 def test_welcome_after_the_check():
     at = ready_app().run()
     assert not at.exception
+    # first: assessment or migration; nothing opens before that
+    assert any(m.value == "What do you want to do?" for m in at.subheader)
+    assert next(t for t in at.text_input if t.label == "Project or client code folder").disabled
+    next(b for b in at.button if b.label == "Start an assessment").click().run()
+    assert at.session_state["goal"] == "assessment"
+    starts = next(r for r in at.radio if r.key == "start_assessment")
+    assert starts.options == ["Open a folder", "Start from the database"]
     assert next(b for b in at.button if b.label == "Open").disabled  # nothing typed yet
     next(t for t in at.text_input if t.label == "Project or client code folder").set_value(r"C:\code").run()
     assert not next(b for b in at.button if b.label == "Open").disabled
     assert any("warehouse code" in i.value for i in at.info)
     assert any("SQL Server used as a data warehouse" in str(t.value) for t in at.table)
+
+
+def test_migration_starts_from_the_assessment_zip():
+    at = ready_app().run()
+    next(b for b in at.button if b.label == "Start a migration").click().run()
+    assert not at.exception
+    starts = next(r for r in at.radio if r.key == "start_migration")
+    assert starts.options == ["Open the assessment zip", "Open a project", "Create new"]
+    assert any("Open the assessment zip" in i.value for i in at.info)
+
+
+def test_opening_a_project_applies_the_chosen_goal(project):
+    import yaml
+
+    at = ready_app(project)
+    at.session_state["goal"] = "assessment"  # chosen on the first page; the demo project is in migration
+    at.run()
+    assert not at.exception
+    raw = yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))
+    assert raw["phase"] == "assessment"
+    steps = [b.label for b in at.button if b.key and b.key.startswith("step-")]
+    assert steps[-1].endswith("Share the zip")
 
 
 def test_steps_open_in_order(project):

@@ -44,6 +44,27 @@ def project_ok() -> bool:
     return bool(ss.project) and h.project_file(ss.project).exists()
 
 
+# ----------------------------------------------------------------- what to do
+
+GOALS = {"assessment": "🔍 Assessment", "migration": "🚚 Migration"}
+# Ways to start, per goal (label -> the form that does it)
+START = {
+    "assessment": {"Open a folder": "folder", "Start from the database": "new"},
+    "migration": {"Open the assessment zip": "package", "Open a project": "folder", "Create new": "new"},
+}
+
+if project_ok() and "goal" not in ss:  # a project opened before (or by a test): its phase is the goal
+    try:
+        ss.goal = str((h.read_raw(ss.project) or {}).get("phase") or "migration").lower()
+        ss.goal_applied = (ss.project, ss.goal)
+    except Exception:  # unreadable settings are reported further down
+        pass
+
+
+def choose_goal(goal: str) -> None:
+    ss.goal = goal
+
+
 # ----------------------------------------------------------------- sidebar
 
 SETUP_STATUS = Path.home() / ".wishbridge" / "setup_status.json"
@@ -122,12 +143,19 @@ def _setup_progress() -> None:
 with st.sidebar:
     st.markdown(f"### 🌉 Wishtree WishBridge\nData warehouse migration to Databricks · v{__version__}")
     system_check()
-    locked = not system_ready()
-    if locked:
+    goal = ss.get("goal")
+    st.radio("I want to do", list(GOALS), format_func=GOALS.get, key="goal", index=None, horizontal=True,
+             help="Assessment: at the client, offline - read and assess the code, share one zip. Migration: deploy to "
+                  "Databricks, copy the data and prove it matches.")
+    locked = not system_ready() or not goal
+    if not system_ready():
         st.caption("🔒 Opening a project is available once the system check is done and the computer is ready.")
-    mode = st.radio("Project", ["Open a folder", "Open a package", "Create new"], horizontal=True,
-                    label_visibility="collapsed", disabled=locked)
-    if mode == "Open a folder":
+    elif not goal:
+        st.caption("🔒 Choose **Assessment** or **Migration** first.")
+    ways = START[goal or "assessment"]
+    mode = ways[st.radio("Project", list(ways), horizontal=True, label_visibility="collapsed", disabled=locked,
+                         key=f"start_{goal}")]
+    if mode == "folder":
         folder = st.text_input("Project or client code folder", value=ss.project, disabled=locked,
                                placeholder=r"C:\migrations\acme-dw  or  C:\client-repo",
                                help="A WishBridge project opens directly. Any other folder of SQL/ETL code (a repository, "
@@ -152,9 +180,9 @@ with st.sidebar:
                 if st.button(f"📂 {Path(p).name}", key=f"open-{p}", width="stretch", disabled=locked):
                     ss.project, ss.workspace = p, None
                     st.rerun()
-    elif mode == "Open a package":
-        st.caption("A zip saved with *Assess and save everything* (or `wishbridge package`) on any computer. "
-                   "It becomes a project here, ready to review and fix.")
+    elif mode == "package":
+        st.caption("The zip saved by the assessment (*Assess and save everything*) on any computer. "
+                   "It becomes a project here, ready to migrate.")
         pkg_up = st.file_uploader("Package (.zip)", type=["zip"], key="pkg_upload", disabled=locked)
         pkg_parent = st.text_input("Create the project in", value=r"C:\migrations", key="pkg_parent", disabled=locked)
         if st.button("Open package", width="stretch", disabled=locked or pkg_up is None or not pkg_parent.strip()):
@@ -171,6 +199,9 @@ with st.sidebar:
             except (ValueError, OSError, ConfigError) as e:
                 st.error(str(e))
     else:
+        if goal == "assessment":
+            st.caption("No code folder? Create the project here, then read the tables and code straight from the "
+                       "client's database in **Code › Read from the database** (read-only, no data).")
         name = st.text_input("Project name :red[*]", placeholder="acme-dw", disabled=locked, key="new_name")
         source = st.selectbox("Source system :red[*]", list(SOURCES), format_func=lambda k: SOURCES[k].label, disabled=locked)
         parent = st.text_input("Create in folder :red[*]", value=r"C:\migrations", disabled=locked, key="new_parent")
@@ -203,10 +234,36 @@ def show_welcome() -> None:
     show_scope()
 
 
+def show_goal_choice() -> None:
+    """First page: assessment or migration. The sidebar then offers the ways to start that fit."""
+    st.subheader("What do you want to do?")
+    c1, c2 = st.columns(2)
+    cards = {
+        "assessment": (c1, "At the client, offline (nothing goes to Databricks):\n"
+                           "- open the client's code folder, **or** read the tables and code straight from their "
+                           "database (read-only, no data)\n"
+                           "- check it really is a data warehouse, size it and convert it\n"
+                           "- share everything as one zip"),
+        "migration": (c2, "Move it to Databricks:\n"
+                          "- usually starts from the **assessment zip**\n"
+                          "- deploy the tables and code to the client's workspace\n"
+                          "- connect the source database, map the tables and copy the data\n"
+                          "- prove the data matches"),
+    }
+    for key, (col, text) in cards.items():
+        with col.container(border=True):
+            chosen = ss.get("goal") == key
+            st.markdown(f"### {GOALS[key]}" + (" ✅" if chosen else ""))
+            st.markdown(text)
+            st.button("Selected" if chosen else f"Start {'an assessment' if key == 'assessment' else 'a migration'}",
+                      key=f"goal-{key}", type="primary" if chosen else "secondary", width="stretch",
+                      on_click=choose_goal, args=(key,), disabled=chosen)
+
+
 if not system_ready():
-    st.info("Start with **Step 0 · System check** in the sidebar: *Check this computer*, and *Install missing* if "
-            "anything is not there. Then open the client's warehouse code (a project folder, a repository, a database "
-            "project or an ETL export) or create a new project.")
+    show_goal_choice()
+    st.info("Then **Step 0 · System check** in the sidebar: *Check this computer*, and *Install missing* if "
+            "anything is not there.")
     show_welcome()
     st.stop()
 
@@ -263,8 +320,15 @@ if info and not project_ok():
     st.stop()
 
 if not project_ok():
-    st.info("Open the client's warehouse code (a project folder, a repository, a database project or an ETL export) "
-            "or create a new project in the sidebar to begin.")
+    show_goal_choice()
+    goal = ss.get("goal")
+    if goal == "assessment":
+        st.info("Next, in the sidebar: **Open a folder** with the client's warehouse code (a project folder, a "
+                "repository, a database project or an ETL export), or **Start from the database** when there is no "
+                "code folder.")
+    elif goal == "migration":
+        st.info("Next, in the sidebar: **Open the assessment zip** (or an existing project). Then fill in the "
+                "Databricks workspace and the source database connection in Settings.")
     show_welcome()
     st.stop()
 
@@ -278,6 +342,13 @@ except (ConfigError, yaml.YAMLError, KeyError, TypeError, ValueError) as e:
     st.markdown(f"Open `{h.project_file(ss.project)}` in a text editor and correct it, or open the client's code folder "
                 "instead - the app can create a fresh project for it.")
     st.stop()
+
+if ss.get("goal") and ss.get("goal_applied") != (ss.project, ss.goal):
+    ss.goal_applied = (ss.project, ss.goal)
+    if str(raw.get("phase") or "migration").lower() != ss.goal:
+        raw["phase"] = ss.goal
+        h.save_raw(ss.project, raw)
+        st.rerun()
 
 from wishbridge import runner
 
@@ -399,6 +470,8 @@ if STEP == "settings":
         new_ = dict(raw)
         new_["phase"] = ss.phase_radio
         h.save_raw(ss.project, new_)
+        ss.goal = ss.phase_radio  # the sidebar choice follows
+        ss.goal_applied = (ss.project, ss.phase_radio)
 
     cur_phase = str(raw.get("phase") or "migration").lower()
     phase = st.radio("Phase", list(phase_labels), format_func=phase_labels.get, horizontal=True, key="phase_radio",
