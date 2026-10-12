@@ -205,7 +205,10 @@ def test_map_the_data_proposes_checks_and_copies(project, monkeypatch):
     from wishbridge import dbx, mapping, runner
 
     _after_deploy(project)
+    from wishbridge.ui.steps import data as data_step
+
     monkeypatch.setattr(dbx, "Warehouse", lambda cfg: object())
+    monkeypatch.setattr(data_step, "Warehouse", lambda cfg: object())  # the step keeps its own reference
     monkeypatch.setattr(mapping, "target_tables", lambda cfg, wh: ["workspace.wishbridge_demo.customers"])
     monkeypatch.setattr(mapping, "source_tables", lambda cfg, wh: ["wishbridge_demo_src.Customers", "dbo.Gone"])
     monkeypatch.setattr(mapping, "check", lambda cfg, wh=None: [

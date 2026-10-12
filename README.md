@@ -231,7 +231,21 @@ To add a warehouse (e.g. Microsoft Fabric), copy the closest file, fill in what 
 `WAREHOUSES` in `sources/__init__.py`. **The steps shared by every warehouse** stay in `src/wishbridge/`:
 `discover.py` (open a folder), `inventory.py` / `dbcode.py` / `schema.py` (read the database, table scripts),
 `convert.py` + `rules.py` (convert and check), `deploy.py`, `data.py`, `mapping.py`, `reconcile.py`,
-`report.py`, `package.py`, and the app in `ui/app.py`.
+`report.py`, `package.py`.
+
+**The app** is split the same way, in [src/wishbridge/ui/](src/wishbridge/ui/):
+
+| File | What it holds |
+|---|---|
+| `app.py` | The shell: system check, first page (assessment or migration), sidebar, step bar |
+| `steps/settings.py`, `code.py`, `run.py`, `report.py`, `data.py`, `share.py`, `fix.py` | One file per step |
+| `warehouses/ssis.py` | Screens only SSIS has (e.g. *What the packages use*) |
+| `warehouses/etl.py` | Screens for ETL tools (Informatica, DataStage; SSIS builds on it) |
+| `warehouses/default.py` | Everything else (SQL Server, Oracle, Snowflake, ...) |
+| `database.py`, `common.py`, `helpers.py` | The Code step's database section; pieces every step uses; logic without Streamlit |
+
+A change to SSIS screens goes in `ui/warehouses/ssis.py` and reaches no other warehouse; the top of
+`ui/warehouses/__init__.py` lists what a warehouse file can change.
 
 ## Development
 

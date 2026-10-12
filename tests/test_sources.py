@@ -24,3 +24,19 @@ def test_shared_modules_read_the_warehouse_files():
     assert ids[:len(sources.DETECTORS)] == [d.rule for d in sources.DETECTORS]  # warehouse checks, then shared ones
     assert {"rownum", "temp-table", "snowflake-flatten", "bteq-command", "netezza-groom"} <= set(ids)
     assert [f[0] for f in rules._SIMPLE_FIXES][-1] == "missing-semicolon"  # the shared fix comes last
+
+
+def test_each_warehouse_has_its_own_screens():
+    from types import SimpleNamespace
+
+    from wishbridge.ui.warehouses import default, etl, ssis, warehouse_ui
+
+    def ui(key):
+        return warehouse_ui(SimpleNamespace(source=SimpleNamespace(key=key)))
+
+    assert ui("ssis") is ssis and ui("informatica") is etl and ui("datastage") is etl
+    assert ui("mssql") is default and ui("oracle") is default  # SSIS screens never reach other warehouses
+    for module in (default, etl, ssis):  # every file offers what the steps call
+        for name in ("ASSESS_TOGETHER", "READ_CODE_DEFAULT", "database_text", "open_database_section",
+                     "code_extras", "report_extras"):
+            assert hasattr(module, name), (module.__name__, name)
