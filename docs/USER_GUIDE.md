@@ -167,6 +167,15 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
     are listed so the client can send their scripts; objects the login may not see are listed too.
   - *Send a query to the client's DBA* (every supported database): download the read-only query, import the CSV
     they send back. For the code, the DBA uses SSMS › Tasks › Generate Scripts and you add the files.
+  **SSIS, Informatica and DataStage projects:** the packages only *move* the data; the tables they load and the
+  stored procedures, views and functions where the data is updated live in the warehouse database. For these
+  projects the section is called *Recommended: the warehouse database these packages load* and reads the code by
+  default. Both are assessed **together**: the packages as ETL, the database code as the database's SQL - both
+  converted (the database code under `_database_code/`), counted in the estimate, deployed in the migration phase
+  and in the zip (`database_code/`). **What the packages use** (Code step, Report and report.html) lists every
+  table the SSIS packages read or write and every procedure they call, marked *found* or *missing* in what was
+  read from the database - missing procedures first, so you know what else to ask the client for (tables that are
+  only read may belong to the source system).
   **Which code is assessed:** when the project has no code files, the run uses the code read from the database.
   When it has both, WishBridge compares them (the same / different / only in the database / only in the files -
   the database holds what really runs) and *Code to assess* chooses which one the run uses.

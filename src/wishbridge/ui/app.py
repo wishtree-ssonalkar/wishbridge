@@ -875,7 +875,7 @@ def database_code_summary(cfg, raw) -> None:
     if not dc:
         return
     st.markdown("**Code read from the database**")
-    counts = " · ".join(f"{n} {k.lower()}" for k, n in sorted(dc["counts"].items())) or "no objects"
+    counts = " · ".join(f"{n} {k.lower() if n != 1 else k.lower()[:-1]}" for k, n in sorted(dc["counts"].items())) or "no objects"
     st.markdown(f"{counts} (from {dc['read_from']}, {dc['read_at'].replace('T', ' ')}), saved as one .sql file per object.")
     if dc.get("encrypted"):
         st.warning(f"{len(dc['encrypted'])} object(s) are encrypted in the database and cannot be read — ask the client "
@@ -884,6 +884,10 @@ def database_code_summary(cfg, raw) -> None:
         st.warning(f"{len(dc['unreadable'])} object(s) could not be read: the login needs VIEW DEFINITION. "
                    f"{', '.join(dc['unreadable'][:10])}")
     using_db = raw.get("input", "input") == FOLDER
+    if is_etl(cfg) and has_code_files(raw):
+        st.success(f"Assessed **together with the packages**: the packages as {cfg.source.label}, this code as the "
+                   "warehouse database's SQL. Both are converted, counted in the estimate and in the zip.")
+        return
     if not has_code_files(raw):
         st.caption("The run assesses this code (the project has no other code files).")
         if not using_db:
@@ -909,6 +913,37 @@ def database_code_summary(cfg, raw) -> None:
         st.rerun()
 
 
+def is_etl(cfg) -> bool:
+    from wishbridge.config import ETL_SOURCES
+
+    return cfg.source.key in ETL_SOURCES
+
+
+def package_dependencies(cfg) -> None:
+    """SSIS: what the packages read, write and call - found or missing in the warehouse database."""
+    from wishbridge.companion import dependencies
+
+    deps = dependencies(cfg)
+    if not deps:
+        return
+    st.markdown("#### What the packages use")
+    missing = [d for d in deps if d["found"] is False]
+    if deps[0]["found"] is None:
+        st.info("Read the warehouse database (above) to check that every table and procedure the packages use is "
+                "there.")
+    elif missing:
+        procs = [d["name"] for d in missing if d["kind"] == "procedure"]
+        st.warning(f"**{len(missing)} object(s) the packages use are not in what was read from the database**"
+                   + (f" — including procedure(s) {', '.join(procs[:5])}" if procs else "")
+                   + ". Ask the client for them (or check the database name). Tables that are only read may belong "
+                     "to the source system.")
+    else:
+        st.success("Everything the packages use is in what was read from the database.")
+    icon = {True: "✅ found", False: "❌ missing", None: "— not checked"}
+    st.dataframe(pd.DataFrame([{"object": d["name"], "kind": d["kind"], "how": d["how"], "packages": d["packages"],
+                                "in the database": icon[d["found"]]} for d in deps]), hide_index=True, width="stretch")
+
+
 def code_from_database(raw) -> bool:
     """The project started from the database (no code folder), or has no code files at all."""
     return raw.get("code_from") == "database" or not has_code_files(raw)
@@ -926,12 +961,17 @@ def database_tables(cfg, raw) -> None:
         intro = ("This project starts from the client's database: WishBridge reads the list of tables, columns and "
                  "data types and the **procedures, views, functions and triggers** stored in it — **no data is read "
                  "or copied**. It writes a Databricks `CREATE TABLE` script for every table.")
+    elif is_etl(cfg):
+        title = "Recommended: the warehouse database these packages load"
+        intro = ("The packages **move** the data; the **tables** they load and the **stored procedures, views and "
+                 "functions** where the data is updated live in the warehouse database. Read them here so both are "
+                 "assessed together — read-only, **no data is read or copied**.")
     else:
         title = "Optional: add the table list from the database"
         intro = ("**Not needed** when the folder has the code. Useful when the code does not create the tables "
-                 "(SSIS / ETL packages, or scripts without `CREATE TABLE`), or to add row counts and sizes. Only the "
-                 "list of tables, columns and data types is read — **no data is read or copied**.")
-    with st.expander(title, expanded=from_db or bool(load_state(cfg).get("dbcode"))):
+                 "(scripts without `CREATE TABLE`), or to add row counts and sizes. Only the list of tables, columns "
+                 "and data types is read — **no data is read or copied**.")
+    with st.expander(title, expanded=from_db or bool(load_state(cfg).get("dbcode")) or (is_etl(cfg) and not inv)):
         st.markdown(intro)
         how = st.radio("How to read them", ["Connect to the database", "Send a query to the client's DBA"],
                        horizontal=True, key="schema_how",
@@ -951,7 +991,8 @@ def database_tables(cfg, raw) -> None:
                                          help="Used once to read the tables; never saved.")
             trust = st.checkbox("Trust the server certificate", key="live_trust",
                                 help="Needed for servers with a self-signed certificate (common on local servers).")
-            with_code = st.checkbox("Also read the code (procedures, views, functions, triggers)", value=from_db,
+            with_code = st.checkbox("Also read the code (procedures, views, functions, triggers)",
+                                    value=from_db or is_etl(cfg),
                                     key="live_code", help="Saved as one .sql file per object. Encrypted objects "
                                                           "cannot be read; they are listed so the client can send them.")
             missing = [n for n, v in [("server", server), ("database", database)] if not v.strip()]
@@ -969,7 +1010,7 @@ def database_tables(cfg, raw) -> None:
                         st.error(str(e))
                     else:
                         ss.pop("live_pw", None)
-                        if with_code:
+                        if with_code and not (is_etl(cfg) and has_code_files(raw)):
                             if has_code_files(raw):
                                 from wishbridge import dbcode
 
@@ -1062,6 +1103,7 @@ if STEP == "code":
                    "and what needs attention.")
 
     database_tables(cfg, raw)
+    package_dependencies(cfg)
     # Folder projects add files here directly; projects that start from the database keep it folded away.
     with (st.expander("Optional: also add code files") if code_from_database(raw) else st.container()):
         uploads = st.file_uploader("Add files", accept_multiple_files=True, type=h.INPUT_EXTENSIONS)
@@ -1508,6 +1550,7 @@ if STEP == "results":
                                                        for ch in t.get("checks", []) if not ch["match"]) or "all checks equal",
             } for t in r["tables"]]), width="stretch", hide_index=True)
 
+        package_dependencies(cfg)
         dummy = state.get("dummy_data")
         if dummy and Path(dummy["folder"]).is_dir():
             st.markdown("#### Dummy data")

@@ -107,6 +107,17 @@ def run_analyze(cfg: ProjectConfig) -> dict[str, Any]:
     result = parse_report(report)
     result["report_file"] = str(report)
     result["estimated_hours_baseline"] = estimate_hours(cfg, result["programs"])
+    from .companion import analyze_extra
+
+    try:
+        extra = analyze_extra(cfg)  # ETL: the warehouse database's code counts too
+    except Exception as e:  # the packages' analysis stands on its own
+        extra = {"programs": [], "hours": 0, "error": str(e).splitlines()[0][:300]}
+    if extra:
+        result["database_code"] = {"files": len(extra["programs"]), "hours": extra["hours"],
+                                   **({"error": extra["error"]} if extra.get("error") else {})}
+        result["programs"] = result["programs"] + [{**p, "database_code": True} for p in extra["programs"]]
+        result["estimated_hours_baseline"] = round(result["estimated_hours_baseline"] + extra["hours"], 1)
     save_step(cfg, "analyze", result)
     from .fit import run_fit
 

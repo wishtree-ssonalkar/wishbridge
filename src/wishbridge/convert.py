@@ -318,6 +318,9 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
     # Never lose a file silently: every SQL source file must come out of the converter (or be in overrides/).
     files += not_converted_entries(cfg, set(converted) | set(extra), crash)
     files += schema_entries(cfg, final_dir)
+    from . import companion
+
+    files += companion.convert_entries(cfg, final_dir, use_ai)  # ETL: the warehouse database's code, as SQL
     files.sort(key=lambda f: (f["converter"] != "database", f["file"]))  # tables from the database catalog first
 
     summary = {
@@ -330,7 +333,8 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
         "open_errors": sum(1 for f in files for x in f["findings"] if not x["fixed"] and x["severity"] == ERROR),
         "open_warnings": sum(1 for f in files for x in f["findings"] if not x["fixed"] and x["severity"] == WARNING),
     }
-    result = {"summary": summary, "files": files, "transpiler": cfg.transpiler, "final_dir": str(final_dir)}
+    result = {"summary": summary, "files": files, "transpiler": cfg.transpiler, "final_dir": str(final_dir),
+              "dependencies": companion.dependencies(cfg)}
     save_step(cfg, "convert", result)
     from .overview import build_overview
 

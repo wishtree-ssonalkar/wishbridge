@@ -152,6 +152,17 @@ def build_report(cfg: ProjectConfig) -> Path:
              escape("; ".join(o["reasons"]))]
             for o in sorted(fit["objects"], key=lambda o: (order.index(o["category"]), o["file"]))]))
 
+    deps = (c or {}).get("dependencies") or []
+    if deps:
+        parts.append("<h2>What the packages use</h2><p class='muted'>Tables the SSIS packages read and write and "
+                     "procedures they call, checked against what was read from the warehouse database. Tables that "
+                     "are only read may belong to the source system.</p>")
+        mark = {True: '<span class="pill ok">found</span>', False: '<span class="pill err">missing</span>',
+                None: '<span class="pill muted">not checked</span>'}
+        parts.append(_table(["Object", "Kind", "How", "Packages", "In the database"], [
+            [f"<code>{escape(x['name'])}</code>", escape(x["kind"]), escape(x["how"]), escape(x["packages"]),
+             mark[x["found"]]] for x in deps]))
+
     # 2. Conversion
     parts.append("<h2>2. Code conversion</h2>")
     if c:

@@ -41,6 +41,8 @@ Read it now (nothing to install):
   analysis.xlsx            Analyzer workbook (complexity per file, functions used)
   baseline/                Reference files for the before/after comparison
   converted_code/          The code converted for Databricks (hand fixes from overrides/ included)
+  database_code/           Procedures, views, functions and triggers read from the warehouse database
+                           (ETL projects: assessed together with the packages)
   dummy_data/              MADE-UP sample rows (5 per table, from the column types only - not client data):
                            one CSV per table and dummy_data.sql to load them into the Databricks tables
 
@@ -123,6 +125,11 @@ def build_package(cfg: ProjectConfig, include_original: bool = True) -> Path:
         final = Path(c["final_dir"]) if c["final_dir"] else None
         if final is not None and final.is_dir():
             _add_tree(z, final, "converted_code")
+        from .dbcode import folder as database_code_folder
+
+        dbc = database_code_folder(cfg)
+        if dbc.is_dir() and cfg.input_dir.resolve() != dbc.resolve():
+            _add_tree(z, dbc, "database_code")
         if (cfg.output_dir / "dummy_data").is_dir():
             _add_tree(z, cfg.output_dir / "dummy_data", "dummy_data")
         if cfg.overrides_dir and cfg.overrides_dir.is_dir():
@@ -151,7 +158,7 @@ def open_package(zip_path: str | Path, parent: str | Path, name: str | None = No
         if dest.exists() and any(dest.iterdir()):
             raise ValueError(f"{dest} already exists - choose another name or folder")
         places = {"project/": dest, BASELINE: dest / "input", "original_code/": dest / "input",  # older packages
-                  "converted_code/": dest / "output" / "final"}
+                  "converted_code/": dest / "output" / "final", "database_code/": dest / "database_code"}
         for n in names:
             prefix = next((k for k in places if n.startswith(k)), None)
             if prefix is None or n.endswith("/"):

@@ -357,3 +357,16 @@ def test_database_project_leads_with_the_database(project):
     assert "Read the tables and code from the database" in titles
     assert "Optional: also add code files" in titles
     assert next(c for c in at.checkbox if c.key == "live_code").value
+
+
+def test_etl_project_recommends_the_warehouse_database(tmp_path):
+    import shutil
+
+    dest = tmp_path / "ssis"
+    shutil.copytree(Path(__file__).parents[1] / "examples" / "ssis-demo", dest, ignore=shutil.ignore_patterns("output"))
+    at = _code_step(dest)
+    assert not at.exception
+    assert "Recommended: the warehouse database these packages load" in [e.label for e in at.expander]
+    assert next(c for c in at.checkbox if c.key == "live_code").value  # procedures are where the data is updated
+    assert any(m.value == "#### What the packages use" for m in at.markdown)
+    assert any("Read the warehouse database" in i.value for i in at.info)
