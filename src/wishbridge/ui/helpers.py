@@ -63,13 +63,16 @@ def read_raw(folder: str | Path) -> dict[str, Any]:
     return yaml.safe_load(project_file(folder).read_text(encoding="utf-8-sig")) or {}
 
 
-def save_raw(folder: str | Path, raw: dict[str, Any]) -> None:
-    """Write project.yml from a settings dict, then load it once so a bad value is reported immediately."""
+def save_raw(folder: str | Path, raw: dict[str, Any], check: bool = True) -> None:
+    """Write project.yml from a settings dict, then load it once so a bad value is reported immediately.
+    check=False: the shared main screen only changes the phase; the warehouse's own copy checks the file."""
     path = project_file(folder)
     text = "# WishBridge project file (saved from the WishBridge UI). Paths are relative to this file.\n"
     text += yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
     backup = path.read_text(encoding="utf-8-sig") if path.exists() else None
     path.write_text(text, encoding="utf-8")
+    if not check:
+        return
     try:
         load_config(path)
     except Exception:

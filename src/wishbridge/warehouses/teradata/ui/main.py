@@ -10,7 +10,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from wishbridge.warehouses.teradata.config import load_config
+from wishbridge.warehouses.teradata.config import ConfigError, load_config
 from wishbridge.warehouses.teradata.state import load_state
 from wishbridge.warehouses.teradata.ui import helpers as h
 
@@ -18,7 +18,12 @@ ss = st.session_state
 
 
 def run(raw: dict) -> None:
-    cfg = load_config(h.project_file(ss.project))
+    try:
+        cfg = load_config(h.project_file(ss.project))  # this warehouse's own rules for project.yml
+    except (ConfigError, KeyError, TypeError, ValueError) as e:
+        st.error(f"This project's settings file can't be read: {str(e).splitlines()[0]}")
+        st.markdown(f"Open `{h.project_file(ss.project)}` in a text editor and correct it.")
+        st.stop()
     from wishbridge.warehouses.teradata import runner
 
     LABELS = {"settings": "Settings", "code": "Code", "run": "Run", "data": "Map the data", "results": "Report",

@@ -62,3 +62,52 @@ def test_the_wishbridge_command_hands_project_commands_to_the_warehouse(tmp_path
 def test_unknown_source_is_refused():
     with pytest.raises(ValueError, match="No WishBridge for source"):
         warehouses.package_for("fabric")
+
+
+def _app_with(project):
+    from streamlit.testing.v1 import AppTest
+
+    from wishbridge.system import Status
+
+    at = AppTest.from_file(str(Path(__file__).parents[1] / "src" / "wishbridge" / "ui" / "app.py"), default_timeout=120)
+    at.session_state["system"] = [Status("cli", "Databricks CLI", True, "x", "", "")]
+    at.session_state["project"] = str(project)
+    return at
+
+
+def test_a_warehouse_can_change_its_settings_without_the_others(tmp_path, monkeypatch):
+    """Snowflake accepts a setting of its own; the main screen lets it through; SQL Server still refuses it."""
+    import shutil
+
+    import yaml
+
+    demo = Path(__file__).parents[1] / "examples" / "mssql-demo"
+    projects = {}
+    for source in ("snowflake", "mssql"):
+        dest = tmp_path / source
+        shutil.copytree(demo, dest, ignore=shutil.ignore_patterns("output"))
+        raw = yaml.safe_load((dest / "project.yml").read_text(encoding="utf-8"))
+        raw.update(source=source, phase="assessment")
+        raw["data"]["method"] = "snowpipe"  # a new Snowflake-only option
+        (dest / "project.yml").write_text(yaml.safe_dump(raw), encoding="utf-8")
+        projects[source] = dest
+
+    # Snowflake's copy learns the new option (here: by accepting it); nothing else is changed
+    snow_main = importlib.import_module("wishbridge.warehouses.snowflake.ui.main")
+    real = snow_main.load_config
+
+    def snowflake_load(path):
+        text = Path(path).read_text(encoding="utf-8").replace("snowpipe", "files")
+        ok = Path(path).with_name("snowflake-view.yml")
+        ok.write_text(text, encoding="utf-8")
+        return real(ok)
+
+    monkeypatch.setattr(snow_main, "load_config", snowflake_load)
+    at = _app_with(projects["snowflake"]).run()
+    assert not at.exception
+    assert not any("can't be read" in e.value for e in at.error)  # the main screen did not refuse it
+    assert any(b.key == "step-settings" for b in at.button)  # Snowflake's steps are open
+
+    at = _app_with(projects["mssql"]).run()
+    assert not at.exception
+    assert any("can't be read" in e.value and "data.method" in e.value for e in at.error)  # SQL Server: unchanged

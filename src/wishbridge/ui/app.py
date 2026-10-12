@@ -14,7 +14,7 @@ import yaml
 import streamlit as st
 
 from wishbridge import __version__
-from wishbridge.config import PURPOSE, SCOPE_ROWS, SOURCES, ConfigError, load_config
+from wishbridge.config import PURPOSE, SCOPE_ROWS, SOURCES, ConfigError
 from wishbridge import discover
 from wishbridge.ui import helpers as h
 
@@ -334,11 +334,16 @@ if not project_ok():
     show_welcome()
     st.stop()
 
+# The main screen reads only `source:` (which warehouse); the warehouse's own copy checks the rest of the
+# file, so a warehouse can add or change its settings without the others (or this screen) knowing.
+from wishbridge.warehouses import package_for, ui_for  # noqa: E402
+
 try:
     raw = h.read_raw(ss.project)
     if not isinstance(raw, dict):
         raise ConfigError("the file does not contain WishBridge settings")
-    cfg = load_config(h.project_file(ss.project))
+    source_key = str(raw.get("source") or "").strip()
+    package_for(source_key)  # an unknown source system is reported here
 except (ConfigError, yaml.YAMLError, KeyError, TypeError, ValueError) as e:
     st.error(f"This project's settings file can't be read: {str(e).splitlines()[0]}")
     st.markdown(f"Open `{h.project_file(ss.project)}` in a text editor and correct it, or open the client's code folder "
@@ -349,12 +354,10 @@ if ss.get("goal") and ss.get("goal_applied") != (ss.project, ss.goal):
     ss.goal_applied = (ss.project, ss.goal)
     if str(raw.get("phase") or "migration").lower() != ss.goal:
         raw["phase"] = ss.goal
-        h.save_raw(ss.project, raw)
+        h.save_raw(ss.project, raw, check=False)
         st.rerun()
 
 # ----------------------------------------------------------------- the project's warehouse takes over
 # Everything after opening a project (step bar, steps) is in wishbridge/warehouses/<warehouse>/ui/.
 
-from wishbridge.warehouses import ui_for  # noqa: E402
-
-ui_for(cfg.source.key).run(raw)
+ui_for(source_key).run(raw)
