@@ -71,6 +71,7 @@ class TableMapping:
     target: str
     load: bool = True  # False = compare only (e.g. an ETL job's output, produced by `wishbridge execute`)
     columns: dict[str, str] = field(default_factory=dict)  # target column -> source column (empty: same names)
+    where: str = ""  # copy only the source rows that match (e.g. ModifiedDate >= '2026-10-01'); empty: all rows
 
 
 @dataclass
@@ -208,7 +209,8 @@ def load_config(path: str | Path) -> ProjectConfig:
             t = {"source": t}
         cfg.tables.append(TableMapping(source=t["source"], target=t.get("target") or cfg.map_table(t["source"]),
                                        load=bool(t.get("load", True)),
-                                       columns={str(k): str(v) for k, v in (t.get("columns") or {}).items() if v}))
+                                       columns={str(k): str(v) for k, v in (t.get("columns") or {}).items() if v},
+                                       where=str(t.get("where") or "").strip()))
     return cfg
 
 

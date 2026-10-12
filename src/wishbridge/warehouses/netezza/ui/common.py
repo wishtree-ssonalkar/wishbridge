@@ -37,7 +37,7 @@ def show_run_status(status: dict) -> None:
         line = f"{ICON.get(s['state'], '•')} **{s['label']}**"
         if s.get("summary"):
             line += f" — {s['summary']}"
-        if s["state"] == "running":
+        if s["state"] == "running" and not s.get("summary"):
             line += " — working…"
         st.markdown(line)
         if s.get("error"):

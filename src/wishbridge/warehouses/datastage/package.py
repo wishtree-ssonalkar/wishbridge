@@ -190,3 +190,47 @@ def open_package(zip_path: str | Path, parent: str | Path, name: str | None = No
     (dest / "opened_from_package.json").write_text(json.dumps({**man, "package": str(zip_path.resolve())}, indent=2),
                                                    encoding="utf-8")
     return dest
+
+
+SIGNOFF_README = """WishBridge data migration sign-off - {name}
+Created {when}
+
+  report.html          The data migration report: tables and rows copied, and the comparison with the source
+  copied_tables.csv    Every table: source, Databricks table, result, rows copied, error
+  comparison.csv       Every table: matches the source or not, and which checks differ
+  mapping.yml          Which source table went into which Databricks table (columns, filters)
+  load_plan.sql        The statements that copied the data
+
+No data is in this file: only names, counts and check results.
+"""
+
+
+def build_signoff(cfg: ProjectConfig) -> Path:
+    """One zip the client can approve the data migration from (no data in it)."""
+    from .report import build_report
+
+    state = load_state(cfg)
+    ld, rec = state.get("load") or {}, state.get("reconcile") or {}
+    if not ld.get("executed"):
+        raise ValueError("No data has been copied yet.")
+    report = build_report(cfg)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    out = cfg.out("review_package", f"{cfg.name}-data-signoff-{stamp}.zip")
+    raw = yaml.safe_load(cfg.path.read_text(encoding="utf-8-sig")) or {}
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("README.txt", SIGNOFF_README.format(name=cfg.name, when=datetime.now().strftime("%Y-%m-%d %H:%M")))
+        z.write(report, "report.html")
+        z.writestr("copied_tables.csv", _csv([t for t in ld.get("tables", []) if not t.get("compare_only")],
+                                             ["source", "target", "status", "rows", "error"]))
+        if rec.get("mode") == "quick":
+            z.writestr("comparison.csv", _csv([{
+                "target": t["target"], "status": t["status"],
+                "differences": t.get("error") or "; ".join(f"{c['check']}: {c['source']} -> {c['target']}"
+                                                           for c in t.get("checks", []) if not c["match"])}
+                for t in rec.get("tables", [])], ["target", "status", "differences"]))
+        z.writestr("mapping.yml", yaml.safe_dump({"tables": (raw.get("data") or {}).get("tables") or []},
+                                                 sort_keys=False, allow_unicode=True))
+        plan = Path(ld.get("plan_file") or "")
+        if plan.is_file():
+            z.write(plan, "load_plan.sql")
+    return out

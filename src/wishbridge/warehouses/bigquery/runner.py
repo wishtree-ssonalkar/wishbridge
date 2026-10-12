@@ -34,8 +34,9 @@ def status_file(cfg: ProjectConfig) -> Path:
     return cfg.output_dir / "logs" / "run_status.json"
 
 
-def _step(cfg: ProjectConfig, name: str, opts: dict[str, Any]) -> tuple[str, Any]:
-    """Run one step; returns (summary, result)."""
+def _step(cfg: ProjectConfig, name: str, opts: dict[str, Any],
+          note: Callable[[str], None] = lambda text: None) -> tuple[str, Any]:
+    """Run one step; returns (summary, result). note(text) shows progress while the step runs."""
     if name == "describe":
         from .fit import run_fit
         from .overview import build_overview
@@ -63,7 +64,8 @@ def _step(cfg: ProjectConfig, name: str, opts: dict[str, Any]) -> tuple[str, Any
         from .data import run_load
 
         execute = bool(opts.get("execute"))
-        ld = run_load(cfg, execute=execute)
+        ld = run_load(cfg, execute=execute, only=opts.get("only"),
+                      progress=lambda done, total, table: note(f"{done}/{total} tables done · copying {table}"))
         s = ld["summary"]
         return (f"{s['loaded']}/{s['tables']} tables loaded" if execute else f"plan for {s['tables']} tables written"), ld
     if name == "reconcile":
@@ -104,8 +106,13 @@ def run_pipeline(cfg: ProjectConfig, steps: list[str], opts: dict[str, Any], kee
             continue
         st["state"] = "running"
         save()
+
+        def note(text: str, st=st) -> None:
+            st["summary"] = text
+            save()
+
         try:
-            st["summary"], result = _step(cfg, st["name"], opts)
+            st["summary"], result = _step(cfg, st["name"], opts, note)
             st["state"] = "done"
             if st["name"] == "package":
                 status["package"] = result

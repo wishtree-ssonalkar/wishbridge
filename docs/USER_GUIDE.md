@@ -232,8 +232,18 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
     **1 Settings → 2 Code → 3 Run → 4 Deployment report → 5 Fix code**. *Next* on Settings stays locked until the
     workspace login (signed in), catalog and test schema are filled in; no source data is needed.
   - *Data migration* (on the same project, once its code migration is done): **1 Settings → 2 Map the data →
-    3 Report**. Settings also need the source data: the database connection, or the files folder. The report then
-    shows whether the copied data matches.
+    3 Data report**.
+    - *Settings* show the workspace and target from the code migration as one ticked line (*Change the workspace or
+      target* to edit) and the project settings folded away; only the **source data** is new: the database
+      connection, or the files folder.
+    - *Map the data*: pair the tables, check the columns, and per table **Copy now** (untick what waits) and **Only
+      rows where** (e.g. `ModifiedDate >= '2026-10-01'` - a table with a condition is added to, never emptied).
+      **When copying**: add to, or replace, what is in Databricks. **Check before copying** confirms the source is
+      reachable and every Databricks table exists, and shows rows, sizes and a rough copy time. While copying, the
+      progress shows per table. **Copy again: only the failed or different tables** repeats just those.
+    - *Data report*: tables and rows copied, failures, tables matching the source; **Make the sign-off file for the
+      client** - one zip with the report, every table's result, the comparison, the mapping and the copy
+      statements (no data in it).
   - Projects saved as `phase: migration` (before the split) open as a code migration.
   - **Run** and **Copy the data** work in the background: you can wait on the step and watch each step's progress;
     the other steps stay locked until it has finished, so nothing is interrupted.

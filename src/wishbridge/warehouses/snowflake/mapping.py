@@ -120,3 +120,61 @@ def check(cfg: ProjectConfig, wh: Warehouse | None = None) -> list[dict[str, Any
             row["status"] = "ready"
         out.append(row)
     return out
+
+
+# Rough guide for the copy time through Lakehouse Federation; the real speed depends on the network and the rows.
+ROWS_PER_MINUTE = 1_000_000
+
+
+def preflight(cfg: ProjectConfig, wh: Warehouse | None = None) -> dict[str, Any]:
+    """Before copying: the source is reachable, every mapped Databricks table exists, and how much there is to copy."""
+    from .state import load_state, save_step
+
+    wh = wh or Warehouse(cfg)
+    out: dict[str, Any] = {"source_ok": False, "source_message": "", "tables": []}
+    try:
+        if cfg.data_method == "federation":
+            from .source_db import test_connection
+
+            schemas = test_connection(cfg.source_catalog, wh)
+            out.update(source_ok=True, source_message=f"Databricks reached the source database ({len(schemas)} schema(s)).")
+        else:
+            wh.run(f"LIST '{cfg.files_root}'")
+            out.update(source_ok=True, source_message=f"Databricks can read the files in {cfg.files_root}.")
+    except SqlError as e:
+        out["source_message"] = str(e).splitlines()[0][:300]
+    inventory = {f"{t['schema']}.{t['table']}".lower(): t for t in (load_state(cfg).get("inventory") or {}).get("tables", [])}
+    for t in cfg.tables:
+        if not t.load:
+            continue
+        row: dict[str, Any] = {"source": t.source, "target": t.target, "filter": t.where}
+        try:
+            _columns(wh, t.target)
+            row["target_exists"] = True
+        except SqlError:
+            row["target_exists"] = False
+        known = inventory.get(t.source.lower()) or {}
+        rows = None if t.where else known.get("rows")
+        if rows is None and out["source_ok"] and cfg.data_method == "federation":
+            try:
+                where = f" WHERE {t.where}" if t.where else ""
+                rows = int(wh.run(f"SELECT COUNT(*) FROM {cfg.source_catalog}.{t.source}{where}").rows[0][0])
+            except (SqlError, ValueError, IndexError, TypeError):
+                rows = None
+        row.update(rows=int(rows) if rows is not None else None, size_mb=known.get("size_mb"),
+                   minutes=round(rows / ROWS_PER_MINUTE, 1) if rows else None)
+        out["tables"].append(row)
+    out["total_rows"] = sum(r["rows"] or 0 for r in out["tables"])
+    out["minutes"] = round(out["total_rows"] / ROWS_PER_MINUTE, 1)
+    out["missing_targets"] = [r["target"] for r in out["tables"] if not r["target_exists"]]
+    out["ready"] = out["source_ok"] and not out["missing_targets"]
+    save_step(cfg, "preflight", out)
+    return out
+
+
+def again_targets(state: dict[str, Any]) -> list[str]:
+    """Databricks tables to copy again: they failed in the last copy, or differ from the source."""
+    failed = [t["target"] for t in (state.get("load") or {}).get("tables", []) if t.get("status") == "failed"]
+    rec = state.get("reconcile") or {}
+    differ = [t["target"] for t in rec.get("tables", []) if t.get("status") not in ("match",)] if rec.get("mode") == "quick" else []
+    return list(dict.fromkeys(failed + differ))

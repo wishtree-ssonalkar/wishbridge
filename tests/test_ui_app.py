@@ -154,7 +154,8 @@ def test_migration_settings_need_target_and_source(project):
     assert not at.exception
     # the parts appear one by one: workspace and target are filled in, the source data is not
     headings = [m.value for m in at.markdown if m.value.startswith("#### ")]
-    assert headings == ["#### 1 · Databricks workspace ✅", "#### 2 · Target in Databricks ✅", "#### 3 · Source data"]
+    assert headings == ["#### 3 · Source data"]  # workspace and target: one ticked line from the code migration
+    assert any("Workspace and target" in s.value for s in at.success)
     assert not any(b.label.startswith("Next: add the code") for b in at.button)  # appears once all parts are done
     notes = " ".join(m.value for m in at.markdown)
     assert "create the connection" in notes  # red note under the field; tables are chosen in Map the data
@@ -494,3 +495,34 @@ def test_deploy_tab_after_an_assessment_does_not_convert_again(project, monkeypa
     assert any(s.value == "Deploy to Databricks" for s in at.subheader)
     next(b for b in at.button if b.label == "▶ Deploy").click().run()
     assert started == [["deploy", "report"]]  # no analyze / convert again
+
+
+def test_copy_again_only_the_failed_tables_and_make_the_sign_off(project, monkeypatch):
+    from wishbridge.warehouses.sqlserver import runner
+    from wishbridge.warehouses.sqlserver.config import load_config
+    from wishbridge.warehouses.sqlserver.state import save_step
+
+    _data_migration(project)
+    cfg = load_config(project / "project.yml")
+    save_step(cfg, "load", {"executed": True, "method": "federation", "plan_file": "", "summary": {}, "tables": [
+        {"source": "s.a", "target": "t.a", "status": "loaded", "rows": 5, "compare_only": False},
+        {"source": "s.b", "target": "t.b", "status": "failed", "error": "boom", "compare_only": False}]})
+    started = []
+    monkeypatch.setattr(runner, "start", lambda cfg, steps, opts, keep_going: started.append(opts))
+    at = ready_app(project)
+    at.session_state["settings_done:" + str(project)] = True
+    at.session_state["go_step"] = "data"
+    at.session_state["map_check"] = [{"source": "s.a", "target": "t.a", "status": "ready"}]
+    at.run()
+    assert not at.exception
+    assert any(r.label == "When copying" for r in at.radio)  # the load mode sits by the Copy button
+    next(b for b in at.button if b.label.startswith("↻ Copy again: only the 1")).click().run()
+    assert started == [{"execute": True, "only": ["t.b"]}]
+
+    at = ready_app(project)
+    at.session_state["settings_done:" + str(project)] = True
+    at.session_state["go_step"] = "results"
+    at.run()
+    next(b for b in at.button if b.label.startswith("📦 Make the sign-off file")).click().run()
+    assert not at.exception
+    assert any(b.label.startswith("⬇ ") and "data-signoff" in b.label for b in at.get("download_button"))

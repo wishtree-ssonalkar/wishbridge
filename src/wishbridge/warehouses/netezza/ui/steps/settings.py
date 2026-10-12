@@ -72,28 +72,35 @@ def render(cfg, raw, packages) -> None:
                           "the visit where the code is deployed and the data copied. Changing it saves right away.")
     offline = phase == "assessment"
 
-    st.subheader("Project settings")
-    c1, c2 = st.columns(2)
-    with c1:
-        src_keys = list(SOURCES)
-        source = st.selectbox("Source system :red[*]", src_keys, index=src_keys.index(cfg.source.key),
-                              format_func=lambda k: SOURCES[k].label)
-    with c2:
-        # Only converters that support the chosen source are offered; "auto" is the default and the recommendation.
-        conv_options = ["auto"] + [c for c in ("morph", "bladebridge") if SOURCES[source].dialect in CONVERTER_DIALECTS[c]]
-        cur_conv = str(raw.get("transpiler") or "auto").lower()
-        conv_labels = {"auto": "Automatic (recommended)", "morph": "First method only", "bladebridge": "Second method only"}
-        transpiler = st.selectbox("Converter", conv_options, format_func=conv_labels.get,
-                                  index=conv_options.index(cur_conv) if cur_conv in conv_options else 0)
-        st.caption(converter_summary(source) if transpiler == "auto"
-                   else "Fixed converter: no second attempt on files it can't convert.")
+    # In the data migration these were settled in the assessment and code migration: kept as they are, shown on request.
+    source = cfg.source.key
+    transpiler = str(raw.get("transpiler") or "auto").lower()
+    map_df = pd.DataFrame(h.schema_map_rows(raw) or [{"source_schema": "", "target": ""}])
+    show_project = phase != "data-migration" or st.toggle(
+        f"Show the project settings ({cfg.source.label}, from the assessment and code migration)", key="show_project")
+    if show_project:
+        st.subheader("Project settings")
+        c1, c2 = st.columns(2)
+        with c1:
+            src_keys = list(SOURCES)
+            source = st.selectbox("Source system :red[*]", src_keys, index=src_keys.index(cfg.source.key),
+                                  format_func=lambda k: SOURCES[k].label)
+        with c2:
+            # Only converters that support the chosen source are offered; "auto" is the default and the recommendation.
+            conv_options = ["auto"] + [c for c in ("morph", "bladebridge") if SOURCES[source].dialect in CONVERTER_DIALECTS[c]]
+            cur_conv = str(raw.get("transpiler") or "auto").lower()
+            conv_labels = {"auto": "Automatic (recommended)", "morph": "First method only", "bladebridge": "Second method only"}
+            transpiler = st.selectbox("Converter", conv_options, format_func=conv_labels.get,
+                                      index=conv_options.index(cur_conv) if cur_conv in conv_options else 0)
+            st.caption(converter_summary(source) if transpiler == "auto"
+                       else "Fixed converter: no second attempt on files it can't convert.")
 
-    with st.expander("Schema names in the converted code (optional)"):
-        st.caption("Rename source schemas in the converted code, e.g. `dbo` -> `main.sales`. WishBridge fills in a "
-                   "sensible default; adjust it once the Databricks catalog is known.")
-        map_df = st.data_editor(pd.DataFrame(h.schema_map_rows(raw) or [{"source_schema": "", "target": ""}]),
-                                num_rows="dynamic", width="stretch", key="schema_map",
-                                column_config={"source_schema": "Source schema", "target": "Target catalog.schema"})
+        with st.expander("Schema names in the converted code (optional)"):
+            st.caption("Rename source schemas in the converted code, e.g. `dbo` -> `main.sales`. WishBridge fills in a "
+                       "sensible default; adjust it once the Databricks catalog is known.")
+            map_df = st.data_editor(pd.DataFrame(h.schema_map_rows(raw) or [{"source_schema": "", "target": ""}]),
+                                    num_rows="dynamic", width="stretch", key="schema_map",
+                                    column_config={"source_schema": "Source schema", "target": "Target catalog.schema"})
 
     # Values kept as they are while the migration settings are hidden.
     profile, warehouse = dbx.get("profile", "DEFAULT"), str(dbx.get("warehouse_id") or "")
@@ -150,114 +157,123 @@ def render(cfg, raw, packages) -> None:
             state = {True: "signed in", False: "login expired", None: "status unknown"}[p["valid"]]
             return f"{n} — {p['host']} ({state})"
 
-        tick_ws = part(1, "Databricks workspace", "The client workspace this project migrates into.")
-        c1, c2 = st.columns([3, 2])
-        with c1:
-            profile = st.selectbox("Workspace login :red[*]", names, index=names.index(cur_profile), format_func=profile_label)
-            _login = by_name.get(profile)
-            if not _login:
-                required("Required: choose a saved login, or sign in to the client's workspace below.")
-            elif _login.get("valid") is False:
-                required("This login has expired: sign in again below.")
-        with c2:
-            st.write("")
-            if st.button("Load warehouses and catalogs", width="stretch"):
-                with st.spinner("Asking the workspace..."):
-                    try:
-                        ss.workspace = h.list_workspace(profile)
-                    except Exception as e:  # SDK raises many types; show the message
-                        ss.workspace = None
-                        st.error(f"Could not reach the workspace: {e}")
-        chosen_host = (by_name.get(profile) or {}).get("host", "")
-        project_host = str(dbx.get("host") or "")
-        if ss.workspace and ss.workspace.get("profile") == profile:
-            st.success(f"Connected as **{ss.workspace['user']}** on **{ss.workspace['host']}**")
-        other_ws = bool(project_host and chosen_host
-                        and project_host.rstrip("/").lower() != chosen_host.rstrip("/").lower())
-        if other_ws:
-            st.error(f"This project belongs to **{project_host}**, but the selected login is for **{chosen_host}**. "
-                     "Pick the login for the project's workspace, or move the project to the selected one.")
-            if st.button(f"Move this project to {chosen_host}"):
-                autosave({"databricks": {"profile": profile, "host": chosen_host}})
-        if by_name.get(profile, {}).get("valid") is False:
-            st.warning("This login has expired. Sign in again below with the same profile name.")
-
-        with st.expander("Connect to another workspace (sign in)"):
-            st.caption("Opens a browser on this computer to sign in. The login is saved in this user's ~/.databrickscfg; "
-                       "WishBridge never sees the password.")
-            n1, n2, n3 = st.columns([3, 2, 1])
-            new_host = n1.text_input("Workspace URL :red[*]", placeholder="https://adb-1234567890.12.azuredatabricks.net")
-            new_profile = n2.text_input("Profile name :red[*]", placeholder="CLIENT_ACME")
-            n3.write("")
-            if new_host.strip() and not new_host.strip().lower().startswith("https://"):
-                required("The workspace URL starts with https://")
-            if n3.button("Sign in", disabled=not new_host.strip().lower().startswith("https://") or not new_profile.strip()):
-                with st.spinner("Finish signing in in the browser window..."):
-                    ok, msg = h.sign_in(new_host, new_profile)
-                (st.success if ok else st.error)(msg)
-                if ok:
-                    ss.profiles = h.list_profiles()
-                    ss.pending_profile = new_profile.strip()
-                    st.rerun()
-
-        _login = by_name.get(profile)
-        ws_done = bool(_login) and _login.get("valid") is not False and not other_ws
-        target_done = src_done = False
-        if not ws_done:
-            next_part_hint()
-        else:
-            tick_ws()
-            # --- 2. Target: where the converted objects are created
-            tick_target = part(2, "Target in Databricks", "Converted objects and the copied data go into this test schema.")
-            c1, c2, c3 = st.columns(3)
-            ws = ss.workspace if ss.workspace and ss.workspace.get("profile") == profile else None
+        # Data migration: workspace and target were set in the code migration - a ticked line, changed on request.
+        settled = phase == "data-migration" and all(dbx.get(k) for k in ("host", "catalog", "schema"))
+        change = not settled
+        if settled:
+            st.success(f"✅ **Workspace and target** (from the code migration): {dbx.get('host')} · "
+                       f"`{dbx.get('catalog')}.{dbx.get('schema')}`")
+            change = st.toggle("Change the workspace or target", key="change_target")
+            target_done = True
+        if change:
+            tick_ws = part(1, "Databricks workspace", "The client workspace this project migrates into.")
+            c1, c2 = st.columns([3, 2])
             with c1:
-                if ws and ws["warehouses"]:
-                    wh_ids = [""] + [w["id"] for w in ws["warehouses"]]
-                    labels = {"": "(first running warehouse)", **{w["id"]: f"{w['name']} · {w['state']}" for w in ws["warehouses"]}}
-                    cur = str(dbx.get("warehouse_id") or "")
-                    warehouse = st.selectbox("SQL warehouse", wh_ids, index=wh_ids.index(cur) if cur in wh_ids else 0,
-                                             format_func=lambda i: labels[i])
-                else:
-                    warehouse = st.text_input("SQL warehouse ID", value=str(dbx.get("warehouse_id") or ""),
-                                              help="Leave blank to use the first running warehouse.")
+                profile = st.selectbox("Workspace login :red[*]", names, index=names.index(cur_profile), format_func=profile_label)
+                _login = by_name.get(profile)
+                if not _login:
+                    required("Required: choose a saved login, or sign in to the client's workspace below.")
+                elif _login.get("valid") is False:
+                    required("This login has expired: sign in again below.")
             with c2:
-                cats = [c["name"] for c in ws["catalogs"]] if ws else []
-                cur_cat = dbx.get("catalog", "main")
-                if cats:
-                    catalog = st.selectbox("Catalog :red[*]", cats if cur_cat in cats else [cur_cat] + cats,
-                                           index=(cats if cur_cat in cats else [cur_cat] + cats).index(cur_cat))
-                else:
-                    catalog = st.text_input("Catalog :red[*]", value=cur_cat)
-                if not str(catalog or "").strip():
-                    required("Required: the Databricks catalog.")
-            with c3:
-                schema = st.text_input("Test schema :red[*]", value=dbx.get("schema", "wishbridge"))
-                if not schema.strip():
-                    required("Required: the test schema.")
-            scope_labels = {"all": "Everything", "recommended": "Only what belongs on Databricks (fit check)"}
-            scope = st.selectbox("What to deploy", list(scope_labels), format_func=scope_labels.get,
-                                 index=list(scope_labels).index(scope) if scope in scope_labels else 0,
-                                 help="The fit check (run with Analyze) marks application logic to keep on the source "
-                                      "and objects Databricks does not need. 'Only what belongs' leaves those out of deploy.")
+                st.write("")
+                if st.button("Load warehouses and catalogs", width="stretch"):
+                    with st.spinner("Asking the workspace..."):
+                        try:
+                            ss.workspace = h.list_workspace(profile)
+                        except Exception as e:  # SDK raises many types; show the message
+                            ss.workspace = None
+                            st.error(f"Could not reach the workspace: {e}")
+            chosen_host = (by_name.get(profile) or {}).get("host", "")
+            project_host = str(dbx.get("host") or "")
+            if ss.workspace and ss.workspace.get("profile") == profile:
+                st.success(f"Connected as **{ss.workspace['user']}** on **{ss.workspace['host']}**")
+            other_ws = bool(project_host and chosen_host
+                            and project_host.rstrip("/").lower() != chosen_host.rstrip("/").lower())
+            if other_ws:
+                st.error(f"This project belongs to **{project_host}**, but the selected login is for **{chosen_host}**. "
+                         "Pick the login for the project's workspace, or move the project to the selected one.")
+                if st.button(f"Move this project to {chosen_host}"):
+                    autosave({"databricks": {"profile": profile, "host": chosen_host}})
+            if by_name.get(profile, {}).get("valid") is False:
+                st.warning("This login has expired. Sign in again below with the same profile name.")
 
-            if looks_like_prod(f"{catalog}.{schema}"):
-                required("This looks like a production schema - use a test schema. WishBridge will not deploy there.")
+            with st.expander("Connect to another workspace (sign in)"):
+                st.caption("Opens a browser on this computer to sign in. The login is saved in this user's ~/.databrickscfg; "
+                           "WishBridge never sees the password.")
+                n1, n2, n3 = st.columns([3, 2, 1])
+                new_host = n1.text_input("Workspace URL :red[*]", placeholder="https://adb-1234567890.12.azuredatabricks.net")
+                new_profile = n2.text_input("Profile name :red[*]", placeholder="CLIENT_ACME")
+                n3.write("")
+                if new_host.strip() and not new_host.strip().lower().startswith("https://"):
+                    required("The workspace URL starts with https://")
+                if n3.button("Sign in", disabled=not new_host.strip().lower().startswith("https://") or not new_profile.strip()):
+                    with st.spinner("Finish signing in in the browser window..."):
+                        ok, msg = h.sign_in(new_host, new_profile)
+                    (st.success if ok else st.error)(msg)
+                    if ok:
+                        ss.profiles = h.list_profiles()
+                        ss.pending_profile = new_profile.strip()
+                        st.rerun()
 
-            target_done = (bool(str(catalog or "").strip()) and bool(str(schema or "").strip())
-                           and not looks_like_prod(f"{catalog}.{schema}"))
-            if not target_done:
+            _login = by_name.get(profile)
+            ws_done = bool(_login) and _login.get("valid") is not False and not other_ws
+            target_done = src_done = False
+            if not ws_done:
                 next_part_hint()
             else:
-                tick_target()
-                changes = {"databricks": {"profile": profile, "host": (ws or {}).get("host") or chosen_host or project_host,
-                                          "warehouse_id": warehouse, "catalog": catalog, "schema": schema.strip()},
-                           "scope": scope}
-                old_cat = str(dbx.get("catalog") or "")
-                if old_cat and catalog != old_cat:  # schema names made from the old catalog follow the new one
-                    changes["schema_map"] = {k: (f"{catalog}.{v[len(old_cat) + 1:]}" if str(v).startswith(old_cat + ".") else v)
-                                             for k, v in (raw.get("schema_map") or {}).items()}
-                autosave(changes)
+                tick_ws()
+                # --- 2. Target: where the converted objects are created
+                tick_target = part(2, "Target in Databricks", "Converted objects and the copied data go into this test schema.")
+                c1, c2, c3 = st.columns(3)
+                ws = ss.workspace if ss.workspace and ss.workspace.get("profile") == profile else None
+                with c1:
+                    if ws and ws["warehouses"]:
+                        wh_ids = [""] + [w["id"] for w in ws["warehouses"]]
+                        labels = {"": "(first running warehouse)", **{w["id"]: f"{w['name']} · {w['state']}" for w in ws["warehouses"]}}
+                        cur = str(dbx.get("warehouse_id") or "")
+                        warehouse = st.selectbox("SQL warehouse", wh_ids, index=wh_ids.index(cur) if cur in wh_ids else 0,
+                                                 format_func=lambda i: labels[i])
+                    else:
+                        warehouse = st.text_input("SQL warehouse ID", value=str(dbx.get("warehouse_id") or ""),
+                                                  help="Leave blank to use the first running warehouse.")
+                with c2:
+                    cats = [c["name"] for c in ws["catalogs"]] if ws else []
+                    cur_cat = dbx.get("catalog", "main")
+                    if cats:
+                        catalog = st.selectbox("Catalog :red[*]", cats if cur_cat in cats else [cur_cat] + cats,
+                                               index=(cats if cur_cat in cats else [cur_cat] + cats).index(cur_cat))
+                    else:
+                        catalog = st.text_input("Catalog :red[*]", value=cur_cat)
+                    if not str(catalog or "").strip():
+                        required("Required: the Databricks catalog.")
+                with c3:
+                    schema = st.text_input("Test schema :red[*]", value=dbx.get("schema", "wishbridge"))
+                    if not schema.strip():
+                        required("Required: the test schema.")
+                scope_labels = {"all": "Everything", "recommended": "Only what belongs on Databricks (fit check)"}
+                scope = st.selectbox("What to deploy", list(scope_labels), format_func=scope_labels.get,
+                                     index=list(scope_labels).index(scope) if scope in scope_labels else 0,
+                                     help="The fit check (run with Analyze) marks application logic to keep on the source "
+                                          "and objects Databricks does not need. 'Only what belongs' leaves those out of deploy.")
+
+                if looks_like_prod(f"{catalog}.{schema}"):
+                    required("This looks like a production schema - use a test schema. WishBridge will not deploy there.")
+
+                target_done = (bool(str(catalog or "").strip()) and bool(str(schema or "").strip())
+                               and not looks_like_prod(f"{catalog}.{schema}"))
+                if not target_done:
+                    next_part_hint()
+                else:
+                    tick_target()
+                    changes = {"databricks": {"profile": profile, "host": (ws or {}).get("host") or chosen_host or project_host,
+                                              "warehouse_id": warehouse, "catalog": catalog, "schema": schema.strip()},
+                               "scope": scope}
+                    old_cat = str(dbx.get("catalog") or "")
+                    if old_cat and catalog != old_cat:  # schema names made from the old catalog follow the new one
+                        changes["schema_map"] = {k: (f"{catalog}.{v[len(old_cat) + 1:]}" if str(v).startswith(old_cat + ".") else v)
+                                                 for k, v in (raw.get("schema_map") or {}).items()}
+                    autosave(changes)
 
         if target_done and phase == "data-migration":  # the code migration needs no source data
             # --- 3. Source data: where the data is copied from
@@ -374,20 +390,18 @@ def render(cfg, raw, packages) -> None:
                 next_part_hint()
             else:
                 tick_src()
-                # --- 4. Copy options
-                part(4, "Copy options")()
-                load_mode = st.selectbox("Load mode", ["append", "overwrite"],
-                                         index=["append", "overwrite"].index(data.get("mode", "append")),
-                                         help="append: add to what is in the Databricks tables. overwrite: replace it.")
-                st.caption("Which tables go where is chosen in the step *Map the data*, after the run has created "
-                           "the tables in Databricks.")
+                st.caption("Which tables to copy, only new rows or all, and whether to add to or replace what is in "
+                           "Databricks are chosen in *Map the data*.")
 
-    with st.expander("AI suggestions and estimates"):
-        ai_on = st.checkbox("Ask Claude for fix suggestions during convert (needs ANTHROPIC_API_KEY; sends code, not data)",
-                            value=bool(ai.get("ai", False)))
-        model = st.text_input("Claude model", value=ai.get("model", "claude-opus-5-5"))
-        est = raw.get("estimate") or {}
-        hpi = st.number_input("Hours per open item", value=float(est.get("hours_per_issue", 0.5)), step=0.25)
+    est = raw.get("estimate") or {}
+    ai_on, model = bool(ai.get("ai", False)), ai.get("model", "claude-opus-5-5")
+    hpi = float(est.get("hours_per_issue", 0.5))
+    if phase != "data-migration":  # about converting the code: not part of the data migration
+        with st.expander("AI suggestions and estimates"):
+            ai_on = st.checkbox("Ask Claude for fix suggestions during convert (needs ANTHROPIC_API_KEY; sends code, "
+                                "not data)", value=ai_on)
+            model = st.text_input("Claude model", value=model)
+            hpi = st.number_input("Hours per open item", value=hpi, step=0.25)
 
     problems = settings_problems(offline, locals())
     ready = offline or src_done or (phase == "code-migration" and target_done)

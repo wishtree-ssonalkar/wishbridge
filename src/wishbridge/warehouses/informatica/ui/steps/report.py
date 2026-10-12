@@ -269,6 +269,18 @@ def _data_migration_report(cfg, raw, state) -> None:
         st.info("The comparison with the source has not run yet.")
     if failed or differ:
         next_button("Back to Map the data →", "data", "next-data-report")
+    if st.button("📦 Make the sign-off file for the client",
+                 help="One zip with the report, every table's result and the comparison - no data in it."):
+        from wishbridge.warehouses.informatica.package import build_signoff
+
+        try:
+            ss.signoff = str(build_signoff(cfg))
+        except (OSError, ValueError) as e:
+            st.error(str(e))
+    if ss.get("signoff") and Path(ss.signoff).is_file():
+        so = Path(ss.signoff)
+        st.download_button(f"⬇ {so.name}", so.read_bytes(), file_name=so.name, mime="application/zip")
+        st.caption(f"Also kept at `{so}`. The client approves the data migration from it.")
 
     st.markdown("#### Copied tables")
     st.dataframe(pd.DataFrame([{"source": t["source"], "Databricks table": t["target"], "status": t["status"],
