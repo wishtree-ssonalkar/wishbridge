@@ -50,11 +50,26 @@ def workspace_folder(wh: Warehouse, cfg: ProjectConfig) -> str:
     return f"/Workspace/Users/{user}/wishbridge/{cfg.name}"
 
 
+def deployable_file(cfg: ProjectConfig, f: dict[str, Any]) -> Path | None:
+    """The file to deploy: the hand fix (overrides/) when there is one - so fixes reach Databricks without
+    converting again - else the converted file."""
+    if cfg.overrides_dir:
+        fixed = cfg.overrides_dir / f["file"]
+        if fixed.is_file():
+            return fixed
+    final = Path(f["final"]) if f.get("final") else None
+    return final if final is not None and final.is_file() else None
+
+
 def _upload(wh: Warehouse, cfg: ProjectConfig, f: dict[str, Any]) -> dict[str, Any]:
     """Upload a converted notebook or helper module to the workspace (notebooks run with `wishbridge execute`)."""
     from databricks.sdk.service.workspace import ImportFormat
 
-    text = open(f["final"], encoding="utf-8-sig").read()
+    src = deployable_file(cfg, f)
+    if src is None:
+        return {"file": f["file"], "statements": 1, "passed": 0, "ok": False, "results": [
+            {"n": 1, "kind": f["kind"], "action": "skip", "ok": False, "error": "Not converted - nothing to upload"}]}
+    text = src.read_text(encoding="utf-8-sig")
     if f["kind"] == "notebook":
         text = with_target_schema(text, cfg)
     folder = workspace_folder(wh, cfg)
@@ -95,12 +110,13 @@ def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool =
         if f.get("kind", "sql") != "sql":
             files.append(_upload(wh, cfg, f))
             continue
-        if not f.get("final") or not Path(f["final"]).is_file():
+        src = deployable_file(cfg, f)
+        if src is None:
             files.append({"file": f["file"], "statements": 1, "passed": 0, "ok": False, "results": [
                 {"n": 1, "kind": "file", "action": "skip", "ok": False,
                  "error": "Not converted - nothing to deploy (see the convert results)"}]})
             continue
-        sql = open(f["final"], encoding="utf-8-sig").read()
+        sql = src.read_text(encoding="utf-8-sig")
         results = []
         for i, stmt in enumerate(split_statements(sql), 1):
             kind = statement_kind(stmt)

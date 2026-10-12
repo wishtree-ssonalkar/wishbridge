@@ -225,9 +225,12 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
     zip in OneDrive* copies it to a WishBridge folder there (or *Open OneDrive* to upload it when OneDrive is not set
     up), you share it and paste the link, and *Send mail with the OneDrive link* opens the e-mail with the link in
     the text. Projects opened from a package also get **Fix code**.
-  - *Code migration*: **1 Settings → 2 Code → 3 Run → 4 Report → 5 Fix code** - the tables and code are created
-    in Databricks. *Next* on Settings stays locked until the workspace login (signed in), catalog and test schema
-    are filled in; no source data is needed.
+  - *Code migration* from an assessment (the zip): **1 Fix code → 2 Settings → 3 Deploy → 4 Deployment report**.
+    The code was analyzed and converted in the assessment, so there is no Code tab and *Deploy* only creates the
+    tables and code in Databricks - with every hand fix from Fix code (they are deployed directly; *Analyze and
+    convert again first* is there for when the client's code changed). A new project without an assessment:
+    **1 Settings → 2 Code → 3 Run → 4 Deployment report → 5 Fix code**. *Next* on Settings stays locked until the
+    workspace login (signed in), catalog and test schema are filled in; no source data is needed.
   - *Data migration* (on the same project, once its code migration is done): **1 Settings → 2 Map the data →
     3 Report**. Settings also need the source data: the database connection, or the files folder. The report then
     shows whether the copied data matches.

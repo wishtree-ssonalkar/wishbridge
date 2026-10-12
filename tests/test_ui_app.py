@@ -422,7 +422,7 @@ def test_code_migration_from_an_assessment_starts_with_fix_code(project):
     at = ready_app(project).run()
     assert not at.exception
     steps = [b.label.replace("✓ ", "") for b in at.button if b.key and b.key.startswith("step-")]
-    assert steps == ["1 · Fix code", "2 · Settings", "3 · Code", "4 · Run", "5 · Deployment report"]
+    assert steps == ["1 · Fix code", "2 · Settings", "3 · Deploy", "4 · Deployment report"]  # no Code, Run only deploys
     assert at.session_state["step"] == "fix"  # an opened project starts at the first tab
     next(b for b in at.button if b.label == "Next: settings →").click().run()
     assert at.session_state["step"] == "settings"
@@ -473,3 +473,24 @@ def test_data_report_shows_rows_and_matches(project):
     metrics = {m.label: m.value for m in at.metric}
     assert metrics["Tables copied"] == "2/2" and metrics["Rows copied"] == "1,234" and metrics["Match the source"] == "1/2"
     assert any("1 table(s) differ" in w.value for w in at.warning)
+
+
+def test_deploy_tab_after_an_assessment_does_not_convert_again(project, monkeypatch):
+    from wishbridge.warehouses.sqlserver import runner
+    from wishbridge.warehouses.sqlserver.config import load_config
+    from wishbridge.warehouses.sqlserver.state import save_step
+
+    cfg = load_config(project / "project.yml")
+    save_step(cfg, "convert", {"summary": {"files": 0, "ready": 0, "review": 0, "needs_fix": 0, "auto_fixed": 0,
+                                           "open_errors": 0, "open_warnings": 0}, "transpiler": "morph",
+                               "final_dir": "", "files": []})
+    started = []
+    monkeypatch.setattr(runner, "start", lambda cfg, steps, opts, keep_going: started.append(steps))
+    at = ready_app(project)
+    at.session_state["go_step"] = "run"
+    at.session_state["fix_done:" + str(project)] = True
+    at.run()
+    assert not at.exception
+    assert any(s.value == "Deploy to Databricks" for s in at.subheader)
+    next(b for b in at.button if b.label == "▶ Deploy").click().run()
+    assert started == [["deploy", "report"]]  # no analyze / convert again

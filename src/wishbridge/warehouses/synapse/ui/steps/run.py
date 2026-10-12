@@ -34,6 +34,24 @@ def render(cfg, raw, packages) -> None:
         if st.button("▶ Assess and save everything", type="primary"):
             runner.start(cfg, runner.ASSESSMENT_STEPS, {}, keep_going=True)
             st.rerun()
+    elif cfg.phase == "code-migration" and "convert" in load_state(cfg):
+        # From an assessment: the code was analyzed and converted there - deploy it (with the hand fixes).
+        st.subheader("Deploy to Databricks")
+        st.markdown("The code was analyzed and converted in the assessment. This creates the tables and code in "
+                    f"`{cfg.target_schema}`, using the converted code **and every hand fix from Fix code**.")
+        c1, c2 = st.columns(2)
+        with c1:
+            do_deploy = st.checkbox("Create the tables and code in the test schema", value=True)
+            recreate = st.checkbox("…rebuild objects that already exist", value=False, disabled=not do_deploy)
+        with c2:
+            again = st.checkbox("Analyze and convert again first", value=False,
+                                help="Only when the client's code changed since the assessment. Hand fixes are kept.")
+            do_report = st.checkbox("Build the report", value=True)
+        chosen = (["analyze", "convert"] if again else []) + [n for n, on in (("deploy", do_deploy),
+                                                                             ("report", do_report)) if on]
+        if st.button("▶ Deploy", type="primary", disabled=not do_deploy):
+            runner.start(cfg, chosen, {"recreate": recreate}, keep_going=False)
+            st.rerun()
     else:
         st.subheader("Run the migration")
         c1, c2, c3 = st.columns(3)

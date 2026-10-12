@@ -38,8 +38,11 @@ def run(raw: dict) -> None:
         # From an assessment (its converted code is here): fix the open items first, then settings, run (it converts
         # again and keeps the hand fixes) and the report. A new project has nothing to fix yet: fixing comes last.
         fix_first = "convert" in load_state(cfg)
-        ORDER = (["fix", "settings", "code", "run", "results"] if fix_first
+        # From an assessment the code is already analyzed and converted: no Code tab, and Run only deploys.
+        ORDER = (["fix", "settings", "run", "results"] if fix_first
                  else ["settings", "code", "run", "results", "fix"])
+        if fix_first:
+            LABELS["run"] = "Deploy"
     else:
         # Data migration: the tables exist in Databricks (code migration); map, copy, then the report.
         ORDER = ["settings", "data", "results"]

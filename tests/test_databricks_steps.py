@@ -143,3 +143,14 @@ def test_reconcile_reports_column_differences(cfg):
     wh = FakeWarehouse(tables={"main.dev.Orders": (10, TGT_COLS, 1), "fed.dbo.Orders": (10, src, 1)})
     t = run_reconcile(cfg, wh=wh)["tables"][0]
     assert t["column_differences"] == {"only_in_source": ["legacy_flag"], "only_in_target": []}
+
+
+def test_deploy_uses_the_hand_fix_without_converting_again(cfg):
+    """A fix saved in Fix code (overrides/) is what goes to Databricks, even before convert runs again."""
+    fixed = cfg.overrides_dir / "a.sql"
+    fixed.parent.mkdir(parents=True, exist_ok=True)
+    fixed.write_text("CREATE TABLE main.dev.Fixed (id INT);\n", encoding="utf-8")
+    wh = FakeWarehouse()
+    run_deploy(cfg, wh=wh)
+    assert any("main.dev.Fixed" in c for c in wh.calls)
+    assert not any("missing_table" in c for c in wh.calls)  # the converted file was not used
