@@ -45,7 +45,9 @@ GOALS = {"assessment": "🔍 Assessment", "code-migration": "🧩 Code migration
 START = {
     "assessment": {"Open a folder": "folder", "Start from the database": "new"},
     "code-migration": {"Open the assessment zip": "package", "Open a project": "folder", "Create new": "new"},
-    "data-migration": {"Open a project": "folder", "Open the assessment zip": "package", "Create new": "new"},
+    # The data goes into tables the code migration created: open that project. "Data only" is for tables that
+    # already exist in Databricks (created some other way). The assessment zip has no tables in Databricks yet.
+    "data-migration": {"Open the code migration project": "folder", "Data only: tables already in Databricks": "new"},
 }
 
 if project_ok() and "goal" not in ss:  # a project opened before (or by a test): its phase is the goal
@@ -202,6 +204,10 @@ with st.sidebar:
             if goal == "assessment":
                 st.caption("No code folder? Create the project here, then read the tables and code straight from the "
                            "client's database in **Code › Read from the database** (read-only, no data).")
+            elif goal == "data-migration":
+                st.caption("Only when the tables already exist in Databricks (created outside WishBridge). Then give "
+                           "the workspace, the schema the tables are in, and where the data comes from in Settings, "
+                           "and map the tables. Otherwise open the code migration project instead.")
             name = st.text_input("Project name :red[*]", placeholder="acme-dw", disabled=locked, key="new_name")
             source = st.selectbox("Source system :red[*]", list(SOURCES), format_func=lambda k: SOURCES[k].label, disabled=locked)
             parent = st.text_input("Create in folder :red[*]", value=h.default_parent(goal), disabled=locked,
@@ -339,7 +345,7 @@ if not project_ok():
         st.info("Next, in the sidebar: **Open the assessment zip** (or an existing project). Then fill in the "
                 "Databricks workspace and target in Settings, and run.")
     elif goal == "data-migration":
-        st.info("Next, in the sidebar: **Open a project** - the one whose code migration is done. Then fill in the "
+        st.info("Next, in the sidebar: **Open the code migration project** (or **Data only** when the tables already exist in Databricks). Then fill in the "
                 "source data (database connection or exported files) in Settings, and map the data.")
     show_welcome()
     st.stop()

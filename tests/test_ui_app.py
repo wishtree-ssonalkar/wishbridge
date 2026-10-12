@@ -68,7 +68,7 @@ def test_migration_starts_from_the_assessment_zip():
     assert any("Open the assessment zip" in i.value for i in at.info)
     next(b for b in at.button if b.label == "Start a data migration").click().run()
     starts = next(r for r in at.radio if r.key == "start_data-migration")
-    assert starts.options[0] == "Open a project"  # the project whose code migration is done
+    assert starts.options == ["Open the code migration project", "Data only: tables already in Databricks"]
     assert any("code migration is done" in i.value for i in at.info)
 
 
