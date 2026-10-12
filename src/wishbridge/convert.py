@@ -335,4 +335,10 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
     from .overview import build_overview
 
     build_overview(cfg)  # now with each file's conversion status
+    from .dummy_data import build as build_dummy_data
+
+    try:
+        build_dummy_data(cfg)  # made-up rows for the tables, to try the converted code on
+    except (OSError, ValueError, KeyError) as e:
+        result["dummy_data_error"] = str(e)
     return result

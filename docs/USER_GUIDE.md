@@ -178,6 +178,13 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   matches. Below: the code overview and the report to download, the fit check with every object's
   recommendation, file statuses, open items, deployment errors, reconciliation and the full report on the page.
   *Next* goes on to *Share the zip* (assessment) or *Map the data* (migration).
+  **Dummy data:** every run (and every table list read from the database) also makes **5 made-up rows per
+  table** - never client data. The values come from the column definitions only: they fit each type, length,
+  precision and NULL rule, look realistic where the column name says what it holds (email, name, phone, city,
+  date, amount, status...), keep end dates after start dates, use 1..5 in key columns so related tables join, and
+  leave the last row NULL wherever NULL is allowed. Tables come from the database's table list, or from the
+  CREATE TABLE statements in the code. The Report shows them per table; the zip has `dummy_data/` (one CSV per
+  table) and `dummy_data.sql` to load them into the Databricks tables and try the converted code.
 - **5 · Map the data (migration):** *Propose the mapping* lists the source tables (from the database tables read in
   Code, or through the connection) and the Databricks tables, and pairs them by name; tables that do not exist in
   Databricks yet are flagged. Untick what should not be copied, change a target if needed, then *Save and check

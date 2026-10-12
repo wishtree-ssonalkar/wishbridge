@@ -1104,8 +1104,9 @@ if STEP == "run":
             "2. **Analyze** it: size, complexity and effort.\n"
             "3. **Convert** it to Databricks.\n"
             "4. Write the **report** and the **code overview**.\n"
-            "5. Save **everything in one zip**: the code before and after conversion, the report, the code overview "
-            "and the list of open items.\n\n"
+            "5. Save **everything in one zip**: the code before and after conversion, the report, the code overview, "
+            "the list of open items and **dummy data** - 5 made-up rows per table, built from the column types "
+            "only (no client data).\n\n"
             "Nothing needs to be fixed now. A step that cannot run here is noted and skipped; the rest still runs.")
         if st.button("▶ Assess and save everything", type="primary"):
             runner.start(cfg, runner.ASSESSMENT_STEPS, {}, keep_going=True)
@@ -1487,6 +1488,25 @@ if STEP == "results":
                 "details": t.get("error") or ", ".join(f"{ch['check']}: {ch['source']} → {ch['target']}"
                                                        for ch in t.get("checks", []) if not ch["match"]) or "all checks equal",
             } for t in r["tables"]]), width="stretch", hide_index=True)
+
+        dummy = state.get("dummy_data")
+        if dummy and Path(dummy["folder"]).is_dir():
+            st.markdown("#### Dummy data")
+            st.caption(f"**Made-up values, not client data:** {dummy['rows']} rows per table, built from "
+                       f"{dummy['origin']} (types, lengths, NULL rules and column names). Key columns are 1..{dummy['rows']} so "
+                       "tables join; the last row is NULL wherever a column allows it. It is in the zip, and "
+                       "`dummy_data.sql` loads it into the Databricks tables to try the converted code.")
+            folder = Path(dummy["folder"])
+            d1, d2 = st.columns([2, 1])
+            pick = d1.selectbox("Table", [t["table"] for t in dummy["tables"]], key="dummy_pick")
+            sql_file = folder / "dummy_data.sql"
+            if sql_file.is_file():
+                d2.write("")
+                d2.download_button("⬇ dummy_data.sql", sql_file.read_bytes(), file_name=f"{cfg.name}-dummy_data.sql",
+                                   mime="text/plain", width="stretch")
+            csv_file = folder / next(t["file"] for t in dummy["tables"] if t["table"] == pick)
+            if csv_file.is_file():
+                st.dataframe(pd.read_csv(csv_file, dtype=str, keep_default_na=False), hide_index=True, width="stretch")
 
         report = cfg.output_dir / "report.html"
         if report.exists():

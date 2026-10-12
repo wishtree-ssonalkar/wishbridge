@@ -194,6 +194,9 @@ def import_file(cfg: ProjectConfig, path: str | Path, db: str | None = None, rea
     from .schema import build_scripts
 
     build_scripts(cfg, result)
+    from .dummy_data import build as build_dummy_data
+
+    build_dummy_data(cfg)
     return result
 
 

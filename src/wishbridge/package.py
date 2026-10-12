@@ -24,7 +24,8 @@ from .config import ProjectConfig
 from .state import load_state
 
 MANIFEST = "wishbridge_package.json"
-OUTPUT_PARTS = ("state.json", "report.html", "analysis", "converted", "inventory", "logs", "ai_suggestions")
+OUTPUT_PARTS = ("state.json", "report.html", "analysis", "converted", "inventory", "logs", "ai_suggestions",
+                "database_schema", "dummy_data")
 
 README = """WishBridge package - {name}
 Created {when} on {machine}
@@ -39,6 +40,8 @@ Read it now (nothing to install):
   analysis.xlsx            Analyzer workbook (complexity per file, functions used)
   original_code/           The source code before conversion
   converted_code/          The code converted for Databricks (hand fixes from overrides/ included)
+  dummy_data/              MADE-UP sample rows (5 per table, from the column types only - not client data):
+                           one CSV per table and dummy_data.sql to load them into the Databricks tables
 
 Continue the work (on any computer with WishBridge):
   project/                 The rest of the project: settings, hand fixes (overrides/), inventory and results.
@@ -119,6 +122,8 @@ def build_package(cfg: ProjectConfig, include_original: bool = True) -> Path:
         final = Path(c["final_dir"]) if c["final_dir"] else None
         if final is not None and final.is_dir():
             _add_tree(z, final, "converted_code")
+        if (cfg.output_dir / "dummy_data").is_dir():
+            _add_tree(z, cfg.output_dir / "dummy_data", "dummy_data")
         if cfg.overrides_dir and cfg.overrides_dir.is_dir():
             _add_tree(z, cfg.overrides_dir, "project/overrides")
         for part in OUTPUT_PARTS:
