@@ -274,7 +274,7 @@ def test_code_from_the_database_is_used_when_there_are_no_files(project):
     raw = yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))
     assert raw["input"] == "database_code"  # nothing else to assess
     at.run()
-    assert any("1 procedures" in m.value for m in at.markdown)
+    assert any("1 procedure " in m.value for m in at.markdown)
     assert any(b.label == "Next: run →" for b in at.button)  # the code step is complete
 
 
