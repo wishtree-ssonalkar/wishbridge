@@ -498,7 +498,7 @@ if STEP == "settings":
         # Only converters that support the chosen source are offered; "auto" is the default and the recommendation.
         conv_options = ["auto"] + [c for c in ("morph", "bladebridge") if SOURCES[source].dialect in CONVERTER_DIALECTS[c]]
         cur_conv = str(raw.get("transpiler") or "auto").lower()
-        conv_labels = {"auto": "Automatic (recommended)", "morph": "Morph only", "bladebridge": "BladeBridge only"}
+        conv_labels = {"auto": "Automatic (recommended)", "morph": "First method only", "bladebridge": "Second method only"}
         transpiler = st.selectbox("Converter", conv_options, format_func=conv_labels.get,
                                   index=conv_options.index(cur_conv) if cur_conv in conv_options else 0)
         st.caption(converter_summary(source) if transpiler == "auto"
@@ -1144,8 +1144,8 @@ if STEP == "run":
         with c3:
             do_report = st.checkbox("4. Build the report", value=True)
             st.caption("Copying the data comes next, in *Map the data*.")
-        st.caption(f"Target: `{cfg.target_schema}` · converter: {'automatic, ' if cfg.auto_converter else ''}{cfg.transpiler}"
-                   + (" first" if cfg.auto_converter else "") + f" · source: {cfg.source.analyzer_tech}")
+        st.caption(f"Target: `{cfg.target_schema}` · conversion: {'automatic' if cfg.auto_converter else 'one method'}"
+                   f" · source: {cfg.source.label}")
         chosen = [n for n, on in (("analyze", do_analyze), ("convert", do_convert), ("deploy", do_deploy),
                                   ("report", do_report)) if on]
         if st.button("▶ Start", type="primary", disabled=not chosen):
@@ -1485,7 +1485,6 @@ if STEP == "results":
             st.dataframe(pd.DataFrame([{
                 "file": f["file"],
                 "status": STATUS_ICON.get(f["status"], f["status"]) + (" · manual fix" if f.get("manual_override") else ""),
-                "converter": f.get("converter", ""),
                 "auto-fixed": f["fixed"],
                 "open errors": sum(1 for x in f["findings"] if not x["fixed"] and x["severity"] == "error"),
                 "open warnings": sum(1 for x in f["findings"] if not x["fixed"] and x["severity"] == "warning"),

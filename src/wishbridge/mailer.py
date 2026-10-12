@@ -20,7 +20,7 @@ CONTENTS = [
     ("code_overview.html", "how the system is built: structure, tables, procedures, data flows"),
     ("report.html", "assessment, fit check, every converted file and its open items"),
     ("open_items.csv, files.csv, fit_check.csv", "the same details as spreadsheets"),
-    ("original_code/ and converted_code/", "the code before and after conversion"),
+    ("baseline/ and converted_code/", "reference files and the converted code"),
     ("dummy_data/", "made-up sample rows for every table (from the column types only, not client data)"),
     ("project/", "settings and results, so Wishtree can continue the work"),
 ]

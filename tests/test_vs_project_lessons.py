@@ -57,7 +57,7 @@ def test_empty_fixme_next_to_an_explained_issue_is_dropped():
 
 def test_scoring_counts_every_occurrence_and_damage():
     one_finding_three_lines = Finding("unbalanced-parentheses", "error", 1, "Unbalanced (also lines 7, 9)")
-    honest = Finding("transpiler-note", "error", 2, "cannot be translated")
+    honest = Finding("converter-note", "error", 2, "cannot be translated")
     assert _score([one_finding_three_lines]) == (3, 0, True)
     assert _score([honest, honest]) == (2, 0, False)
 

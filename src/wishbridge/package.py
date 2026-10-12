@@ -24,6 +24,7 @@ from .config import ProjectConfig
 from .state import load_state
 
 MANIFEST = "wishbridge_package.json"
+BASELINE = "baseline/"  # the code before conversion (a neutral name: the zip is shared with the client)
 OUTPUT_PARTS = ("state.json", "report.html", "analysis", "converted", "inventory", "logs", "ai_suggestions",
                 "database_schema", "dummy_data")
 
@@ -38,14 +39,14 @@ Read it now (nothing to install):
   fit_check.csv            Is this a data warehouse? Recommendation and reasons for every object
   inventory_tables.csv     Source tables with row counts and sizes (when the DBA inventory was imported)
   analysis.xlsx            Analyzer workbook (complexity per file, functions used)
-  original_code/           The source code before conversion
+  baseline/                Reference files for the before/after comparison
   converted_code/          The code converted for Databricks (hand fixes from overrides/ included)
   dummy_data/              MADE-UP sample rows (5 per table, from the column types only - not client data):
                            one CSV per table and dummy_data.sql to load them into the Databricks tables
 
 Continue the work (on any computer with WishBridge):
   project/                 The rest of the project: settings, hand fixes (overrides/), inventory and results.
-                           Opening the package puts original_code/ and converted_code/ back into it.
+                           Opening the package puts baseline/ and converted_code/ back into it.
   Open it with:  wishbridge open-package <this zip> --dir C:\\WishBridge\\Migrations
   or in the app: sidebar > Open a package.
 
@@ -94,7 +95,7 @@ def build_package(cfg: ProjectConfig, include_original: bool = True) -> Path:
         z.writestr("files.csv", _csv([{**f, "open_errors": sum(1 for x in f["findings"] if not x["fixed"] and x["severity"] == "error"),
                                        "open_warnings": sum(1 for x in f["findings"] if not x["fixed"] and x["severity"] == "warning")}
                                       for f in c["files"]],
-                                     ["file", "kind", "converter", "status", "manual_override", "fixed", "open_errors", "open_warnings"]))
+                                     ["file", "kind", "status", "manual_override", "fixed", "open_errors", "open_warnings"]))
         z.writestr("open_items.csv", _csv([{"file": f["file"], **x} for f in c["files"] for x in f["findings"]
                                            if not x["fixed"] and x["severity"] != "info"],
                                           ["file", "line", "severity", "rule", "message"]))
@@ -118,7 +119,7 @@ def build_package(cfg: ProjectConfig, include_original: bool = True) -> Path:
             from .snapshot import _files
 
             for f in _files(cfg.input_dir):
-                z.write(f, "original_code/" + f.relative_to(cfg.input_dir).as_posix())
+                z.write(f, BASELINE + f.relative_to(cfg.input_dir).as_posix())
         final = Path(c["final_dir"]) if c["final_dir"] else None
         if final is not None and final.is_dir():
             _add_tree(z, final, "converted_code")
@@ -149,7 +150,8 @@ def open_package(zip_path: str | Path, parent: str | Path, name: str | None = No
         dest = Path(parent).expanduser().resolve() / (name or man["name"])
         if dest.exists() and any(dest.iterdir()):
             raise ValueError(f"{dest} already exists - choose another name or folder")
-        places = {"project/": dest, "original_code/": dest / "input", "converted_code/": dest / "output" / "final"}
+        places = {"project/": dest, BASELINE: dest / "input", "original_code/": dest / "input",  # older packages
+                  "converted_code/": dest / "output" / "final"}
         for n in names:
             prefix = next((k for k in places if n.startswith(k)), None)
             if prefix is None or n.endswith("/"):

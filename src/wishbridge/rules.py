@@ -355,12 +355,12 @@ def is_benign(message: str) -> bool:
 def note_finding(note: str, line: int) -> Finding:
     note = note or EMPTY_NOTE
     if is_benign(note):
-        return Finding("transpiler-note", INFO, line, note)
+        return Finding("converter-note", INFO, line, note)
     for pat, advice in GUIDANCE:
         if pat.search(note):
             note = f"{note} -> Databricks: {advice}"
             break
-    return Finding("transpiler-note", ERROR if BLOCKING_NOTES.search(note) else WARNING, line, note)
+    return Finding("converter-note", ERROR if BLOCKING_NOTES.search(note) else WARNING, line, note)
 
 
 _UNCONVERTED = re.compile(r"\A\s*--\s*internal error\b", I)
@@ -401,7 +401,7 @@ _SESSION_SETTINGS = re.compile(
 
 def dropped_statement_check(source_sql: str, converted_sql: str, findings: list[Finding]) -> Finding | None:
     """Warn when the converted file has fewer statements than the source and the gap is not explained by notes."""
-    notes = sum(1 for f in findings if f.rule in ("transpiler-note", "empty-create"))
+    notes = sum(1 for f in findings if f.rule in ("converter-note", "empty-create"))
     source_sql = _SESSION_SETTINGS.sub("", source_sql)
     missing = count_statements(source_sql) - count_statements(converted_sql) - notes
     if missing > 0:
@@ -450,8 +450,8 @@ def detect(sql: str, dialect: str | None = None) -> list[Finding]:
     sys_lines = {f.line for f in findings if f.rule == "system-variable"}
     findings = [f for f in findings if not (f.rule == "local-variable" and f.line in sys_lines)]
     # A bare /*FIXME*/ marker next to an issue a rule already explains on the same line adds nothing.
-    explained = {f.line for f in findings if f.rule != "transpiler-note"}
-    findings = [f for f in findings if not (f.rule == "transpiler-note" and f.message == EMPTY_NOTE and f.line in explained)]
+    explained = {f.line for f in findings if f.rule != "converter-note"}
+    findings = [f for f in findings if not (f.rule == "converter-note" and f.message == EMPTY_NOTE and f.line in explained)]
     return _dedupe(findings)
 
 

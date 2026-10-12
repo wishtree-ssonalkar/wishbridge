@@ -290,10 +290,10 @@ def _html(cfg, s, folders, per_schema, tables, routines, feature_users, pairs, c
             for k, v in sorted(feature_users.items(), key=lambda kv: -len(kv[1]))]))
 
     parts.append("<h2>Old and new files</h2><p class='muted'>Every source file next to its converted Databricks file. "
-                 "In the package: <code>original_code/</code> and <code>converted_code/</code>.</p>")
-    parts.append(_table(["Original file", "Converted file", "Status", "Open items", "Converter"], [
+                 "In the package: <code>baseline/</code> and <code>converted_code/</code>.</p>")
+    parts.append(_table(["Original file", "Converted file", "Status", "Open items"], [
         [f"<code>{escape(p['old'])}</code>" if p["old"] else "—", f"<code>{escape(p['new'])}</code>" if p["new"] else "—",
-         _pill(p["status"]), str(p["open"]) if p["open"] else "—", escape(p["converter"]) or "—"] for p in pairs]))
+         _pill(p["status"]), str(p["open"]) if p["open"] else "—"] for p in pairs]))
 
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

@@ -169,11 +169,10 @@ def converter_summary(source_key: str) -> str:
     """Plain-words description of automatic mode for a source, e.g. for the app."""
     s = SOURCES[source_key]
     other = "bladebridge" if s.transpiler == "morph" else "morph"
-    names = {"morph": "Morph", "bladebridge": "BladeBridge"}
     if s.dialect in CONVERTER_DIALECTS[other]:
-        return (f"{names[s.transpiler]} converts {s.analyzer_tech}; any file it can't fully convert is also tried "
-                f"with {names[other]}, and the better result is kept.")
-    return f"{names[s.transpiler]} converts {s.analyzer_tech} (the only converter for it)."
+        return ("Each file is converted automatically; a file that can't be fully converted is also tried a second "
+                "way, and the better result is kept.")
+    return "Each file is converted automatically (one method fits this source)."
 
 
 def load_config(path: str | Path) -> ProjectConfig:

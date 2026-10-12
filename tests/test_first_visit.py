@@ -103,8 +103,8 @@ def test_review_package(tmp_path):
                                                         "message": "check", "fixed": False}]}]})
     out = build_package(cfg)
     names = zipfile.ZipFile(out).namelist()
-    assert {"README.txt", "report.html", "files.csv", "open_items.csv", "converted_code/a.sql", "original_code/a.sql"} <= set(names)
-    assert "original_code/a.sql" not in zipfile.ZipFile(build_package(cfg, include_original=False)).namelist()
+    assert {"README.txt", "report.html", "files.csv", "open_items.csv", "converted_code/a.sql", "baseline/a.sql"} <= set(names)
+    assert "baseline/a.sql" not in zipfile.ZipFile(build_package(cfg, include_original=False)).namelist()
 
 
 def test_package_opens_as_a_working_project_elsewhere(tmp_path):
@@ -128,7 +128,7 @@ def test_package_opens_as_a_working_project_elsewhere(tmp_path):
                                           "input": str(cfg.input_dir / "a.sql"), "final": str(final / "a.sql")}]})
     pkg = build_package(cfg)
     names = zipfile.ZipFile(pkg).namelist()
-    assert {"original_code/a.sql", "converted_code/a.sql", "project/project.yml", "project/output/state.json"} <= set(names)
+    assert {"baseline/a.sql", "converted_code/a.sql", "project/project.yml", "project/output/state.json"} <= set(names)
     # "<old name>-copy" starts with the old name: paths must not be rewritten twice
     dest = open_package(pkg, tmp_path / "wishtree", "client-visit-copy")
     moved = json.loads((dest / "output" / "state.json").read_text(encoding="utf-8"))["convert"]
@@ -146,7 +146,7 @@ def test_package_is_made_even_without_conversion(tmp_path):
     cfg = project(tmp_path)
     (cfg.input_dir / "a.sql").write_text("CREATE TABLE dbo.T (a INT);", encoding="utf-8")
     names = set(zipfile.ZipFile(build_package(cfg)).namelist())  # nothing analyzed or converted yet
-    assert {"README.txt", "report.html", "code_overview.html", "original_code/a.sql"} <= names
+    assert {"README.txt", "report.html", "code_overview.html", "baseline/a.sql"} <= names
 
 
 def test_mail_addresses_and_message():

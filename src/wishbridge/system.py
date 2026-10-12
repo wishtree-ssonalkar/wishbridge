@@ -143,7 +143,7 @@ def requirements() -> list[Requirement]:
             version=lambda: (re.search(r"v?\d+\.\d+\.\d+", _out(_cli() + ["--version"])) or [""])[0],
             minimum="0.205 (the new Go CLI)", compatible=lambda v: not v or tuple(map(int, re.findall(r"\d+", v)[:2])) >= (0, 205)),
         Requirement(
-            "java", "Java", "the Morph converter runs on Java",
+            "java", "Java", "the SQL converter runs on Java",
             lambda: shutil.which("java"),
             lambda: _winget("EclipseAdoptium.Temurin.17.JDK") if osn == "windows" else
             [["brew", "install", "--cask", "temurin@17"]] if osn == "mac" and shutil.which("brew") else [],
@@ -161,8 +161,8 @@ def requirements() -> list[Requirement]:
     for name, d in TRANSPILER_DIRS.items():
         folder = LABS / "remorph-transpilers" / d
         reqs.append(Requirement(
-            f"converter-{name}", f"Converter: {'Morph' if name == 'morph' else 'BladeBridge'}",
-            "converts the SQL / ETL code",
+            f"converter-{name}", "SQL converter" if name == "morph" else "SQL and ETL converter",
+            "converts the SQL code" if name == "morph" else "converts the SQL and ETL (SSIS, Informatica, DataStage) code",
             lambda folder=folder: str(folder) if (folder / "lib" / "config.yml").exists() else None,
             lambda: [_cli() + ["labs", "lakebridge", "install-transpile", "--interactive", "false"]],
             "databricks labs lakebridge install-transpile --interactive false", after=("cli", "lakebridge"),
