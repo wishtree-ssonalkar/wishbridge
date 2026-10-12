@@ -12,40 +12,20 @@ and points `data.source_catalog` at that catalog.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
 from typing import Any
 
+from . import sources as _sources
 from .config import ProjectConfig
 from .dbx import SqlError, Warehouse
+from .sources.base import DbType
 
 SECRET_SCOPE = "wishbridge"
 
 
-@dataclass(frozen=True)
-class DbType:
-    key: str            # Databricks connection TYPE
-    label: str
-    port: int
-    catalog_option: str | None  # option naming the database in CREATE FOREIGN CATALOG (None: not needed)
-    catalog_label: str = "Database"
-    extra: tuple[tuple[str, str], ...] = field(default_factory=tuple)  # (option, label) also required
-
-
-DB_TYPES: dict[str, DbType] = {t.key: t for t in [
-    DbType("sqlserver", "Microsoft SQL Server / Azure SQL", 1433, "database"),
-    DbType("sqldw", "Azure Synapse (dedicated SQL pool)", 1433, "database"),
-    DbType("oracle", "Oracle", 1521, "service_name", "Service name"),
-    DbType("snowflake", "Snowflake", 443, "database", extra=(("sfWarehouse", "Snowflake warehouse"),)),
-    DbType("teradata", "Teradata", 1025, None),
-    DbType("redshift", "Amazon Redshift", 5439, "database"),
-    DbType("postgresql", "PostgreSQL", 5432, "database"),
-    DbType("mysql", "MySQL", 3306, None),
-]}
-
-# Default connection type for each WishBridge source system (None: not supported by Lakehouse Federation
-# with a password - use exported files instead).
-DEFAULT_FOR_SOURCE = {"mssql": "sqlserver", "synapse": "sqldw", "oracle": "oracle", "snowflake": "snowflake",
-                      "teradata": "teradata", "redshift": "redshift", "bigquery": None, "netezza": None}
+# Per warehouse (sources/<warehouse>.py): the connection type for each database, and which one each
+# source system uses (None: Lakehouse Federation can't connect to it with a password - use exported files).
+DB_TYPES: dict[str, DbType] = _sources.FEDERATION
+DEFAULT_FOR_SOURCE = _sources.FEDERATION_FOR
 
 NOT_SUPPORTED_HINT = ("Lakehouse Federation can't connect to this source with a user and password. Export the tables "
                       "to Parquet/CSV, upload them to a Unity Catalog volume and use the 'files' data method.")

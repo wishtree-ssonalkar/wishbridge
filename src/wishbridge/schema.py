@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from . import sources as _sources
 from .config import ProjectConfig
 from .state import load_state, save_step
 
@@ -54,19 +55,10 @@ _COMMON = {
 }
 _DECIMAL = {"decimal", "numeric", "number", "dec", "bignumeric", "bigdecimal"}
 
-# Per database, where a name means something else than in _COMMON.
-_SPECIAL = {
-    "sqlserver": {"timestamp": "BINARY"},  # SQL Server timestamp = rowversion
-    "synapse": {"timestamp": "BINARY"},
-    "oracle": {"date": "TIMESTAMP", "float": "DOUBLE"},  # Oracle DATE keeps the time of day
-    "bigquery": {"datetime": "TIMESTAMP_NTZ", "numeric": "DECIMAL(38,9)", "bignumeric": "DECIMAL(38,9)",
-                 "struct": "VARIANT", "record": "VARIANT"},
-    "snowflake": {"datetime": "TIMESTAMP_NTZ", "timestamp": "TIMESTAMP_NTZ"},
-}
-# Teradata stores type codes in DBC.ColumnsV.ColumnType.
-_TERADATA = {"CV": _STRING, "CF": _STRING, "CO": _STRING, "JN": _STRING, "XM": _STRING, "I": "INT", "I1": "TINYINT",
-             "I2": "SMALLINT", "I8": "BIGINT", "F": "DOUBLE", "DA": "DATE", "TS": "TIMESTAMP", "SZ": "TIMESTAMP",
-             "AT": _STRING, "TZ": _STRING, "BF": "BINARY", "BV": "BINARY", "BO": "BINARY", "PD": _STRING}
+# Per database, where a name means something else than in _COMMON (sources/<warehouse>.py: TYPES),
+# and Teradata's type codes (sources/teradata.py: TYPE_CODES).
+_SPECIAL = _sources.TYPES
+_TERADATA = _sources.teradata.TYPE_CODES
 
 
 def _int(v: Any) -> int | None:

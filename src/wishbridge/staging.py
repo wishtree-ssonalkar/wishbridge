@@ -15,6 +15,7 @@ import shutil
 from dataclasses import replace
 from pathlib import Path
 
+from . import sources as _sources
 from .config import ETL_SOURCES, ConfigError, ProjectConfig
 
 TSQL_SOURCES = frozenset({"mssql", "synapse"})
@@ -48,22 +49,8 @@ def source_files(cfg: ProjectConfig) -> list[Path]:
 
 
 # --- Safe tidy-ups of SQL Server source before conversion (only in the staged copy) ------------------------
-# Generated (SSDT / SSMS) scripts use patterns LakeBridge's parser fails on, which makes it give up on the
-# whole file. Each rewrite below keeps the meaning on Databricks and is reported per file.
-I, M = re.IGNORECASE, re.MULTILINE
-_TSQL_PREP: list[tuple[str, str, re.Pattern, str, str]] = [
-    ("with-check", "info", re.compile(r"\bWITH\s+(?:NO)?CHECK\s+(ADD\s+CONSTRAINT)\b", I), r"\1",
-     "Removed WITH CHECK / WITH NOCHECK from ADD CONSTRAINT (it only controls validation of existing rows)"),
-    ("check-constraint", "info",
-     re.compile(r"^[ \t]*ALTER\s+TABLE\s+[^\n;]*?\s(?:NO)?CHECK\s+CONSTRAINT\s+[^\n;]*;?[ \t]*\r?\n?", I | M), "",
-     "Removed ALTER TABLE ... CHECK / NOCHECK CONSTRAINT (enabling or disabling constraints has no Databricks equivalent)"),
-    ("temporal-columns", "warning", re.compile(r"\s+GENERATED\s+ALWAYS\s+AS\s+ROW\s+(?:START|END)(?:\s+HIDDEN)?", I), "",
-     "Removed system-versioning (temporal table) clauses before conversion: Delta keeps history itself - review the "
-     "period columns, drop the history table and query history with VERSION AS OF / TIMESTAMP AS OF"),
-    ("temporal-period", "warning", re.compile(r",?\s*PERIOD\s+FOR\s+SYSTEM_TIME\s*\([^)]*\)", I), "", ""),
-    ("temporal-versioning", "warning",
-     re.compile(r"\s*WITH\s*\(\s*SYSTEM_VERSIONING\s*=\s*ON(?:\s*\([^()]*\))?\s*\)", I), "", ""),
-]
+# Generated (SSDT / SSMS) scripts use patterns the converter fails on; the rewrites are in sources/sqlserver.py.
+_TSQL_PREP = _sources.sqlserver.PREP
 
 
 def prepare_tsql(text: str) -> tuple[str, list[dict[str, str]]]:

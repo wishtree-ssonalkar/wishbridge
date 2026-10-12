@@ -15,18 +15,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from . import sources as _sources
 from .config import ProjectConfig
 from .state import save_step
 
 FOLDER = "database_code"
 
-QUERY = """SELECT s.name AS schema_name, o.name AS object_name, RTRIM(o.type) AS type,
-       m.definition, CAST(ISNULL(OBJECTPROPERTY(o.object_id, 'IsEncrypted'), 0) AS int) AS encrypted
-FROM sys.objects o
-JOIN sys.schemas s ON s.schema_id = o.schema_id
-LEFT JOIN sys.sql_modules m ON m.object_id = o.object_id
-WHERE o.is_ms_shipped = 0 AND o.type IN ('P', 'V', 'FN', 'IF', 'TF', 'TR')
-ORDER BY s.name, o.type, o.name"""
+QUERY = _sources.sqlserver.CODE_QUERY  # sources/sqlserver.py
 
 # Created by SSMS for database diagrams, not by the client
 TOOL_OBJECTS = frozenset({"fn_diagramobjects", "sp_alterdiagram", "sp_creatediagram", "sp_dropdiagram",

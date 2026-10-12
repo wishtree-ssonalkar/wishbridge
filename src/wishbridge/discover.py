@@ -15,6 +15,7 @@ from pathlib import Path
 
 import yaml
 
+from . import sources as _sources
 from .config import SOURCES, load_config, render_template
 
 CODE_EXTENSIONS = {".sql", ".ddl", ".prc", ".pls", ".pks", ".pkb", ".bteq", ".btq", ".xml", ".dsx", ".isx", ".dtsx", ".zip"}
@@ -22,23 +23,8 @@ SKIP_DIRS = {".git", ".github", ".vs", ".vscode", ".idea", "bin", "obj", "node_m
 SAMPLE_FILES = 300          # files read for keyword detection
 SAMPLE_BYTES = 20_000       # bytes read per file
 
-# Keyword patterns that point at a source dialect (each hit counts once per file).
-DIALECT_HINTS: dict[str, list[str]] = {
-    "mssql": [r"\[dbo\]\.", r"^\s*GO\s*$", r"\bNVARCHAR\b", r"@@ROWCOUNT|@@IDENTITY|@@ERROR", r"\bIDENTITY\s*\(\s*\d",
-              r"\bGETDATE\s*\(", r"\bSET\s+NOCOUNT\b", r"\bNOLOCK\b"],
-    "synapse": [r"\bDISTRIBUTION\s*=\s*(?:HASH|ROUND_ROBIN|REPLICATE)", r"\bCLUSTERED\s+COLUMNSTORE\s+INDEX\b"],
-    "oracle": [r"\bVARCHAR2\b", r"\bNUMBER\s*\(", r"\bNVL\s*\(", r"\bCREATE\s+OR\s+REPLACE\s+PACKAGE\b",
-               r"\bSYSDATE\b", r"\bDBMS_\w+\.", r"\bROWNUM\b", r"^\s*/\s*$"],
-    "snowflake": [r"\bVARIANT\b", r"\bIFF\s*\(", r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TASK|STREAM|STAGE)\b",
-                  r"\bFLATTEN\s*\(", r"\bTIMESTAMP_NTZ\b", r"@\w+/"],
-    "teradata": [r"\bMULTISET\b", r"\bPRIMARY\s+INDEX\b", r"^\s*SEL\b", r"^\s*\.(?:LOGON|QUIT|IF)\b",
-                 r"\bCOLLECT\s+STAT", r"\bVOLATILE\s+TABLE\b"],
-    "redshift": [r"\bDISTKEY\b", r"\bSORTKEY\b", r"\bDISTSTYLE\b", r"\bENCODE\s+\w+", r"\bUNLOAD\s*\("],
-    "bigquery": [r"\bINT64\b", r"\bSTRUCT\s*<", r"\bARRAY\s*<", r"`[\w-]+\.[\w-]+\.[\w-]+`", r"\bSAFE_CAST\s*\(",
-                 r"\bTIMESTAMP_(?:DIFF|SUB|ADD|TRUNC)\s*\(", r"\bSELECT\s+\*\s+EXCEPT\s*\(", r"\bPARTITION\s+BY\s+DATE\s*\(",
-                 r"\bDATE_(?:DIFF|SUB|ADD)\s*\([^)]*\bINTERVAL\b"],
-    "netezza": [r"\bDISTRIBUTE\s+ON\b", r"\bORGANIZE\s+ON\b", r"\bGROOM\s+TABLE\b", r"\bGENERATE\s+STATISTICS\b"],
-}
+# Keyword patterns that point at a source dialect (each hit counts once per file): sources/<warehouse>.py HINTS.
+DIALECT_HINTS: dict[str, list[str]] = _sources.HINTS
 _HINTS = {k: [re.compile(p, re.I | re.M) for p in v] for k, v in DIALECT_HINTS.items()}
 
 

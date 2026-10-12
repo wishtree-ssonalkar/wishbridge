@@ -19,73 +19,8 @@ from typing import Any
 from .config import ProjectConfig
 from .staging import read_source, source_files
 
-DTS = "{www.microsoft.com/SqlServer/Dts}"
-
-
-def task_key(name: str) -> str:
-    return re.sub(r"[^\w-]", "_", Path(name).stem)[:100]
-
-
-def _package_name(task: ET.Element, connections: dict[str, str]) -> str | None:
-    """The package an Execute Package task runs: project reference, or a file connection (package deployment)."""
-    for el in task.iter():
-        if el.tag.endswith("PackageName") and (el.text or "").strip():
-            return Path(el.text.strip().replace("\\", "/")).stem
-    for el in task.iter():
-        if el.tag.endswith("Connection"):
-            conn = (el.text or "").strip()
-            if conn in connections:
-                return Path(connections[conn].replace("\\", "/")).stem
-    return None
-
-
-def ssis_plan(cfg: ProjectConfig) -> dict[str, Any]:
-    """{'depends': {package: [packages it waits for]}, 'orchestrators': {master: [packages it runs]}}"""
-    depends: dict[str, set[str]] = {}
-    orchestrators: dict[str, list[str]] = {}
-    for rel in source_files(cfg):
-        if rel.suffix.lower() != ".dtsx":
-            continue
-        try:
-            root = ET.fromstring(read_source(cfg.input_dir / rel).encode("utf-8"))
-        except ET.ParseError:
-            continue
-        connections = {}
-        for cm in root.iter(f"{DTS}ConnectionManager"):
-            if cm.attrib.get(f"{DTS}ObjectName"):
-                inner = next((x for x in cm.iter(f"{DTS}ConnectionManager") if x is not cm), None)
-                cs = (inner.attrib.get(f"{DTS}ConnectionString") if inner is not None else "") or ""
-                for key in (cm.attrib.get(f"{DTS}DTSID", ""), cm.attrib.get(f"{DTS}refId", ""), cm.attrib[f"{DTS}ObjectName"]):
-                    if key:
-                        connections[key] = cs
-        execs = [e for e in root.iter(f"{DTS}Executable") if e is not root]
-        runs: dict[str, str] = {}  # refId of an Execute Package task -> package it runs
-        leaf_types = set()
-        for e in execs:
-            etype = e.attrib.get(f"{DTS}ExecutableType", "")
-            if "ExecutePackageTask" in etype:
-                name = _package_name(e, connections)
-                if name:
-                    runs[e.attrib.get(f"{DTS}refId", "")] = name
-            elif not any(c in etype for c in ("Sequence", "ForLoop", "ForEachLoop", "STOCK:SEQUENCE")):
-                leaf_types.add(etype)
-        if not runs:
-            continue
-        master = rel.stem
-        children = list(dict.fromkeys(runs.values()))
-        if not leaf_types:
-            orchestrators[master] = children
-
-        def packages_under(ref: str) -> set[str]:
-            return {p for r, p in runs.items() if r == ref or r.startswith(ref + "\\")}
-
-        for pc in root.iter(f"{DTS}PrecedenceConstraint"):
-            before, after = packages_under(pc.attrib.get(f"{DTS}From", "")), packages_under(pc.attrib.get(f"{DTS}To", ""))
-            for a in after:
-                depends.setdefault(a, set()).update(before - {a})
-        for c in children:
-            depends.setdefault(c, set())
-    return {"depends": {k: sorted(v) for k, v in depends.items()}, "orchestrators": orchestrators}
+# Reading the package order from SSIS packages is in sources/ssis.py.
+from .sources.ssis import DTS, _package_name, ssis_plan, task_key  # noqa: E402,F401
 
 
 def job_tasks(cfg: ProjectConfig, notebooks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:

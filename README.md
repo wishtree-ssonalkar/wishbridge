@@ -201,7 +201,7 @@ shells left by the transpiler (commented out); missing `;` between statements th
 | Snowflake | `@stage` references, `FLATTEN`, `TIMESTAMP_LTZ` / `TIMESTAMP_TZ` |
 | Teradata | BTEQ dot-commands, `VOLATILE` / `MULTISET` tables, `PRIMARY INDEX`, `COLLECT STATISTICS`, `SEL`, `TOP` |
 
-Add rules in [src/wishbridge/rules.py](src/wishbridge/rules.py), each with a test in `tests/`.
+Rules for one warehouse are in its file in [src/wishbridge/sources/](src/wishbridge/sources/) (`FIXES`, `DETECTORS`); rules for every source are in [src/wishbridge/rules.py](src/wishbridge/rules.py). Add each rule with a test in `tests/`.
 
 ## Examples
 
@@ -211,6 +211,27 @@ Add rules in [src/wishbridge/rules.py](src/wishbridge/rules.py), each with a tes
 | `examples/snowflake-demo` | Streams, tasks, stages, VARIANT/FLATTEN |
 | `examples/oracle-demo` | PL/SQL, sequences, CONNECT BY, `(+)` joins, ROWNUM |
 | `examples/ssis-demo` | Visual Studio SSIS project: master package becomes one Databricks job with task dependencies; SSIS expressions fixed in the notebooks; hand fixes for an Aggregate and a BIT flag; output reconciled with the legacy load |
+
+## Where the code is
+
+**One file per warehouse** in [src/wishbridge/sources/](src/wishbridge/sources/) holds everything WishBridge knows
+about it, so changing how one warehouse is handled means opening one file:
+
+| File | Warehouse |
+|---|---|
+| `sqlserver.py` | SQL Server / Azure SQL: table-list query, code reader (procedures, views, functions, triggers), tidy-ups before conversion, T-SQL fixes and checks |
+| `synapse.py` | Azure Synapse (shares the T-SQL rules of `sqlserver.py`) |
+| `oracle.py`, `snowflake.py`, `teradata.py`, `redshift.py`, `bigquery.py`, `netezza.py` | Each database's table-list query, type differences, connection type and checks |
+| `ssis.py` | SSIS: package order (master packages) and what the packages read, write and call |
+| `informatica.py`, `datastage.py` | Informatica PowerCenter / Cloud, DataStage |
+| `postgresql.py`, `mysql.py` | Connection types for copying data |
+| `base.py`, `__init__.py` | The building blocks, and the list of warehouses (what each file can define is described at its top) |
+
+To add a warehouse (e.g. Microsoft Fabric), copy the closest file, fill in what applies and add it to
+`WAREHOUSES` in `sources/__init__.py`. **The steps shared by every warehouse** stay in `src/wishbridge/`:
+`discover.py` (open a folder), `inventory.py` / `dbcode.py` / `schema.py` (read the database, table scripts),
+`convert.py` + `rules.py` (convert and check), `deploy.py`, `data.py`, `mapping.py`, `reconcile.py`,
+`report.py`, `package.py`, and the app in `ui/app.py`.
 
 ## Development
 

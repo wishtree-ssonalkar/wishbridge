@@ -8,38 +8,15 @@ from pathlib import Path
 
 import yaml
 
+from . import sources as _sources
+from .sources.base import Source
+
 
 class ConfigError(Exception):
     pass
 
 
-@dataclass(frozen=True)
-class Source:
-    key: str
-    analyzer_tech: str  # value for `lakebridge analyze --source-tech`
-    transpiler: str  # "morph" or "bladebridge"
-    dialect: str  # value for `lakebridge transpile --source-dialect`
-
-    @property
-    def label(self) -> str:
-        """What the user sees: WishBridge migrates data warehouses and the ETL that loads them."""
-        return SOURCE_LABELS.get(self.key, self.analyzer_tech)
-
-
-SOURCE_LABELS = {
-    "mssql": "SQL Server data warehouse",
-    "synapse": "Azure Synapse",
-    "snowflake": "Snowflake",
-    "oracle": "Oracle data warehouse",
-    "teradata": "Teradata",
-    "redshift": "Amazon Redshift",
-    "bigquery": "Google BigQuery",
-    "netezza": "IBM Netezza",
-    "datastage": "IBM DataStage (ETL)",
-    "informatica": "Informatica PowerCenter (ETL)",
-    "informatica-cloud": "Informatica Cloud (ETL)",
-    "ssis": "SSIS (ETL)",
-}
+SOURCE_LABELS = _sources.LABELS  # per warehouse: sources/<warehouse>.py
 
 # What WishBridge is for, in one place (shown by the app, the CLI and the docs).
 PURPOSE = "Migrate your data warehouse and the ETL that loads it to Databricks."
@@ -53,33 +30,15 @@ SCOPE_ROWS = [
 ]
 
 
-# Analyzer names come from lakebridge Analyzer.supported_source_technologies();
-# dialects come from each transpiler's lib/config.yml.
-SOURCES: dict[str, Source] = {
-    s.key: s
-    for s in [
-        Source("mssql", "MS SQL Server", "morph", "mssql"),
-        Source("synapse", "Synapse", "morph", "synapse"),
-        Source("snowflake", "Snowflake", "morph", "snowflake"),
-        Source("oracle", "Oracle", "morph", "oracle"),
-        # BladeBridge: in testing Morph failed to parse plain Teradata DDL and SEL / TOP queries
-        Source("teradata", "Teradata", "bladebridge", "teradata"),
-        Source("redshift", "Redshift", "morph", "redshift"),
-        Source("bigquery", "BigQuery", "morph", "bigquery"),
-        Source("netezza", "Netezza", "bladebridge", "netezza"),
-        Source("datastage", "Datastage", "bladebridge", "datastage"),
-        Source("informatica", "Informatica - PC", "bladebridge", "informatica (desktop edition)"),
-        Source("informatica-cloud", "Informatica Cloud", "bladebridge", "informatica cloud"),
-        Source("ssis", "SSIS", "bladebridge", "ssis"),
-    ]
-}
+# Every source system, from its warehouse file (sources/<warehouse>.py).
+SOURCES: dict[str, Source] = _sources.SOURCES
 
 TRANSPILER_DIRS = {"morph": "databricks-morph-plugin", "bladebridge": "bladebridge"}
 
 # ETL tools: BladeBridge asks which code to generate; WishBridge defaults to SPARKSQL.
-ETL_SOURCES = frozenset({"datastage", "informatica", "informatica-cloud", "ssis"})
+ETL_SOURCES = frozenset(_sources.ETL_TARGETS)  # the warehouse files that set ETL_TARGETS
 # What BladeBridge can generate for each ETL tool (tech_mapper_main.json): Informatica Cloud only to PySpark.
-ETL_TARGETS = {"datastage": "SPARKSQL", "informatica": "SPARKSQL", "informatica-cloud": "PYSPARK", "ssis": "SPARKSQL"}
+ETL_TARGETS = _sources.ETL_TARGETS
 
 # Source dialects each LakeBridge converter accepts (from each transpiler's lib/config.yml).
 CONVERTER_DIALECTS = {

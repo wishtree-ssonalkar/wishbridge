@@ -9,7 +9,6 @@ call, found or missing - so the team knows what else to ask the client for.
 
 from __future__ import annotations
 
-import html
 import re
 import shutil
 from dataclasses import replace
@@ -17,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import ETL_SOURCES, SOURCES, ProjectConfig
+from .sources import ssis as _ssis
 from .state import load_state
 
 FOLDER = "_database_code"  # inside the converted code
@@ -77,56 +77,8 @@ def analyze_extra(cfg: ProjectConfig) -> dict[str, Any] | None:
     return {"programs": sub["programs"], "hours": sub["estimated_hours_baseline"], "report_file": sub.get("report_file", "")}
 
 
-# --- What the packages use ------------------------------------------------------------------------------
-_NAME = r"((?:\[[^\]]+\]|\"[^\"]+\"|[\w@#$]+)(?:\s*\.\s*(?:\[[^\]]+\]|\"[^\"]+\"|[\w@#$]+)){0,3})"
-_PATTERNS = [
-    ("calls", "procedure", re.compile(r"\bEXEC(?:UTE)?\s+(?:@\w+\s*=\s*)?" + _NAME, re.I)),
-    ("writes", "table", re.compile(r"\b(?:INSERT\s+(?:INTO\s+)?|UPDATE\s+|DELETE\s+(?:FROM\s+)?|TRUNCATE\s+TABLE\s+|"
-                                   r"MERGE\s+(?:INTO\s+)?)" + _NAME, re.I)),
-    ("reads", "table", re.compile(r"\b(?:FROM|JOIN|USING)\s+" + _NAME, re.I)),
-]
-_SQL_ATTR = re.compile(r'SqlStatementSource="([^"]*)"', re.I)
-_SQL_PROP = re.compile(r'<property[^>]*name="(SqlCommand|SqlCommandVariable)"[^>]*>([^<]*)</property>', re.I)
-_ROWSET = re.compile(r'<property[^>]*name="OpenRowset"[^>]*>([^<]+)</property>', re.I)
-_SKIP = re.compile(r"^(?:#|@|sys\.|information_schema\.|tempdb\.|master\.|msdb\.)|^(?:select|set|values|dual)$", re.I)
-
-
-def _clean(name: str) -> str:
-    parts = [p.strip().strip('[]"') for p in name.split(".") if p.strip()]
-    return ".".join(parts[-2:]) if parts else ""
-
-
-def package_usage(cfg: ProjectConfig) -> dict[str, dict[str, Any]]:
-    """Objects the SSIS packages use: name -> {kind, how (reads/writes/calls), packages}."""
-    from .staging import read_source
-
-    used: dict[str, dict[str, Any]] = {}
-
-    def add(name: str, kind: str, how: str, package: str) -> None:
-        name = _clean(name)
-        if not name or _SKIP.search(name) or name.lower().startswith(("(", "select")):
-            return
-        key = name.lower()
-        e = used.setdefault(key, {"name": name, "kind": kind, "how": set(), "packages": set()})
-        e["how"].add(how)
-        e["packages"].add(package)
-        if kind == "procedure":
-            e["kind"] = "procedure"
-
-    if not cfg.input_dir.is_dir():
-        return {}
-    for p in sorted(cfg.input_dir.rglob("*.dtsx")):
-        text = read_source(p)
-        sql = [html.unescape(m.group(1)) for m in _SQL_ATTR.finditer(text)]
-        sql += [html.unescape(m.group(2)) for m in _SQL_PROP.finditer(text)]
-        for stmt in sql:
-            stmt = re.sub(r"--[^\n]*|/\*.*?\*/|'[^']*'", " ", stmt, flags=re.S)
-            for how, kind, pat in _PATTERNS:
-                for m in pat.finditer(stmt):
-                    add(m.group(1), kind, how, p.stem)
-        for m in _ROWSET.finditer(text):
-            add(html.unescape(m.group(1)), "table", "reads or writes", p.stem)
-    return used
+# --- What the packages use: parsing the SSIS packages is in sources/ssis.py ------------------------------
+package_usage = _ssis.package_usage
 
 
 def known_objects(cfg: ProjectConfig) -> tuple[set[str], set[str]] | None:
