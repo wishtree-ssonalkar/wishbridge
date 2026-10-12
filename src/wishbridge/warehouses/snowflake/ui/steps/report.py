@@ -60,9 +60,9 @@ def render(cfg, raw, packages) -> None:
         report_overview(cfg, state)
         if cfg.phase == "assessment":
             next_button("Next: share the zip →", "send", "next-report")
-        else:
-            next_button("Next: map the data →", "data", "next-report")
-        if cfg.phase == "migration" and state.get("convert"):
+        elif cfg.phase == "code-migration" and state.get("convert"):
+            next_button("Next: fix code →", "fix", "next-report")
+        if cfg.phase != "assessment" and state.get("convert"):
             if st.button("📦 Save everything in one zip"):
                 from wishbridge.warehouses.snowflake.package import build_package
 

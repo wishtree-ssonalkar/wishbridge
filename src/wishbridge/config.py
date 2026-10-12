@@ -52,6 +52,15 @@ DEFAULT_HOURS_PER_FILE = {"LOW": 0.5, "MEDIUM": 2.0, "HIGH": 6.0, "VERY HIGH": 1
 _PROD_SEGMENT = re.compile(r"(^|[._\-])(prod|production)($|[._\-])", re.IGNORECASE)
 
 
+PHASES = ("assessment", "code-migration", "data-migration")
+
+
+def normalise_phase(value) -> str:
+    """The project's phase; projects saved before the split say 'migration', which is the code migration."""
+    phase = str(value or "code-migration").strip().lower()
+    return "code-migration" if phase == "migration" else phase
+
+
 def looks_like_prod(name: str) -> bool:
     return bool(_PROD_SEGMENT.search(name or ""))
 
@@ -93,7 +102,7 @@ class ProjectConfig:
     hours_per_file: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_HOURS_PER_FILE))
     hours_per_issue: float = 0.5
     scope: str = "all"  # all | recommended: deploy leaves out objects the fit check says stay on the source
-    phase: str = "migration"  # assessment (offline: analyze + convert only) | migration (deploy, data, reconcile)
+    phase: str = "code-migration"  # assessment (offline) | code-migration (deploy the code) | data-migration (copy data)
 
     @property
     def target_schema(self) -> str:
@@ -184,10 +193,10 @@ def load_config(path: str | Path) -> ProjectConfig:
         hours_per_file={**DEFAULT_HOURS_PER_FILE, **(est.get("hours_per_file") or {})},
         hours_per_issue=float(est.get("hours_per_issue", 0.5)),
         scope=str(raw.get("scope") or "all").lower(),
-        phase=str(raw.get("phase") or "migration").lower(),
+        phase=normalise_phase(raw.get("phase")),
     )
-    if cfg.phase not in ("assessment", "migration"):
-        raise ConfigError("phase must be 'assessment' or 'migration'")
+    if cfg.phase not in PHASES:
+        raise ConfigError(f"phase must be one of: {', '.join(PHASES)}")
     if cfg.scope not in ("all", "recommended"):
         raise ConfigError("scope must be 'all' or 'recommended'")
     if cfg.data_method not in ("federation", "files"):
@@ -213,7 +222,8 @@ output: output              # everything WishBridge produces goes here
 overrides: overrides        # hand-fixed versions of converted files (same file names) - kept across runs
 scope: all                  # all | recommended: deploy only what belongs on Databricks (see the fit check)
 phase: assessment           # assessment: offline - analyze and convert only, nothing goes to Databricks or the client
-                            # database. Change to migration when the code is ready to deploy and the data to copy.
+                            # database. Then code-migration (deploy the code to Databricks) and data-migration
+                            # (copy the data and check it matches).
 
 databricks:
   profile: DEFAULT          # profile in ~/.databrickscfg

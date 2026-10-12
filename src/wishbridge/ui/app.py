@@ -40,16 +40,19 @@ def project_ok() -> bool:
 
 # ----------------------------------------------------------------- what to do
 
-GOALS = {"assessment": "🔍 Assessment", "migration": "🚚 Migration"}
+GOALS = {"assessment": "🔍 Assessment", "code-migration": "🧩 Code migration", "data-migration": "🚚 Data migration"}
 # Ways to start, per goal (label -> the form that does it)
 START = {
     "assessment": {"Open a folder": "folder", "Start from the database": "new"},
-    "migration": {"Open the assessment zip": "package", "Open a project": "folder", "Create new": "new"},
+    "code-migration": {"Open the assessment zip": "package", "Open a project": "folder", "Create new": "new"},
+    "data-migration": {"Open a project": "folder", "Open the assessment zip": "package", "Create new": "new"},
 }
 
 if project_ok() and "goal" not in ss:  # a project opened before (or by a test): its phase is the goal
     try:
-        ss.goal = str((h.read_raw(ss.project) or {}).get("phase") or "migration").lower()
+        from wishbridge.config import normalise_phase
+
+        ss.goal = normalise_phase((h.read_raw(ss.project) or {}).get("phase"))
         ss.goal_applied = (ss.project, ss.goal)
     except Exception:  # unreadable settings are reported further down
         pass
@@ -153,7 +156,7 @@ with st.sidebar:
                              key=f"start_{goal}")]
         if mode == "folder":
             folder = st.text_input("Project or client code folder", value=ss.project, disabled=locked,
-                                   placeholder=r"C:\WishBridge\Assessments\acme-dw  or  C:\client-repo",
+                                   placeholder=h.default_parent(goal) + r"\acme-dw  or  C:\client-repo",
                                    help="A WishBridge project opens directly. Any other folder of SQL/ETL code (a repository, "
                                         "a Visual Studio database project, an export) gets a project created for it.")
             if st.button("Open", width="stretch", disabled=locked or not folder.strip()):
@@ -237,27 +240,31 @@ def show_welcome() -> None:
 
 
 def show_goal_choice() -> None:
-    """First page: assessment or migration. The sidebar then offers the ways to start that fit."""
+    """First page: assessment, code migration or data migration. The sidebar then offers the ways to start."""
     st.subheader("What do you want to do?")
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     cards = {
         "assessment": (c1, "At the client, offline (nothing goes to Databricks):\n"
                            "- open the client's code folder, **or** read the tables and code straight from their "
                            "database (read-only, no data)\n"
                            "- check it really is a data warehouse, size it and convert it\n"
                            "- share everything as one zip"),
-        "migration": (c2, "Move it to Databricks:\n"
-                          "- usually starts from the **assessment zip**\n"
-                          "- deploy the tables and code to the client's workspace\n"
-                          "- connect the source database, map the tables and copy the data\n"
-                          "- prove the data matches"),
+        "code-migration": (c2, "Move the code to Databricks:\n"
+                               "- usually starts from the **assessment zip**\n"
+                               "- needs the client's Databricks workspace\n"
+                               "- create the tables and code there, check them, fix what is left"),
+        "data-migration": (c3, "Move the data to Databricks:\n"
+                               "- on the project whose **code migration** is done\n"
+                               "- needs the client's database reachable from Databricks (or exported files)\n"
+                               "- map the tables, copy the data, prove it matches"),
     }
     for key, (col, text) in cards.items():
         with col.container(border=True):
             chosen = ss.get("goal") == key
             st.markdown(f"### {GOALS[key]}" + (" ✅" if chosen else ""))
             st.markdown(text)
-            st.button("Selected" if chosen else f"Start {'an assessment' if key == 'assessment' else 'a migration'}",
+            st.button("Selected" if chosen else {"assessment": "Start an assessment", "code-migration":
+                      "Start a code migration", "data-migration": "Start a data migration"}[key],
                       key=f"goal-{key}", type="primary" if chosen else "secondary", width="stretch",
                       on_click=choose_goal, args=(key,), disabled=chosen)
 
@@ -328,9 +335,12 @@ if not project_ok():
         st.info("Next, in the sidebar: **Open a folder** with the client's warehouse code (a project folder, a "
                 "repository, a database project or an ETL export), or **Start from the database** when there is no "
                 "code folder.")
-    elif goal == "migration":
+    elif goal == "code-migration":
         st.info("Next, in the sidebar: **Open the assessment zip** (or an existing project). Then fill in the "
-                "Databricks workspace and the source database connection in Settings.")
+                "Databricks workspace and target in Settings, and run.")
+    elif goal == "data-migration":
+        st.info("Next, in the sidebar: **Open a project** - the one whose code migration is done. Then fill in the "
+                "source data (database connection or exported files) in Settings, and map the data.")
     show_welcome()
     st.stop()
 
@@ -352,7 +362,9 @@ except (ConfigError, yaml.YAMLError, KeyError, TypeError, ValueError) as e:
 
 if ss.get("goal") and ss.get("goal_applied") != (ss.project, ss.goal):
     ss.goal_applied = (ss.project, ss.goal)
-    if str(raw.get("phase") or "migration").lower() != ss.goal:
+    from wishbridge.config import normalise_phase  # noqa: E402
+
+    if raw.get("phase") != ss.goal:  # also rewrites "migration" (saved before the split) as the chosen phase
         raw["phase"] = ss.goal
         h.save_raw(ss.project, raw, check=False)
         st.rerun()

@@ -59,7 +59,7 @@ def test_assessment_phase_blocks_everything_that_leaves_the_computer(tmp_path):
         Warehouse(cfg)
     older = tmp_path / "older"
     older.mkdir()
-    assert project(older).phase == "migration"  # projects without the setting keep working as before
+    assert project(older).phase == "code-migration"  # projects without the setting keep working as before
 
 
 def test_offline_steps_never_see_the_real_databricks_login(tmp_path, monkeypatch):

@@ -19,7 +19,7 @@ def render(cfg, raw, packages) -> None:
     from wishbridge.warehouses.sqlserver import mapping
 
     st.subheader("Map the data and copy it")
-    st.markdown("The run created the tables in Databricks. Choose which source table goes into which Databricks "
+    st.markdown("The tables are in Databricks (the code migration created them). Choose which source table goes into which Databricks "
                 "table, check the columns, then copy the data. Nothing is copied until you press *Copy the data*.")
     if runner.is_running(cfg):
         st.markdown("#### Copying…")

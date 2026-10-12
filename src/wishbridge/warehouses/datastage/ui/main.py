@@ -33,9 +33,12 @@ def run(raw: dict) -> None:
         # At the client: everything ends up in the zip, so the last step is sending it. Fixing happens later,
         # in the project opened from that zip.
         ORDER = ["settings", "code", "run", "results"] + (["fix"] if from_package else []) + ["send"]
+    elif cfg.phase == "code-migration":
+        # Deploy the converted code to Databricks; the report right after the run gives the overview.
+        ORDER = ["settings", "code", "run", "results", "fix"]
     else:
-        # The report right after the run gives the overview; it is updated again after the data copy.
-        ORDER = ["settings", "code", "run", "results", "data", "fix"]
+        # Data migration: the tables exist in Databricks (code migration); map, copy, then the report.
+        ORDER = ["settings", "data", "results"]
     state_now = load_state(cfg)
     running = runner.is_running(cfg)
     has_code = bool(h.input_files(ss.project, raw.get("input", "input")))
@@ -56,6 +59,8 @@ def run(raw: dict) -> None:
         if running:
             return key in ("run", "data")  # while a run (or the data copy) is going, stay there to follow it
         if key == "results":
+            if cfg.phase == "data-migration":
+                return done["settings"] and any(k in state_now for k in ("load", "reconcile", "deploy", "convert"))
             return all(done[k] for k in ("settings", "code", "run"))  # copying the data is not required to look
         if key == "fix":
             return "convert" in state_now and all(done[k] for k in ("settings", "code"))

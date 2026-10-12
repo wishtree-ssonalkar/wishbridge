@@ -59,11 +59,17 @@ def test_welcome_after_the_check():
 
 def test_migration_starts_from_the_assessment_zip():
     at = ready_app().run()
-    next(b for b in at.button if b.label == "Start a migration").click().run()
+    assert [b.label for b in at.button if b.key and b.key.startswith("goal-")] == [
+        "Start an assessment", "Start a code migration", "Start a data migration"]
+    next(b for b in at.button if b.label == "Start a code migration").click().run()
     assert not at.exception
-    starts = next(r for r in at.radio if r.key == "start_migration")
+    starts = next(r for r in at.radio if r.key == "start_code-migration")
     assert starts.options == ["Open the assessment zip", "Open a project", "Create new"]
     assert any("Open the assessment zip" in i.value for i in at.info)
+    next(b for b in at.button if b.label == "Start a data migration").click().run()
+    starts = next(r for r in at.radio if r.key == "start_data-migration")
+    assert starts.options[0] == "Open a project"  # the project whose code migration is done
+    assert any("code migration is done" in i.value for i in at.info)
 
 
 def test_opening_a_project_applies_the_chosen_goal(project):
@@ -83,10 +89,10 @@ def test_steps_open_in_order(project):
     at = ready_app(project).run()
     assert not at.exception
     steps = {b.label.replace("✓ ", ""): b for b in at.button if b.key and b.key.startswith("step-")}
-    assert list(steps) == ["1 · Settings", "2 · Code", "3 · Run", "4 · Report", "5 · Map the data", "6 · Fix code"]
+    assert list(steps) == ["1 · Settings", "2 · Code", "3 · Run", "4 · Report", "5 · Fix code"]  # code migration
     assert steps["1 · Settings"].disabled is False
     # nothing opens before Settings are confirmed with Next
-    assert all(steps[k].disabled for k in ("2 · Code", "3 · Run", "4 · Report", "5 · Map the data", "6 · Fix code"))
+    assert all(steps[k].disabled for k in ("2 · Code", "3 · Run", "4 · Report", "5 · Fix code"))
     assert at.selectbox[0].value == "mssql"
 
 
@@ -102,7 +108,7 @@ def test_next_saves_settings_and_opens_code(project):
     assert at.session_state["step"] == "code"  # Next saves and moves on
     steps = {b.label: b for b in at.button if b.key and b.key.startswith("step-")}
     assert steps["1 · ✓ Settings"].disabled is False and steps["2 · ✓ Code"].disabled is False
-    assert steps["4 · Report"].disabled and steps["5 · Map the data"].disabled  # nothing has run yet
+    assert steps["4 · Report"].disabled  # nothing has run yet
 
 
 def test_fix_code_handles_missing_converted_file(project):
@@ -121,10 +127,27 @@ def test_fix_code_handles_missing_converted_file(project):
     assert any("not on disk" in i.value for i in at.info)
 
 
+def test_code_migration_settings_need_no_source_data(project):
+    at = ready_app(project).run()
+    assert not at.exception
+    headings = [m.value for m in at.markdown if m.value.startswith("#### ")]
+    assert headings == ["#### 1 · Databricks workspace ✅", "#### 2 · Target in Databricks ✅"]  # no source data part
+    assert any(b.label.startswith("Next: add the code") for b in at.button)
+
+
+def test_data_migration_steps(project):
+    _data_migration(project)
+    at = ready_app(project).run()
+    assert not at.exception
+    steps = [b.label.replace("✓ ", "") for b in at.button if b.key and b.key.startswith("step-")]
+    assert steps == ["1 · Settings", "2 · Map the data", "3 · Report"]
+    assert any(b.label.startswith("Next: map the data") for b in at.button)  # the demo has its source data
+
+
 def test_migration_settings_need_target_and_source(project):
     import yaml
 
-    raw = yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))
+    raw = _data_migration(project)
     raw["data"].update(source_catalog="", tables=[])  # no source connection, nothing to copy yet
     (project / "project.yml").write_text(yaml.safe_dump(raw), encoding="utf-8")
     at = ready_app(project).run()
@@ -181,6 +204,7 @@ def test_share_page_switches_to_onedrive_for_big_zips(project, monkeypatch):
 
 
 def test_create_connection_waits_for_its_fields(project):
+    _data_migration(project)
     at = ready_app(project).run()
     create = next(b for b in at.button if "Create connection" in b.label)
     assert create.disabled
@@ -190,6 +214,16 @@ def test_create_connection_waits_for_its_fields(project):
         next(t for t in at.text_input if t.label.startswith(label)).set_value(value)
     at.run()
     assert not next(b for b in at.button if "Create connection" in b.label).disabled
+
+
+def _data_migration(project):
+    """The demo project in the data migration phase (its code migration is done)."""
+    import yaml
+
+    raw = yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))
+    raw["phase"] = "data-migration"
+    (project / "project.yml").write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return raw
 
 
 def _after_deploy(project):
@@ -204,6 +238,7 @@ def _after_deploy(project):
 def test_map_the_data_proposes_checks_and_copies(project, monkeypatch):
     from wishbridge.warehouses.sqlserver import dbx, mapping, runner
 
+    _data_migration(project)
     _after_deploy(project)
     from wishbridge.warehouses.sqlserver.ui.steps import data as data_step
 
@@ -321,10 +356,11 @@ def test_assessments_and_migrations_have_their_own_folders():
     from wishbridge.ui.helpers import default_parent
 
     assert default_parent("assessment").endswith("Assessments")
-    assert default_parent("migration").endswith("Migrations")
+    assert default_parent("code-migration").endswith("Migrations")
+    assert default_parent("data-migration") == default_parent("code-migration")  # the same project, both phases
     at = ready_app().run()
-    next(b for b in at.button if b.label == "Start a migration").click().run()
-    assert next(t for t in at.text_input if t.label == "Create the project in").value == default_parent("migration")
+    next(b for b in at.button if b.label == "Start a code migration").click().run()
+    assert next(t for t in at.text_input if t.label == "Create the project in").value == default_parent("code-migration")
     next(b for b in at.button if b.label == "Start an assessment").click().run()
     next(r for r in at.radio if r.key == "start_assessment").set_value("Start from the database").run()
     assert not at.exception

@@ -28,7 +28,8 @@ class Check:
 
 # ------------------------------------------------------------------ projects
 
-PHASE_FOLDERS = {"assessment": "Assessments", "migration": "Migrations"}
+PHASE_FOLDERS = {"assessment": "Assessments", "code-migration": "Migrations", "data-migration": "Migrations",
+                 "migration": "Migrations"}
 
 
 def projects_root() -> Path:

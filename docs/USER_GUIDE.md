@@ -225,9 +225,13 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
     zip in OneDrive* copies it to a WishBridge folder there (or *Open OneDrive* to upload it when OneDrive is not set
     up), you share it and paste the link, and *Send mail with the OneDrive link* opens the e-mail with the link in
     the text. Projects opened from a package also get **Fix code**.
-  - *Migration*: **1 Settings → 2 Code → 3 Run → 4 Report → 5 Map the data → 6 Fix code**. *Next* on Settings
-    stays locked until the workspace login (signed in), catalog and test schema and the source database connection
-    (or files folder) are filled in. The report opens after the run, with or without copying the data.
+  - *Code migration*: **1 Settings → 2 Code → 3 Run → 4 Report → 5 Fix code** - the tables and code are created
+    in Databricks. *Next* on Settings stays locked until the workspace login (signed in), catalog and test schema
+    are filled in; no source data is needed.
+  - *Data migration* (on the same project, once its code migration is done): **1 Settings → 2 Map the data →
+    3 Report**. Settings also need the source data: the database connection, or the files folder. The report then
+    shows whether the copied data matches.
+  - Projects saved as `phase: migration` (before the split) open as a code migration.
   - **Run** and **Copy the data** work in the background: you can wait on the step and watch each step's progress;
     the other steps stay locked until it has finished, so nothing is interrupted.
 - **Good fit**: a data warehouse / ETL code base. Migrate it all.

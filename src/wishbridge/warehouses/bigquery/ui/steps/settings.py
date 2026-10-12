@@ -1,4 +1,5 @@
-"""Step 1 - Settings: the phase, the source system and, for a migration, workspace, target and source data."""
+"""Step 1 - Settings: the phase and source system; workspace and target for a migration; source data for a data
+migration."""
 
 from __future__ import annotations
 
@@ -15,8 +16,8 @@ ss = st.session_state
 
 
 def settings_problems(offline: bool, v: dict) -> list[str]:
-    """What must be filled in before leaving Settings. Assessment needs only the source system; the migration
-    phase also needs the Databricks target and the source data connection."""
+    """What must be filled in before leaving Settings. Assessment needs only the source system; the code migration
+    also needs the Databricks workspace and target; the data migration also needs the source data."""
     from wishbridge.warehouses.bigquery.config import looks_like_prod
 
     problems = []
@@ -36,6 +37,8 @@ def settings_problems(offline: bool, v: dict) -> list[str]:
         problems.append("Test schema")
     elif looks_like_prod(f"{v.get('catalog')}.{schema_}"):
         problems.append("Test schema: it looks like production - use a test schema")
+    if v.get("phase") != "data-migration":
+        return problems  # the source data is needed only to copy the data
     if v.get("method") == "files":
         if not str(v.get("files_root") or "").strip():
             problems.append("Data to copy: the files folder (volume path) the exported tables are in")
@@ -50,7 +53,8 @@ def render(cfg, raw, packages) -> None:
     ai = raw.setdefault("autofix", {})
 
     phase_labels = {"assessment": "Assessment - offline: analyze and convert the code",
-                    "migration": "Migration - deploy to Databricks, copy the data, reconcile"}
+                    "code-migration": "Code migration - create the tables and code in Databricks",
+                    "data-migration": "Data migration - copy the data and check it matches"}
 
     def _save_phase() -> None:
         new_ = dict(raw)
@@ -59,7 +63,9 @@ def render(cfg, raw, packages) -> None:
         ss.goal = ss.phase_radio  # the sidebar choice follows
         ss.goal_applied = (ss.project, ss.phase_radio)
 
-    cur_phase = str(raw.get("phase") or "migration").lower()
+    from wishbridge.warehouses.bigquery.config import normalise_phase
+
+    cur_phase = normalise_phase(raw.get("phase"))
     phase = st.radio("Phase", list(phase_labels), format_func=phase_labels.get, horizontal=True, key="phase_radio",
                      index=list(phase_labels).index(cur_phase) if cur_phase in phase_labels else 1, on_change=_save_phase,
                      help="Assessment: nothing is sent to Databricks or the client's database. Switch to Migration for "
@@ -100,7 +106,7 @@ def render(cfg, raw, packages) -> None:
 
     if offline:
         st.info("Databricks, source database and data-copy settings are not needed for the assessment. "
-                "They appear here when you switch the phase to **Migration**.")
+                "They appear here in the **Code migration** and **Data migration** phases.")
 
     def part(n: int, title: str, note: str = ""):
         """Heading of one part of the migration settings; call the result to tick it once the part is complete."""
@@ -253,7 +259,7 @@ def render(cfg, raw, packages) -> None:
                                              for k, v in (raw.get("schema_map") or {}).items()}
                 autosave(changes)
 
-        if target_done:
+        if target_done and phase == "data-migration":  # the code migration needs no source data
             # --- 3. Source data: where the data is copied from
             tick_src = part(3, "Source data", "Where the data is copied from.")
             method_labels = {"federation": "Read the source database directly (Lakehouse Federation)",
@@ -384,10 +390,12 @@ def render(cfg, raw, packages) -> None:
         hpi = st.number_input("Hours per open item", value=float(est.get("hours_per_issue", 0.5)), step=0.25)
 
     problems = settings_problems(offline, locals())
-    if problems and (offline or src_done):
+    ready = offline or src_done or (phase == "code-migration" and target_done)
+    to_data = phase == "data-migration"
+    if problems and ready:
         st.markdown(":red[Fill in the fields marked * (see the red notes above) before going on.]")
-    if (offline or src_done) and st.button("Next: add the code →", type="primary",
-                                           help="Saves the settings and opens the Code tab.", disabled=bool(problems)):
+    if ready and st.button("Next: map the data →" if to_data else "Next: add the code →", type="primary",
+                           help="Saves the settings and opens the next step.", disabled=bool(problems)):
         new = dict(raw)
         new["source"] = source
         if transpiler == "auto":
@@ -408,7 +416,7 @@ def render(cfg, raw, packages) -> None:
             h.save_raw(ss.project, new)
             ss.pop("pending_profile", None)
             ss[f"settings_done:{ss.project}"] = True
-            ss.go_step = "code"
+            ss.go_step = "data" if to_data else "code"
             st.rerun()
         except (ConfigError, KeyError, ValueError) as e:
             st.error(f"Not saved: {e}")

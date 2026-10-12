@@ -164,7 +164,7 @@ def database_tables(cfg, raw) -> None:
         if sch["skipped"]:
             line += f" · {len(sch['skipped'])} skipped because the code already creates them"
         st.markdown(line + ". They go into the converted code on the next run" +
-                    (" and are created in Databricks first when you deploy." if cfg.phase == "migration" else
+                    (" and are created in Databricks first when you deploy." if cfg.phase != "assessment" else
                      " and into the zip."))
         if sch.get("unknown_types"):
             st.warning("Some column types are unknown and were made STRING — search the scripts for `review`: "
@@ -179,7 +179,7 @@ def database_tables(cfg, raw) -> None:
         if b1.button("↻ Make the scripts again", help="After changing the schema mapping in Settings."):
             schema_mod.build_scripts(cfg, inv)
             st.rerun()
-        if cfg.phase == "migration" and b2.button("Use these tables for the data copy"):
+        if cfg.phase != "assessment" and b2.button("Use these tables for the data copy"):
             new = dict(raw)
             new.setdefault("data", {})["tables"] = inv_mod.table_list(inv)
             h.save_raw(ss.project, new)

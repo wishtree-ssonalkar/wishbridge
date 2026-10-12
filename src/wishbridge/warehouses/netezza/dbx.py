@@ -40,7 +40,7 @@ class Warehouse:
             raise SqlError(
                 "This project is in the assessment phase: nothing is sent to Databricks or the client's database. "
                 "Analyze, convert, review and fix the code first. When it is ready, switch the project to the "
-                "migration phase (Settings > Phase, or `phase: migration` in project.yml).")
+                "code migration phase (Settings > Phase, or `phase: code-migration` in project.yml).")
 
         self.w = WorkspaceClient(profile=cfg.profile)
         check_workspace(cfg, self.w.config.host)
