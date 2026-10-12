@@ -152,68 +152,74 @@ with st.sidebar:
         st.caption("🔒 Opening a project is available once the system check is done and the computer is ready.")
     elif not goal:
         st.caption("🔒 Choose **Assessment** or **Migration** first.")
-    ways = START[goal or "assessment"]
-    mode = ways[st.radio("Project", list(ways), horizontal=True, label_visibility="collapsed", disabled=locked,
-                         key=f"start_{goal}")]
-    if mode == "folder":
-        folder = st.text_input("Project or client code folder", value=ss.project, disabled=locked,
-                               placeholder=r"C:\WishBridge\Assessments\acme-dw  or  C:\client-repo",
-                               help="A WishBridge project opens directly. Any other folder of SQL/ETL code (a repository, "
-                                    "a Visual Studio database project, an export) gets a project created for it.")
-        if st.button("Open", width="stretch", disabled=locked or not folder.strip()):
-            if h.project_file(folder).exists():
-                ss.project = str(Path(folder).expanduser().resolve())
-                ss.workspace = None
-                ss.pop("code_info", None)
-                st.rerun()
-            else:
+    # While a project is open, the ways to start another one are folded away.
+    with (st.expander("Open or start another project") if project_ok() and not locked else st.container()):
+        ways = START[goal or "assessment"]
+        mode = ways[st.radio("Project", list(ways), horizontal=True, label_visibility="collapsed", disabled=locked,
+                             key=f"start_{goal}")]
+        if mode == "folder":
+            folder = st.text_input("Project or client code folder", value=ss.project, disabled=locked,
+                                   placeholder=r"C:\WishBridge\Assessments\acme-dw  or  C:\client-repo",
+                                   help="A WishBridge project opens directly. Any other folder of SQL/ETL code (a repository, "
+                                        "a Visual Studio database project, an export) gets a project created for it.")
+            if st.button("Open", width="stretch", disabled=locked or not folder.strip()):
+                if h.project_file(folder).exists():
+                    ss.project = str(Path(folder).expanduser().resolve())
+                    ss.workspace = None
+                    ss.pop("code_info", None)
+                    st.rerun()
+                else:
+                    try:
+                        with st.spinner("Looking at the code..."):
+                            ss.code_info = discover.inspect(folder)
+                        ss.project = ""
+                        st.rerun()
+                    except (ValueError, OSError) as e:
+                        st.error(str(e))
+            if ss.get("created_projects"):
+                st.caption("Projects created for the client code:")
+                for p in ss.created_projects:
+                    if st.button(f"📂 {Path(p).name}", key=f"open-{p}", width="stretch", disabled=locked):
+                        ss.project, ss.workspace = p, None
+                        st.rerun()
+        elif mode == "package":
+            st.caption("The zip saved by the assessment (*Assess and save everything*) on any computer. "
+                       "It becomes a project here, ready to migrate.")
+            pkg_up = st.file_uploader("Package (.zip)", type=["zip"], key="pkg_upload", disabled=locked)
+            pkg_parent = st.text_input("Create the project in", value=h.default_parent(goal), key=f"pkg_parent_{goal}",
+                                       disabled=locked, help="Migrations and assessments have their own folders.")
+            if st.button("Open package", width="stretch", disabled=locked or pkg_up is None or not pkg_parent.strip()):
+                from wishbridge.package import open_package
+
+                tmp = Path(pkg_parent).expanduser() / ".wishbridge-incoming" / Path(pkg_up.name).name
                 try:
-                    with st.spinner("Looking at the code..."):
-                        ss.code_info = discover.inspect(folder)
-                    ss.project = ""
+                    tmp.parent.mkdir(parents=True, exist_ok=True)
+                    tmp.write_bytes(pkg_up.getvalue())
+                    dest = open_package(tmp, pkg_parent)
+                    tmp.unlink(missing_ok=True)
+                    ss.project, ss.workspace = str(dest), None
+                    st.rerun()
+                except (ValueError, OSError, ConfigError) as e:
+                    st.error(str(e))
+        else:
+            if goal == "assessment":
+                st.caption("No code folder? Create the project here, then read the tables and code straight from the "
+                           "client's database in **Code › Read from the database** (read-only, no data).")
+            name = st.text_input("Project name :red[*]", placeholder="acme-dw", disabled=locked, key="new_name")
+            source = st.selectbox("Source system :red[*]", list(SOURCES), format_func=lambda k: SOURCES[k].label, disabled=locked)
+            parent = st.text_input("Create in folder :red[*]", value=h.default_parent(goal), disabled=locked,
+                                   key=f"new_parent_{goal}", help="Migrations and assessments have their own folders.")
+            if st.button("Create project", width="stretch", disabled=locked or not name.strip() or not parent.strip()):
+                try:
+                    ss.project = str(h.create_project(parent, name, source))
+                    ss.workspace = None
+                    if goal == "assessment":  # "Start from the database": the Code step leads with the database
+                        new_raw = h.read_raw(ss.project)
+                        new_raw["code_from"] = "database"
+                        h.save_raw(ss.project, new_raw)
                     st.rerun()
                 except (ValueError, OSError) as e:
                     st.error(str(e))
-        if ss.get("created_projects"):
-            st.caption("Projects created for the client code:")
-            for p in ss.created_projects:
-                if st.button(f"📂 {Path(p).name}", key=f"open-{p}", width="stretch", disabled=locked):
-                    ss.project, ss.workspace = p, None
-                    st.rerun()
-    elif mode == "package":
-        st.caption("The zip saved by the assessment (*Assess and save everything*) on any computer. "
-                   "It becomes a project here, ready to migrate.")
-        pkg_up = st.file_uploader("Package (.zip)", type=["zip"], key="pkg_upload", disabled=locked)
-        pkg_parent = st.text_input("Create the project in", value=h.default_parent(goal), key=f"pkg_parent_{goal}",
-                                   disabled=locked, help="Migrations and assessments have their own folders.")
-        if st.button("Open package", width="stretch", disabled=locked or pkg_up is None or not pkg_parent.strip()):
-            from wishbridge.package import open_package
-
-            tmp = Path(pkg_parent).expanduser() / ".wishbridge-incoming" / Path(pkg_up.name).name
-            try:
-                tmp.parent.mkdir(parents=True, exist_ok=True)
-                tmp.write_bytes(pkg_up.getvalue())
-                dest = open_package(tmp, pkg_parent)
-                tmp.unlink(missing_ok=True)
-                ss.project, ss.workspace = str(dest), None
-                st.rerun()
-            except (ValueError, OSError, ConfigError) as e:
-                st.error(str(e))
-    else:
-        if goal == "assessment":
-            st.caption("No code folder? Create the project here, then read the tables and code straight from the "
-                       "client's database in **Code › Read from the database** (read-only, no data).")
-        name = st.text_input("Project name :red[*]", placeholder="acme-dw", disabled=locked, key="new_name")
-        source = st.selectbox("Source system :red[*]", list(SOURCES), format_func=lambda k: SOURCES[k].label, disabled=locked)
-        parent = st.text_input("Create in folder :red[*]", value=h.default_parent(goal), disabled=locked,
-                               key=f"new_parent_{goal}", help="Migrations and assessments have their own folders.")
-        if st.button("Create project", width="stretch", disabled=locked or not name.strip() or not parent.strip()):
-            try:
-                ss.project = str(h.create_project(parent, name, source))
-                ss.workspace = None
-                st.rerun()
-            except (ValueError, OSError) as e:
-                st.error(str(e))
     if project_ok() and not locked:
         st.success(f"Open: {Path(ss.project).name}")
         st.caption(ss.project)
@@ -903,18 +909,30 @@ def database_code_summary(cfg, raw) -> None:
         st.rerun()
 
 
+def code_from_database(raw) -> bool:
+    """The project started from the database (no code folder), or has no code files at all."""
+    return raw.get("code_from") == "database" or not has_code_files(raw)
+
+
 def database_tables(cfg, raw) -> None:
     """Optional: read the source database's tables (catalog only, no data) and make the Databricks table scripts."""
     from wishbridge import inventory as inv_mod
     from wishbridge import schema as schema_mod
 
     inv = load_state(cfg).get("inventory")
-    title = "Read from the database (optional) — tables and code"
-    with st.expander(title, expanded=bool(load_state(cfg).get("dbcode")) or not has_code_files(raw)):
-        st.markdown("Use this when the client has **no code repository**, or not all of it. WishBridge reads the list "
-                    "of tables, columns and data types and, if you want, the **procedures, views, functions and "
-                    "triggers** stored in the database — **no data is read or copied**. It writes a Databricks "
-                    "`CREATE TABLE` script for every table the code does not already create.")
+    from_db = code_from_database(raw)
+    if from_db:
+        title = "Read the tables and code from the database"
+        intro = ("This project starts from the client's database: WishBridge reads the list of tables, columns and "
+                 "data types and the **procedures, views, functions and triggers** stored in it — **no data is read "
+                 "or copied**. It writes a Databricks `CREATE TABLE` script for every table.")
+    else:
+        title = "Optional: add the table list from the database"
+        intro = ("**Not needed** when the folder has the code. Useful when the code does not create the tables "
+                 "(SSIS / ETL packages, or scripts without `CREATE TABLE`), or to add row counts and sizes. Only the "
+                 "list of tables, columns and data types is read — **no data is read or copied**.")
+    with st.expander(title, expanded=from_db or bool(load_state(cfg).get("dbcode"))):
+        st.markdown(intro)
         how = st.radio("How to read them", ["Connect to the database", "Send a query to the client's DBA"],
                        horizontal=True, key="schema_how",
                        help="Connecting works for SQL Server, Azure SQL and Synapse. The DBA query works for every "
@@ -933,7 +951,7 @@ def database_tables(cfg, raw) -> None:
                                          help="Used once to read the tables; never saved.")
             trust = st.checkbox("Trust the server certificate", key="live_trust",
                                 help="Needed for servers with a self-signed certificate (common on local servers).")
-            with_code = st.checkbox("Also read the code (procedures, views, functions, triggers)", value=True,
+            with_code = st.checkbox("Also read the code (procedures, views, functions, triggers)", value=from_db,
                                     key="live_code", help="Saved as one .sql file per object. Encrypted objects "
                                                           "cannot be read; they are listed so the client can send them.")
             missing = [n for n, v in [("server", server), ("database", database)] if not v.strip()]
@@ -1044,12 +1062,14 @@ if STEP == "code":
                    "and what needs attention.")
 
     database_tables(cfg, raw)
-    uploads = st.file_uploader("Add files", accept_multiple_files=True, type=h.INPUT_EXTENSIONS)
-    if uploads and st.button(f"Add {len(uploads)} file(s) to the project"):
-        for up in uploads:
-            h.save_upload(ss.project, up.name, up.getvalue(), code_files_input(raw))
-        st.success(f"Added {len(uploads)} file(s)")
-        st.rerun()
+    # Folder projects add files here directly; projects that start from the database keep it folded away.
+    with (st.expander("Optional: also add code files") if code_from_database(raw) else st.container()):
+        uploads = st.file_uploader("Add files", accept_multiple_files=True, type=h.INPUT_EXTENSIONS)
+        if uploads and st.button(f"Add {len(uploads)} file(s) to the project"):
+            for up in uploads:
+                h.save_upload(ss.project, up.name, up.getvalue(), code_files_input(raw))
+            st.success(f"Added {len(uploads)} file(s)")
+            st.rerun()
     files = h.input_files(ss.project, raw.get("input", "input"))
     if not files:
         st.info("No code yet. Read it from the database above, upload files, or copy them into the input folder.")

@@ -326,3 +326,34 @@ def test_assessments_and_migrations_have_their_own_folders():
     next(r for r in at.radio if r.key == "start_assessment").set_value("Start from the database").run()
     assert not at.exception
     assert next(t for t in at.text_input if t.label.startswith("Create in folder")).value == default_parent("assessment")
+
+
+def _code_step(project):
+    at = ready_app(project)
+    at.session_state["settings_done:" + str(project)] = True
+    at.session_state["go_step"] = "code"
+    return at.run()
+
+
+def test_folder_project_keeps_the_database_optional(project):
+    at = _code_step(project)
+    assert not at.exception
+    titles = [e.label for e in at.expander]
+    assert "Optional: add the table list from the database" in titles
+    assert not next(c for c in at.checkbox if c.key == "live_code").value  # the code comes from the folder
+    assert any(u.label == "Add files" for u in at.get("file_uploader"))
+    assert "Open or start another project" in titles  # sidebar: starting another project is folded away
+
+
+def test_database_project_leads_with_the_database(project):
+    import yaml
+
+    raw = yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))
+    raw["code_from"] = "database"
+    (project / "project.yml").write_text(yaml.safe_dump(raw), encoding="utf-8")
+    at = _code_step(project)
+    assert not at.exception
+    titles = [e.label for e in at.expander]
+    assert "Read the tables and code from the database" in titles
+    assert "Optional: also add code files" in titles
+    assert next(c for c in at.checkbox if c.key == "live_code").value

@@ -121,6 +121,11 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
     the project, then read the tables and code in *Code › Read from the database*).
   - *Migration*: **Open the assessment zip**, **Open a project** or **Create new**.
   The project you open is set to the chosen phase; changing the phase in Settings changes the choice too.
+  While a project is open, the ways to start another one are folded under *Open or start another project*.
+  The Code step follows how the project started: a **folder** project shows its files, and reading from the
+  database is an optional extra (*Optional: add the table list from the database* - for code without table
+  scripts, such as SSIS packages, or for row counts); a project that **started from the database** opens with
+  *Read the tables and code from the database*, and adding files is the optional extra.
 - **Sidebar:** *Open a folder* takes either a WishBridge project or **any folder of client code** — a Git
   repository, a Visual Studio database project, an ETL export. For client code the app detects the source system
   (from `.sqlproj`, `.dtsx`, Informatica or DataStage XML, Informatica Cloud `.zip`, or the SQL keywords), finds
