@@ -89,10 +89,10 @@ def test_steps_open_in_order(project):
     at = ready_app(project).run()
     assert not at.exception
     steps = {b.label.replace("✓ ", ""): b for b in at.button if b.key and b.key.startswith("step-")}
-    assert list(steps) == ["1 · Settings", "2 · Code", "3 · Run", "4 · Report", "5 · Fix code"]  # code migration
+    assert list(steps) == ["1 · Settings", "2 · Code", "3 · Run", "4 · Deployment report", "5 · Fix code"]  # code migration
     assert steps["1 · Settings"].disabled is False
     # nothing opens before Settings are confirmed with Next
-    assert all(steps[k].disabled for k in ("2 · Code", "3 · Run", "4 · Report", "5 · Fix code"))
+    assert all(steps[k].disabled for k in ("2 · Code", "3 · Run", "4 · Deployment report", "5 · Fix code"))
     assert at.selectbox[0].value == "mssql"
 
 
@@ -108,7 +108,7 @@ def test_next_saves_settings_and_opens_code(project):
     assert at.session_state["step"] == "code"  # Next saves and moves on
     steps = {b.label: b for b in at.button if b.key and b.key.startswith("step-")}
     assert steps["1 · ✓ Settings"].disabled is False and steps["2 · ✓ Code"].disabled is False
-    assert steps["4 · Report"].disabled  # nothing has run yet
+    assert steps["4 · Deployment report"].disabled  # nothing has run yet
 
 
 def test_fix_code_handles_missing_converted_file(project):
@@ -140,7 +140,7 @@ def test_data_migration_steps(project):
     at = ready_app(project).run()
     assert not at.exception
     steps = [b.label.replace("✓ ", "") for b in at.button if b.key and b.key.startswith("step-")]
-    assert steps == ["1 · Settings", "2 · Map the data", "3 · Report"]
+    assert steps == ["1 · Settings", "2 · Map the data", "3 · Data report"]
     assert any(b.label.startswith("Next: map the data") for b in at.button)  # the demo has its source data
 
 
@@ -409,3 +409,67 @@ def test_etl_project_recommends_the_warehouse_database(tmp_path):
     assert next(c for c in at.checkbox if c.key == "live_code").value  # procedures are where the data is updated
     assert any(m.value == "#### What the packages use" for m in at.markdown)
     assert any("Read the warehouse database" in i.value for i in at.info)
+
+
+def test_code_migration_from_an_assessment_starts_with_fix_code(project):
+    from wishbridge.warehouses.sqlserver.config import load_config
+    from wishbridge.warehouses.sqlserver.state import save_step
+
+    cfg = load_config(project / "project.yml")
+    save_step(cfg, "convert", {"summary": {"files": 0, "ready": 0, "review": 0, "needs_fix": 0, "auto_fixed": 0,
+                                           "open_errors": 0, "open_warnings": 0}, "transpiler": "morph",
+                               "final_dir": "", "files": []})
+    at = ready_app(project).run()
+    assert not at.exception
+    steps = [b.label.replace("✓ ", "") for b in at.button if b.key and b.key.startswith("step-")]
+    assert steps == ["1 · Fix code", "2 · Settings", "3 · Code", "4 · Run", "5 · Deployment report"]
+    assert at.session_state["step"] == "fix"  # an opened project starts at the first tab
+    next(b for b in at.button if b.label == "Next: settings →").click().run()
+    assert at.session_state["step"] == "settings"
+
+
+def test_deployment_report_shows_what_was_created_and_offers_the_data_migration(project):
+    import yaml
+
+    from wishbridge.warehouses.sqlserver.config import load_config
+    from wishbridge.warehouses.sqlserver.state import save_step
+
+    cfg = load_config(project / "project.yml")
+    save_step(cfg, "deploy", {"summary": {"target": "workspace.demo", "warehouse_id": "w", "files": 2, "files_ok": 2,
+                                          "statements": 3, "statements_ok": 3, "kept_existing": 0, "left_out": 0},
+                              "files": [{"file": "a.sql", "statements": 2, "passed": 2, "ok": True,
+                                         "results": [{"n": 1, "ok": True}, {"n": 2, "ok": True}]},
+                                        {"file": "b.sql", "statements": 1, "passed": 1, "ok": True,
+                                         "results": [{"n": 1, "ok": True}]}]})
+    at = ready_app(project)
+    at.session_state["go_step"] = "results"
+    at.run()
+    assert not at.exception
+    assert any(s.value == "Code migration report" for s in at.subheader)
+    assert any("Everything was created" in s.value for s in at.success)
+    next(b for b in at.button if b.label == "Start the data migration →").click().run()
+    assert not at.exception
+    assert yaml.safe_load((project / "project.yml").read_text(encoding="utf-8"))["phase"] == "data-migration"
+
+
+def test_data_report_shows_rows_and_matches(project):
+    from wishbridge.warehouses.sqlserver.config import load_config
+    from wishbridge.warehouses.sqlserver.state import save_step
+
+    _data_migration(project)
+    cfg = load_config(project / "project.yml")
+    save_step(cfg, "load", {"executed": True, "method": "federation", "plan_file": "", "tables": [
+        {"source": "s.a", "target": "t.a", "status": "loaded", "rows": 1200, "compare_only": False},
+        {"source": "s.b", "target": "t.b", "status": "loaded", "rows": 34, "compare_only": False}],
+        "summary": {"tables": 2, "loaded": 2, "failed": 0, "compare_only": 0}})
+    save_step(cfg, "reconcile", {"mode": "quick", "summary": {"tables": 2, "matched": 1}, "tables": [
+        {"target": "t.a", "status": "match", "checks": [{"check": "rows", "source": 1200, "target": 1200, "match": True}]},
+        {"target": "t.b", "status": "differs", "checks": [{"check": "rows", "source": 35, "target": 34, "match": False}]}]})
+    at = ready_app(project)
+    at.session_state["go_step"] = "results"
+    at.run()
+    assert not at.exception
+    assert any(s.value == "Data migration report" for s in at.subheader)
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics["Tables copied"] == "2/2" and metrics["Rows copied"] == "1,234" and metrics["Match the source"] == "1/2"
+    assert any("1 table(s) differ" in w.value for w in at.warning)

@@ -52,7 +52,7 @@ def report_overview(cfg, state) -> None:
                            mime="text/html", width="stretch")
 
 
-def render(cfg, raw, packages) -> None:
+def _assessment_report(cfg, raw, packages) -> None:
     state = load_state(cfg)
     if not state:
         st.info("Nothing has run yet. Use the Run tab.")
@@ -163,3 +163,122 @@ def render(cfg, raw, packages) -> None:
         if report.exists():
             st.markdown("#### The full report")
             st.iframe(report.read_text(encoding="utf-8"), height=900)  # our own generated report, all values HTML-escaped
+
+
+
+def render(cfg, raw, packages) -> None:
+    """The report of the project's phase."""
+    if cfg.phase == "code-migration":
+        _code_migration_report(cfg, raw, load_state(cfg))
+    elif cfg.phase == "data-migration":
+        _data_migration_report(cfg, raw, load_state(cfg))
+    else:
+        _assessment_report(cfg, raw, packages)
+
+
+def _full_report(cfg) -> None:
+    report = cfg.output_dir / "report.html"
+    if report.exists():
+        st.download_button("⬇ Download the report", report.read_bytes(), file_name=f"{cfg.name}-{cfg.phase}-report.html",
+                           mime="text/html")
+        with st.expander("The full report"):
+            st.iframe(report.read_text(encoding="utf-8"), height=900)  # our own generated report, all values HTML-escaped
+
+
+def _start_data_migration() -> None:
+    from wishbridge.warehouses.redshift.ui import helpers as h
+
+    raw = h.read_raw(ss.project)
+    raw["phase"] = "data-migration"
+    h.save_raw(ss.project, raw)
+    ss.goal = "data-migration"
+    ss.goal_applied = (ss.project, "data-migration")
+    ss.pop("step", None)
+
+
+def _code_migration_report(cfg, raw, state) -> None:
+    """What was created in Databricks, what failed, what is still open in the code."""
+    c, d = state.get("convert"), state.get("deploy")
+    st.subheader("Code migration report")
+    if not d:
+        st.info("Nothing has been created in Databricks yet: in **Run**, tick *Create the tables and code in the test "
+                "schema* and press Start.")
+        return
+    s = d["summary"]
+    failed = [f for f in d["files"] if not f["ok"]]
+    st.caption(f"Target: `{s['target']}`")
+    m = st.columns(4)
+    m[0].metric("Files created", f"{s['files_ok']}/{s['files']}")
+    m[1].metric("Statements OK", f"{s['statements_ok']}/{s['statements']}")
+    m[2].metric("Already there (kept)", s.get("kept_existing", 0))
+    m[3].metric("Left out (fit check)", s.get("left_out", 0))
+    if failed:
+        st.warning(f"**{len(failed)} file(s) failed on Databricks.** Fix them in *Fix code*, then run again (the run "
+                   "keeps every manual fix).")
+        next_button("Next: fix the failed files →", "fix", "next-code-report")
+    else:
+        st.success("Everything was created in Databricks.")
+        st.button("Start the data migration →", type="primary", key="to-data-migration", on_click=_start_data_migration,
+                  help="Switches this project to the data migration phase: map the tables and copy the data.")
+
+    st.markdown("#### What was created")
+    st.dataframe(pd.DataFrame([{
+        "file": f["file"],
+        "result": "✅ created" if f["ok"] else "❌ failed",
+        "statements OK": f"{f['passed']}/{f['statements']}",
+        "errors / notes": "; ".join(f"#{x['n']} {x['error']}" for x in f["results"] if not x["ok"])
+                          or next((x.get("note", "") for x in f["results"] if x.get("note")), ""),
+    } for f in d["files"]]), width="stretch", hide_index=True)
+    if c:
+        cs = c["summary"]
+        st.markdown("#### The converted code")
+        st.markdown(f"{cs['ready']} of {cs['files']} files ready · {cs['review']} to review · {cs['needs_fix']} need a "
+                    f"fix · {cs.get('manual_overrides', 0)} fixed by hand")
+        items = [{"file": f["file"], "line": x["line"], "severity": x["severity"], "what to do": x["message"]}
+                 for f in c["files"] for x in f["findings"] if not x["fixed"] and x["severity"] != "info"]
+        if items:
+            with st.expander(f"Open items ({len(items)})"):
+                st.dataframe(pd.DataFrame(items), width="stretch", hide_index=True)
+    _full_report(cfg)
+
+
+def _data_migration_report(cfg, raw, state) -> None:
+    """What was copied, how many rows, and whether every table matches the source."""
+    ld, r = state.get("load"), state.get("reconcile")
+    st.subheader("Data migration report")
+    if not ld or not ld.get("executed"):
+        st.info("No data copied yet: map the tables and press **Copy the data** in *Map the data*.")
+        return
+    copied = [t for t in ld["tables"] if not t.get("compare_only")]
+    loaded = [t for t in copied if t["status"] == "loaded"]
+    failed = [t for t in copied if t["status"] == "failed"]
+    quick = r if r and r.get("mode") == "quick" else None
+    m = st.columns(4)
+    m[0].metric("Tables copied", f"{len(loaded)}/{len(copied)}")
+    m[1].metric("Rows copied", f"{sum(t.get('rows') or 0 for t in loaded):,}")
+    m[2].metric("Failed", len(failed))
+    m[3].metric("Match the source", f"{quick['summary']['matched']}/{quick['summary']['tables']}" if quick else "—")
+    differ = quick["summary"]["tables"] - quick["summary"]["matched"] if quick else 0
+    if failed:
+        st.error(f"**{len(failed)} table(s) were not copied** — see the errors below, fix the mapping and copy again.")
+    elif quick and not differ:
+        st.success("**All copied tables match the source** (row counts, numeric totals and checksums).")
+    elif quick:
+        st.warning(f"**{differ} table(s) differ from the source** — see *Source vs Databricks* below.")
+    else:
+        st.info("The comparison with the source has not run yet.")
+    if failed or differ:
+        next_button("Back to Map the data →", "data", "next-data-report")
+
+    st.markdown("#### Copied tables")
+    st.dataframe(pd.DataFrame([{"source": t["source"], "Databricks table": t["target"], "status": t["status"],
+                                "rows": t.get("rows"), "error": t.get("error", "")} for t in copied]),
+                 width="stretch", hide_index=True)
+    if quick:
+        st.markdown("#### Source vs Databricks")
+        st.dataframe(pd.DataFrame([{
+            "table": t["target"], "result": t["status"],
+            "details": t.get("error") or ", ".join(f"{ch['check']}: {ch['source']} → {ch['target']}"
+                                                   for ch in t.get("checks", []) if not ch["match"]) or "all checks equal",
+        } for t in quick["tables"]]), width="stretch", hide_index=True)
+    _full_report(cfg)

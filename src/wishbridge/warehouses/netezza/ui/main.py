@@ -26,7 +26,8 @@ def run(raw: dict) -> None:
         st.stop()
     from wishbridge.warehouses.netezza import runner
 
-    LABELS = {"settings": "Settings", "code": "Code", "run": "Run", "data": "Map the data", "results": "Report",
+    LABELS = {"settings": "Settings", "code": "Code", "run": "Run", "data": "Map the data",
+              "results": {"code-migration": "Deployment report", "data-migration": "Data report"}.get(cfg.phase, "Report"),
               "fix": "Fix code", "send": "Share the zip"}
     from_package = (Path(ss.project) / "opened_from_package.json").exists()
     if cfg.phase == "assessment":
@@ -34,8 +35,11 @@ def run(raw: dict) -> None:
         # in the project opened from that zip.
         ORDER = ["settings", "code", "run", "results"] + (["fix"] if from_package else []) + ["send"]
     elif cfg.phase == "code-migration":
-        # Deploy the converted code to Databricks; the report right after the run gives the overview.
-        ORDER = ["settings", "code", "run", "results", "fix"]
+        # From an assessment (its converted code is here): fix the open items first, then settings, run (it converts
+        # again and keeps the hand fixes) and the report. A new project has nothing to fix yet: fixing comes last.
+        fix_first = "convert" in load_state(cfg)
+        ORDER = (["fix", "settings", "code", "run", "results"] if fix_first
+                 else ["settings", "code", "run", "results", "fix"])
     else:
         # Data migration: the tables exist in Databricks (code migration); map, copy, then the report.
         ORDER = ["settings", "data", "results"]
@@ -50,7 +54,7 @@ def run(raw: dict) -> None:
         "run": has_results and not running,
         "data": bool((state_now.get("load") or {}).get("executed")) and not running,
         "results": has_results and not running,
-        "fix": False,
+        "fix": bool(ss.get(f"fix_done:{ss.project}")) or "deploy" in state_now,  # Next on Fix code, or deployed
         "send": bool(ss.get(f"sent:{ss.project}")),
     }
 
@@ -63,6 +67,8 @@ def run(raw: dict) -> None:
                 return done["settings"] and any(k in state_now for k in ("load", "reconcile", "deploy", "convert"))
             return all(done[k] for k in ("settings", "code", "run"))  # copying the data is not required to look
         if key == "fix":
+            if ORDER[0] == "fix":
+                return "convert" in state_now  # the first tab: open as soon as there is converted code
             return "convert" in state_now and all(done[k] for k in ("settings", "code"))
         if key == "send":
             return bool(packages) and all(done[k] for k in ("settings", "code", "run"))
@@ -71,7 +77,7 @@ def run(raw: dict) -> None:
 
     if ss.get("step") not in ORDER or ss.get("step_project") != ss.project:
         ss.step_project = ss.project
-        ss.step = next((k for k in ORDER if not done[k]), ORDER[-1])  # first unfinished step
+        ss.step = ORDER[0]  # an opened project starts at the first tab
     if ss.get("go_step") is not None:
         _go = ss.pop("go_step")
         if _go in ORDER:

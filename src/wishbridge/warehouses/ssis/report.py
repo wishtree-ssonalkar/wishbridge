@@ -75,9 +75,9 @@ def build_report(cfg: ProjectConfig) -> Path:
     e = effort(cfg, state)
 
     cards = []
-    if a:
+    if a and cfg.phase == "assessment":
         cards.append(_card(len(a["programs"]), "source files analysed"))
-    if c:
+    if c and cfg.phase != "data-migration":
         s = c["summary"]
         automatic = sum(1 for f in c["files"] if f["status"] == "ready" and not f.get("manual_override"))
         cards.append(_card(f'{round(100 * automatic / s["files"]) if s["files"] else 0}%', "files ready without manual work"))
@@ -85,17 +85,23 @@ def build_report(cfg: ProjectConfig) -> Path:
         if s.get("manual_overrides"):
             cards.append(_card(s["manual_overrides"], "files fixed by hand (overrides/)"))
         cards.append(_card(s["open_errors"] + s["open_warnings"], "open items for review"))
-    if e:
+    if e and cfg.phase == "assessment":
         cards.append(_card(f'{e["baseline"]} h', "manual rewrite estimate"))
         cards.append(_card(f'{e["remaining"]} h', "estimated remaining effort"))
-    if d:
+    if d and cfg.phase == "code-migration":
+        cards.append(_card(f'{d["summary"]["files_ok"]}/{d["summary"]["files"]}', "files created on Databricks"))
         cards.append(_card(f'{d["summary"]["statements_ok"]}/{d["summary"]["statements"]}', "statements validated on Databricks"))
-    if r and r.get("mode") == "quick":
-        cards.append(_card(f'{r["summary"]["matched"]}/{r["summary"]["tables"]}', "tables reconciled"))
+    if ld and ld.get("executed") and cfg.phase == "data-migration":
+        copied = [t for t in ld["tables"] if not t.get("compare_only")]
+        cards.append(_card(f'{sum(t["status"] == "loaded" for t in copied)}/{len(copied)}', "tables copied"))
+        cards.append(_card(f'{sum(t.get("rows") or 0 for t in copied):,}', "rows copied"))
+    if r and r.get("mode") == "quick" and cfg.phase == "data-migration":
+        cards.append(_card(f'{r["summary"]["matched"]}/{r["summary"]["tables"]}', "tables match the source"))
     parts.append(f'<div class="grid">{"".join(cards)}</div>' if cards else '<p class="skip">No steps have run yet.</p>')
 
-    # 1. Assessment
-    parts.append("<h2>1. Assessment</h2>")
+    head, sec = parts, {}  # sections, put in the order of the project's phase at the end
+    parts = sec["assessment"] = []
+    parts.append("<h2>Assessment</h2>")
     if a:
         cx = " · ".join(f"{escape(k)}: {v}" for k, v in sorted(a["complexity"].items()))
         totals = " · ".join(f"{escape(k)}: {v}" for k, v in a["totals"].items() if v)
@@ -163,8 +169,8 @@ def build_report(cfg: ProjectConfig) -> Path:
             [f"<code>{escape(x['name'])}</code>", escape(x["kind"]), escape(x["how"]), escape(x["packages"]),
              mark[x["found"]]] for x in deps]))
 
-    # 2. Conversion
-    parts.append("<h2>2. Code conversion</h2>")
+    parts = sec["conversion"] = []
+    parts.append("<h2>Code conversion</h2>")
     if c:
         parts.append(f'<p class="muted">Converted code: <code>{escape(_rel(c["final_dir"], base))}</code></p>')
         parts.append(_table(["File", "Status", "Auto-fixed", "Open errors", "Open warnings", "AI suggestion"], [
@@ -189,8 +195,8 @@ def build_report(cfg: ProjectConfig) -> Path:
     else:
         parts.append('<p class="skip">Not run — <code>wishbridge convert</code></p>')
 
-    # 3. Deployment
-    parts.append("<h2>3. Deployment &amp; validation</h2>")
+    parts = sec["deployment"] = []
+    parts.append("<h2>Created on Databricks (deployment &amp; validation)</h2>")
     if d:
         parts.append(f'<p class="muted">Target <code>{escape(d["summary"]["target"])}</code> on warehouse '
                      f'<code>{escape(d["summary"]["warehouse_id"])}</code>. DDL executed, queries/DML checked with EXPLAIN.</p>')
@@ -207,8 +213,8 @@ def build_report(cfg: ProjectConfig) -> Path:
     else:
         parts.append('<p class="skip">Not run — <code>wishbridge deploy</code></p>')
 
-    # 4. Data
-    parts.append("<h2>4. Data load</h2>")
+    parts = sec["data"] = []
+    parts.append("<h2>Data copied</h2>")
     if ld:
         parts.append(f'<p class="muted">Method: {escape(ld["method"])}. Plan: <code>{escape(_rel(ld["plan_file"], base))}</code></p>')
         parts.append(_table(["Source", "Target", "Status", "Rows"], [
@@ -219,6 +225,7 @@ def build_report(cfg: ProjectConfig) -> Path:
 
     # 4b. ETL notebooks (only for sources that convert to notebooks)
     ex = state.get("execute")
+    parts = sec["etl"] = []
     if ex:
         parts.append("<h2>ETL notebooks</h2>")
         parts.append('<p class="muted">Converted ETL jobs run as Databricks notebook jobs; their output tables are '
@@ -234,8 +241,8 @@ def build_report(cfg: ProjectConfig) -> Path:
                          f'<code>{escape(_rel(ex["job_definition"], base))}</code> '
                          f'(<code>databricks jobs create --json @file</code>).</p>')
 
-    # 5. Reconciliation
-    parts.append("<h2>5. Reconciliation</h2>")
+    parts = sec["reconcile"] = []
+    parts.append("<h2>Source vs Databricks (reconciliation)</h2>")
     if r and r.get("mode") == "quick":
         parts.append('<p class="muted">Source vs target: row count, sum of every numeric column, and a checksum over '
                      'every shared column (catches changed text, dates and numbers).</p>')
@@ -260,10 +267,16 @@ def build_report(cfg: ProjectConfig) -> Path:
     else:
         parts.append('<p class="skip">Not run — <code>wishbridge reconcile</code></p>')
 
+    order = {"assessment": ["assessment", "conversion"],
+             "code-migration": ["deployment", "conversion", "etl"],
+             "data-migration": ["data", "reconcile", "etl"]}.get(cfg.phase, list(sec))
+    parts = head + [p for name in order for p in sec.get(name, [])]
+    title = {"assessment": "Assessment report", "code-migration": "Code migration report",
+             "data-migration": "Data migration report"}.get(cfg.phase, "Migration report")
     generated = datetime.now().strftime("%Y-%m-%d %H:%M")
     html = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Migration Report — {escape(cfg.name)}</title><style>{CSS}</style></head><body><main>
-<h1>Migration report: {escape(cfg.name)}</h1>
+<title>{title} — {escape(cfg.name)}</title><style>{CSS}</style></head><body><main>
+<h1>{title}: {escape(cfg.name)}</h1>
 <p class="sub">{escape(cfg.source.analyzer_tech)} → Databricks · generated {generated} · Wishtree WishBridge {__version__}</p>
 {''.join(parts)}
 <footer>Effort figures are estimates based on the configured hours per file and per open item.
