@@ -90,6 +90,7 @@ def run(raw: dict) -> None:
     if not reachable(ss.step):
         ss.step = [k for k in ORDER if reachable(k)][-1]
     STEP = ss.step
+    ss.step_order, ss.step_labels = ORDER, LABELS  # Settings' Next goes to the tab that really comes next
 
     cols = st.columns(len(ORDER))
     for i, (col, key) in enumerate(zip(cols, ORDER)):

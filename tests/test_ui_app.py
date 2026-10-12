@@ -96,7 +96,15 @@ def test_steps_open_in_order(project):
     assert at.selectbox[0].value == "mssql"
 
 
-def test_next_saves_settings_and_opens_code(project):
+def _no_workspace_calls(monkeypatch, problems=()):
+    """Settings' Next asks the workspace about the target; the tests answer for it."""
+    from wishbridge.warehouses.sqlserver.ui import helpers as wh_helpers
+
+    monkeypatch.setattr(wh_helpers, "check_target", lambda profile, catalog, warehouse_id="": list(problems))
+
+
+def test_next_saves_settings_and_opens_code(project, monkeypatch):
+    _no_workspace_calls(monkeypatch)
     at = ready_app(project).run()
     schema_input = next(t for t in at.text_input if t.label.startswith("Test schema"))
     schema_input.set_value("wishbridge_ui_test").run()
@@ -526,3 +534,29 @@ def test_copy_again_only_the_failed_tables_and_make_the_sign_off(project, monkey
     next(b for b in at.button if b.label.startswith("📦 Make the sign-off file")).click().run()
     assert not at.exception
     assert any(b.label.startswith("⬇ ") and "data-signoff" in b.label for b in at.get("download_button"))
+
+
+
+def test_next_after_settings_opens_deploy_and_checks_the_catalog_first(project, monkeypatch):
+    from wishbridge.warehouses.sqlserver.config import load_config
+    from wishbridge.warehouses.sqlserver.state import save_step
+
+    cfg = load_config(project / "project.yml")
+    save_step(cfg, "convert", {"summary": {"files": 0, "ready": 0, "review": 0, "needs_fix": 0, "auto_fixed": 0,
+                                           "open_errors": 0, "open_warnings": 0}, "transpiler": "morph",
+                               "final_dir": "", "files": []})
+    _no_workspace_calls(monkeypatch, ["Catalog 'workspace' does not exist in this workspace. Choose one of: hive_metastore"])
+    at = ready_app(project)
+    at.session_state["fix_done:" + str(project)] = True
+    at.session_state["go_step"] = "settings"
+    at.run()
+    nxt = next(b for b in at.button if b.label.startswith("Next: "))
+    assert nxt.label == "Next: deploy →"  # the tab after Settings here is Deploy (no Code tab)
+    nxt.click().run()
+    assert not at.exception
+    assert at.session_state["step"] == "settings"  # the target is wrong: it stays, and says why
+    assert any("does not exist in this workspace" in e.value for e in at.error)
+
+    _no_workspace_calls(monkeypatch)
+    next(b for b in at.button if b.label == "Next: deploy →").click().run()
+    assert at.session_state["step"] == "run"

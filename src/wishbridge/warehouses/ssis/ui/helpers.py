@@ -233,6 +233,29 @@ def sign_in(host: str, profile: str) -> tuple[bool, str]:
     return True, f"Signed in to {host} as profile '{profile}'"
 
 
+def check_target(profile: str, catalog: str, warehouse_id: str = "") -> list[str]:
+    """What is wrong with the Databricks target, asked from the workspace itself (empty: all fine)."""
+    from databricks.sdk import WorkspaceClient
+
+    try:
+        w = WorkspaceClient(profile=profile)
+        names = [c.name for c in w.catalogs.list() if c.name]
+    except Exception as e:  # the SDK raises many types; the message says what is wrong
+        return [f"Could not reach the workspace with this login: {str(e).splitlines()[0][:200]}"]
+    problems = []
+    if catalog not in names:
+        problems.append(f"Catalog '{catalog}' does not exist in this workspace. Choose one of: "
+                        + ", ".join(sorted(names)[:15]) + " (*Load warehouses and catalogs* lists them).")
+    try:
+        if warehouse_id:
+            w.warehouses.get(warehouse_id)
+        elif not any(True for _ in w.warehouses.list()):
+            problems.append("This workspace has no SQL warehouse: create one in Databricks (SQL > SQL Warehouses).")
+    except Exception:  # noqa: BLE001
+        problems.append(f"SQL warehouse '{warehouse_id}' was not found in this workspace.")
+    return problems
+
+
 def list_workspace(profile: str) -> dict[str, Any]:
     """Who we are, where, and the warehouses and catalogs visible - for the settings screen."""
     from databricks.sdk import WorkspaceClient

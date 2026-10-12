@@ -247,6 +247,8 @@ def render(cfg, raw, packages) -> None:
                         catalog = st.text_input("Catalog :red[*]", value=cur_cat)
                     if not str(catalog or "").strip():
                         required("Required: the Databricks catalog.")
+                    elif cats and catalog not in cats:
+                        required(f"'{catalog}' does not exist in this workspace - pick one from the list.")
                 with c3:
                     schema = st.text_input("Test schema :red[*]", value=dbx.get("schema", "wishbridge"))
                     if not schema.strip():
@@ -261,7 +263,7 @@ def render(cfg, raw, packages) -> None:
                     required("This looks like a production schema - use a test schema. WishBridge will not deploy there.")
 
                 target_done = (bool(str(catalog or "").strip()) and bool(str(schema or "").strip())
-                               and not looks_like_prod(f"{catalog}.{schema}"))
+                               and not looks_like_prod(f"{catalog}.{schema}") and not (cats and catalog not in cats))
                 if not target_done:
                     next_part_hint()
                 else:
@@ -408,8 +410,19 @@ def render(cfg, raw, packages) -> None:
     to_data = phase == "data-migration"
     if problems and ready:
         st.markdown(":red[Fill in the fields marked * (see the red notes above) before going on.]")
-    if ready and st.button("Next: map the data →" if to_data else "Next: add the code →", type="primary",
-                           help="Saves the settings and opens the next step.", disabled=bool(problems)):
+    order = ss.get("step_order") or []
+    after = order[order.index("settings") + 1] if "settings" in order[:-1] else ("data" if to_data else "code")
+    names = {"code": "add the code", "data": "map the data"}
+    next_label = f"Next: {names.get(after) or (ss.get('step_labels') or {}).get(after, after).lower()} →"
+    if ready and st.button(next_label, type="primary", help="Checks and saves the settings and opens the next step.",
+                           disabled=bool(problems)):
+        if not offline:  # ask the workspace now, not at deploy time
+            with st.spinner("Checking the workspace, catalog and SQL warehouse..."):
+                target_errors = h.check_target(profile, str(catalog).strip(), str(warehouse or "").strip())
+            if target_errors:
+                for err in target_errors:
+                    st.error(err)
+                return
         new = dict(raw)
         new["source"] = source
         if transpiler == "auto":
@@ -430,7 +443,7 @@ def render(cfg, raw, packages) -> None:
             h.save_raw(ss.project, new)
             ss.pop("pending_profile", None)
             ss[f"settings_done:{ss.project}"] = True
-            ss.go_step = "data" if to_data else "code"
+            ss.go_step = after
             st.rerun()
         except (ConfigError, KeyError, ValueError) as e:
             st.error(f"Not saved: {e}")
