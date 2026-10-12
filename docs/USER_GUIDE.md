@@ -124,12 +124,14 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
 - **Sidebar:** *Open a folder* takes either a WishBridge project or **any folder of client code** — a Git
   repository, a Visual Studio database project, an ETL export. For client code the app detects the source system
   (from `.sqlproj`, `.dtsx`, Informatica or DataStage XML, Informatica Cloud `.zip`, or the SQL keywords), finds
-  separate databases inside it (e.g. TenantDB, AuditDB) and offers to create one project per database in
-  `C:\migrations`. WishBridge keeps its own working copy of the code inside the project (with a fingerprint of every
+  separate databases inside it (e.g. TenantDB, AuditDB) and offers to create one project per database.
+  **Assessments and migrations have their own folders** so they are easy to tell apart later:
+  `C:\WishBridge\Assessments` and `C:\WishBridge\Migrations` (`~/WishBridge/...` on macOS/Linux) - the app
+  suggests the one that matches the first-page choice; you can type another. WishBridge keeps its own working copy of the code inside the project (with a fingerprint of every
   file, in `code_received.json`), so the client's folder is needed only once; the app does not show this. The
   client's folder is never written to.
   New projects start in the phase chosen on the first page. *Create new* makes an empty project to upload code into.
-  Same from the command line: `wishbridge init acme --code C:\client-repo --dir C:\migrations`.
+  Same from the command line: `wishbridge init acme --code C:\client-repo --dir C:\WishBridge\Assessments`.
 - **1 · Settings:** the **Phase** comes first and saves as soon as you change it.
   - *Assessment* (offline): only the source system and the converter (leave it on *Automatic*: it picks the right
     converter and retries files it can't convert with the other one). Schema names and AI / estimates

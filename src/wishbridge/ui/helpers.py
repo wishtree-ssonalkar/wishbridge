@@ -28,6 +28,19 @@ class Check:
 
 # ------------------------------------------------------------------ projects
 
+PHASE_FOLDERS = {"assessment": "Assessments", "migration": "Migrations"}
+
+
+def projects_root() -> Path:
+    """Where WishBridge keeps its projects: C:\\WishBridge on Windows, ~/WishBridge elsewhere."""
+    return Path("C:/WishBridge") if os.name == "nt" else Path.home() / "WishBridge"
+
+
+def default_parent(phase: str | None) -> str:
+    """Assessments and migrations get their own folder, so they are easy to tell apart later."""
+    return str(projects_root() / PHASE_FOLDERS.get(phase or "", PHASE_FOLDERS["assessment"]))
+
+
 def project_file(folder: str | Path) -> Path:
     return Path(folder).expanduser().resolve() / "project.yml"
 

@@ -157,7 +157,7 @@ with st.sidebar:
                          key=f"start_{goal}")]
     if mode == "folder":
         folder = st.text_input("Project or client code folder", value=ss.project, disabled=locked,
-                               placeholder=r"C:\migrations\acme-dw  or  C:\client-repo",
+                               placeholder=r"C:\WishBridge\Assessments\acme-dw  or  C:\client-repo",
                                help="A WishBridge project opens directly. Any other folder of SQL/ETL code (a repository, "
                                     "a Visual Studio database project, an export) gets a project created for it.")
         if st.button("Open", width="stretch", disabled=locked or not folder.strip()):
@@ -184,7 +184,8 @@ with st.sidebar:
         st.caption("The zip saved by the assessment (*Assess and save everything*) on any computer. "
                    "It becomes a project here, ready to migrate.")
         pkg_up = st.file_uploader("Package (.zip)", type=["zip"], key="pkg_upload", disabled=locked)
-        pkg_parent = st.text_input("Create the project in", value=r"C:\migrations", key="pkg_parent", disabled=locked)
+        pkg_parent = st.text_input("Create the project in", value=h.default_parent(goal), key=f"pkg_parent_{goal}",
+                                   disabled=locked, help="Migrations and assessments have their own folders.")
         if st.button("Open package", width="stretch", disabled=locked or pkg_up is None or not pkg_parent.strip()):
             from wishbridge.package import open_package
 
@@ -204,7 +205,8 @@ with st.sidebar:
                        "client's database in **Code › Read from the database** (read-only, no data).")
         name = st.text_input("Project name :red[*]", placeholder="acme-dw", disabled=locked, key="new_name")
         source = st.selectbox("Source system :red[*]", list(SOURCES), format_func=lambda k: SOURCES[k].label, disabled=locked)
-        parent = st.text_input("Create in folder :red[*]", value=r"C:\migrations", disabled=locked, key="new_parent")
+        parent = st.text_input("Create in folder :red[*]", value=h.default_parent(goal), disabled=locked,
+                               key=f"new_parent_{goal}", help="Migrations and assessments have their own folders.")
         if st.button("Create project", width="stretch", disabled=locked or not name.strip() or not parent.strip()):
             try:
                 ss.project = str(h.create_project(parent, name, source))
@@ -285,7 +287,7 @@ if info and not project_ok():
         src_keys = list(SOURCES)
         source = c1.selectbox("Source system :red[*]", src_keys, index=src_keys.index(det.source),
                               format_func=lambda k: SOURCES[k].label)
-        default_parent = r"C:\migrations"
+        default_parent = h.default_parent(ss.get("goal"))  # assessments and migrations in their own folders
         name = c2.text_input("Project name :red[*]", value=discover.suggested_name(info.path, default_parent), key="code_name")
         parent = st.text_input("Create projects in :red[*]", value=default_parent, key="code_parent")
         split = False

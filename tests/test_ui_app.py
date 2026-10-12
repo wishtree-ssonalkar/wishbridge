@@ -312,3 +312,17 @@ def test_migration_settings_start_with_the_workspace_only(project):
     headings = [m.value for m in at.markdown if m.value.startswith("#### ")]
     assert headings == ["#### 1 · Databricks workspace"]  # target and source appear after a login is chosen
     assert not any(t.label.startswith("Test schema") for t in at.text_input)
+
+
+def test_assessments_and_migrations_have_their_own_folders():
+    from wishbridge.ui.helpers import default_parent
+
+    assert default_parent("assessment").endswith("Assessments")
+    assert default_parent("migration").endswith("Migrations")
+    at = ready_app().run()
+    next(b for b in at.button if b.label == "Start a migration").click().run()
+    assert next(t for t in at.text_input if t.label == "Create the project in").value == default_parent("migration")
+    next(b for b in at.button if b.label == "Start an assessment").click().run()
+    next(r for r in at.radio if r.key == "start_assessment").set_value("Start from the database").run()
+    assert not at.exception
+    assert next(t for t in at.text_input if t.label.startswith("Create in folder")).value == default_parent("assessment")

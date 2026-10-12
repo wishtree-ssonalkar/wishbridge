@@ -43,7 +43,7 @@ Read it now (nothing to install):
 Continue the work (on any computer with WishBridge):
   project/                 The rest of the project: settings, hand fixes (overrides/), inventory and results.
                            Opening the package puts original_code/ and converted_code/ back into it.
-  Open it with:  wishbridge open-package <this zip> --dir C:\\migrations
+  Open it with:  wishbridge open-package <this zip> --dir C:\\WishBridge\\Migrations
   or in the app: sidebar > Open a package.
 
 Nothing in this package was sent to Databricks or to the client's database.
