@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-from wishbridge.config import load_config
-from wishbridge.convert import _score
-from wishbridge.rules import Finding, detect, dropped_statement_check
-from wishbridge.staging import source_files, staged
+from wishbridge.warehouses.sqlserver.config import load_config
+from wishbridge.warehouses.sqlserver.convert import _score
+from wishbridge.warehouses.sqlserver.rules import Finding, detect, dropped_statement_check
+from wishbridge.warehouses.sqlserver.staging import source_files, staged
 
 
 def rules(findings):
@@ -68,7 +68,7 @@ def test_honest_unconverted_output_is_not_damage():
 
 
 def test_sql_server_source_is_tidied_before_conversion(tmp_path):
-    from wishbridge.staging import prepare_tsql, prepared_notes
+    from wishbridge.warehouses.sqlserver.staging import prepare_tsql, prepared_notes
 
     src = ("CREATE TABLE [dbo].[UserSkillMappings] (\n    [Id] INT NOT NULL,\n"
            "    [ValidFrom] DATETIME2 GENERATED ALWAYS AS ROW START HIDDEN NOT NULL,\n"
@@ -106,7 +106,7 @@ def test_other_sources_are_copied_unchanged(tmp_path):
 
 
 def test_commented_out_foreign_key_becomes_a_runnable_note():
-    from wishbridge.rules import apply_rules
+    from wishbridge.warehouses.sqlserver.rules import apply_rules
 
     out = ("ALTER\n    TABLE workspace.prm.`UserSkillMappings`\n/*\n            CONSTRAINT [FK_A]\n"
            "    FOREIGN KEY ([SkillId]) REFERENCES [dbo].[SkillMaster] ([SkillId]) ON DELETE CASCADE\n"

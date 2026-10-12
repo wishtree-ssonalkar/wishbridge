@@ -1,6 +1,6 @@
 """Structural checks found while testing every source end to end."""
 
-from wishbridge.rules import apply_rules, count_statements, detect, dropped_statement_check
+from wishbridge.warehouses.sqlserver.rules import apply_rules, count_statements, detect, dropped_statement_check
 
 
 def rules(findings):

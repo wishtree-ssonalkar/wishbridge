@@ -1,6 +1,6 @@
 """Each warehouse's file is complete and the shared tables are built from them."""
 
-from wishbridge import config, inventory, rules, source_db, sources
+from wishbridge.warehouses.sqlserver import config, inventory, rules, source_db, sources
 
 
 def test_every_source_has_a_label_a_database_and_a_converter():
@@ -29,7 +29,7 @@ def test_shared_modules_read_the_warehouse_files():
 def test_each_warehouse_has_its_own_screens():
     from types import SimpleNamespace
 
-    from wishbridge.ui.warehouses import default, etl, ssis, warehouse_ui
+    from wishbridge.warehouses.sqlserver.ui.screens import default, etl, ssis, warehouse_ui
 
     def ui(key):
         return warehouse_ui(SimpleNamespace(source=SimpleNamespace(key=key)))

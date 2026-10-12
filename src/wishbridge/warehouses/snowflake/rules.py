@@ -1,0 +1,470 @@
+"""Post-transpile rules.
+
+LakeBridge's transpilers convert most code, but leave FIXME markers and the
+occasional construct that won't run on Databricks. Rules here either *fix*
+the text (only rewrites that are safe and mechanical) or *flag* it for a
+human (anything that changes semantics). Strings and comments are never
+touched by fixes, and detectors only look at code unless marked `raw`.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import asdict, dataclass
+from typing import Callable
+
+from . import sources as _sources
+from .sources.base import (ALL, ERROR, INFO, NETEZZA, ORACLE, SNOWFLAKE, TERADATA, TSQL, WARNING, I, M, S,  # noqa: F401
+                           Detector)
+from .sqltext import comments, line_of, mask, split_statements
+
+
+@dataclass
+class Finding:
+    rule: str
+    severity: str
+    line: int
+    message: str
+    fixed: bool = False
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def _applies(scope: frozenset | None, dialect: str | None) -> bool:
+    return scope is None or dialect is None or dialect in scope
+
+
+def _sub_code(sql: str, pattern: re.Pattern, repl: str | Callable[[re.Match], str],
+              keep_idents: bool = False) -> tuple[str, list[int]]:
+    """Substitute matches that lie entirely in code (not in strings/comments). Returns new text and match offsets."""
+    m = mask(sql, keep_idents)
+    hits = [h for h in pattern.finditer(m) if sql[h.start():h.end()] == h.group(0)]
+    offsets = [h.start() for h in hits]
+    for h in reversed(hits):
+        new = repl(h) if callable(repl) else h.expand(repl)
+        sql = sql[:h.start()] + new + sql[h.end():]
+    return sql, offsets
+
+
+def _sub_raw_anchored(sql: str, pattern: re.Pattern, repl: Callable[[re.Match], str], anchor: str) -> tuple[str, list[int]]:
+    """Substitute matches on raw text (they may span comments) whose first `len(anchor)` chars are code."""
+    m = mask(sql)
+    out, last, offsets = [], 0, []
+    for hit in pattern.finditer(sql):
+        if m[hit.start():hit.start() + len(anchor)].upper() != anchor:
+            continue
+        out.append(sql[last:hit.start()])
+        out.append(repl(hit))
+        offsets.append(hit.start())
+        last = hit.end()
+    out.append(sql[last:])
+    return "".join(out), offsets
+
+
+# ---------------------------------------------------------------- fixers
+
+def _fix_schema_map(sql: str, schema_map: dict[str, str]) -> tuple[str, list[Finding]]:
+    findings = []
+    for src, tgt in schema_map.items():
+        name = re.escape(src)
+        pat = re.compile(rf"(?<![\w.`])(?:\[{name}\]|`{name}`|{name})\.(?=[\w\[`])", I)
+        sql, hits = _sub_code(sql, pat, lambda _m, t=tgt: f"{t}.", keep_idents=True)
+        if hits:
+            findings.append(Finding("schema-map", INFO, line_of(sql, hits[0]), f"Mapped schema '{src}' -> '{tgt}' ({len(hits)}x)", True))
+    return sql, findings
+
+
+# Safe rewrites for one warehouse are in its file (sources/<warehouse>.py: FIXES); this one fits every source.
+_SIMPLE_FIXES: list[tuple[str, frozenset | None, re.Pattern, str, str]] = _sources.FIXES + [
+    ("missing-semicolon", ALL, re.compile(r"\)(?=[ \t]*CREATE\s+(?:OR\s+REPLACE\s+)?(?:PROCEDURE|TABLE|VIEW|FUNCTION)\b)", I), ");\n",
+     "Inserted a missing ';' between two statements that ran together"),
+]
+
+# `AS` <newline> -- comment <newline> alias   ->   AS alias, -- comment
+_DANGLING_COMMENT = re.compile(r"\bAS[ \t]*\r?\n[ \t]*(--[^\n]*)\r?\n[ \t]*(\w+)([^\n-]*)", I)
+
+# `CREATE [OR REPLACE] /* <unconverted text> */;` - an empty shell that cannot run
+_EMPTY_CREATE = re.compile(r"\bCREATE(?:\s+OR\s+REPLACE)?\s*/\*(.*?)\*/\s*;", I | S)
+
+
+def _fix_dangling_comment(sql: str) -> tuple[str, list[Finding]]:
+    new, hits = _sub_raw_anchored(
+        sql, _DANGLING_COMMENT, lambda m: f"AS {m.group(2)}{m.group(3).rstrip()} {m.group(1)}", "AS")
+    return new, [Finding("dangling-comment", INFO, line_of(sql, h), "Moved comment that split a column alias", True) for h in hits]
+
+
+# Column definitions: Databricks rejects an explicit `NULL` (nullable is the default); keep NOT NULL / DEFAULT NULL / IS NULL.
+_CREATE_TABLE = re.compile(r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?TABLE\b", I)
+_EXPLICIT_NULL = re.compile(r"(?<=[\w)])(?<!\bNOT)(?<!\bDEFAULT)(?<!\bIS)\s+NULL\b(?=\s*[,)])", I)
+
+
+def _fix_explicit_null(sql: str) -> tuple[str, list[Finding]]:
+    findings, out, pos = [], [], 0
+    for stmt in split_statements(sql):
+        start = sql.find(stmt, pos)
+        if start < 0:
+            continue
+        out.append(sql[pos:start])
+        new = stmt
+        if _CREATE_TABLE.match(mask(stmt)):
+            new, hits = _sub_code(stmt, _EXPLICIT_NULL, "")
+            if hits:
+                findings.append(Finding("explicit-null", INFO, line_of(sql, start + hits[0]),
+                                        f"Removed explicit NULL from {len(hits)} column definition(s) (Databricks rejects it)", True))
+        out.append(new)
+        pos = start + len(stmt)
+    out.append(sql[pos:])
+    return "".join(out), findings
+
+
+def _fix_empty_create(sql: str) -> tuple[str, list[Finding]]:
+    def repl(m: re.Match) -> str:
+        body = " ".join(m.group(1).split())
+        return f"-- [WishBridge] not converted - rewrite manually: CREATE {body}"
+
+    new, hits = _sub_raw_anchored(sql, _EMPTY_CREATE, repl, "CREATE")
+    return new, [Finding("empty-create", INFO, line_of(sql, h),
+                         "Commented out an unconverted CREATE statement that would fail to run", True) for h in hits]
+
+
+# `ALTER TABLE t /* CONSTRAINT [FK] FOREIGN KEY (...) REFERENCES [dbo].[B] (...) -- FIXME: <note> */;`
+# Morph comments out foreign keys added with ALTER TABLE, leaving a statement that cannot run.
+_EMPTY_ALTER = re.compile(r"\bALTER\s+TABLE\s+([^\s/;]+)\s*/\*(.*?)\*/\s*;", I | S)
+_FK_BODY = re.compile(r"CONSTRAINT\s+(\S+)\s+FOREIGN\s+KEY\s*(\([^)]*\))\s*REFERENCES\s+(\S+)\s*(\([^)]*\))(.*)", I | S)
+
+
+def _fix_empty_alter(sql: str, schema_map: dict[str, str]) -> tuple[str, list[Finding]]:
+    findings: list[Finding] = []
+
+    def ident(s: str) -> str:
+        s = re.sub(r"\[([^\]]+)\]", r"`\1`", s)
+        for src, tgt in schema_map.items():
+            s = re.sub(rf"^(?:`{re.escape(src)}`|{re.escape(src)})\.", f"{tgt}.", s, flags=I)
+        return s
+
+    def repl(m: re.Match) -> str:
+        body, note = m.group(2), ""
+        if "-- FIXME:" in body:
+            body, note = body.split("-- FIXME:", 1)
+            note = " ".join(note.split())
+        fk = _FK_BODY.search(" ".join(body.split()))
+        if not fk:
+            text = " ".join(m.group(2).split())
+            findings.append(Finding("empty-alter", WARNING, 0, f"Commented out an unconverted ALTER TABLE: {note or text[:80]}"))
+            return f"-- [WishBridge] not converted - rewrite manually: ALTER TABLE {m.group(1)} {text}"
+        name, cols, ref, ref_cols, rest = fk.groups()
+        action = " ".join(rest.split())
+        msg = (f"Foreign key {ident(name)} is written out as a commented Databricks statement: Unity Catalog foreign keys "
+               "are informational only (not enforced)" + (f" and '{action}' is not supported - handle it in the ETL" if action else "")
+               + ". Run it after the referenced table exists if you want the relationship documented."
+               + (f" ({note})" if note else ""))
+        findings.append(Finding("foreign-key", WARNING, 0, msg))
+        return (f"-- [WishBridge] informational foreign key (not enforced{'; ' + action + ' dropped' if action else ''}):\n"
+                f"-- ALTER TABLE {m.group(1)} ADD CONSTRAINT {ident(name)} FOREIGN KEY {ident(cols)} "
+                f"REFERENCES {ident(ref)} {ident(ref_cols)};")
+
+    out, pos = [], 0
+    for m in _EMPTY_ALTER.finditer(sql):
+        before = len(findings)
+        out += [sql[pos:m.start()], repl(m)]
+        for f in findings[before:]:
+            object.__setattr__(f, "line", line_of(sql, m.start()))
+        pos = m.end()
+    out.append(sql[pos:])
+    return "".join(out), findings
+
+
+# --------------------------------------------------------------- detectors
+
+# Checks for one warehouse are in its file (sources/<warehouse>.py); these apply to every source.
+_DETECTORS: list[Detector] = _sources.DETECTORS + [
+    Detector("partition-expression", ERROR, ALL, re.compile(r"\bPARTITIONED\s+BY\s*\([^()]*\(", I),
+             "Delta tables partition by columns only: add a generated column (e.g. order_day DATE GENERATED ALWAYS AS "
+             "(CAST(order_date AS DATE))) and partition by it, or use CLUSTER BY instead."),
+    Detector("date-minus-number", WARNING, ALL,
+             re.compile(r"\b(?:CURRENT_TIMESTAMP|CURRENT_DATE|NOW)\s*(?:\(\s*\))?\s*-\s*\d+\b(?!\s*(?:DAYS?|HOURS?|MINUTES?|SECONDS?|MONTHS?|YEARS?)\b)", I),
+             "Date arithmetic with a bare number ({m}): use INTERVAL n DAYS or date_sub() in Databricks."),
+    Detector("merge-into-alias", ERROR, ALL,
+             re.compile(r"\bMERGE\s+INTO\s+`?(\w+)`?\s+USING\b(?:(?!\bMERGE\b).){0,4000}?\bAS\s+`?\1`?(?!\w)", I | S),
+             "MERGE target {m1} is a table alias, not a table: an UPDATE ... FROM ... JOIN was mis-converted. "
+             "Rewrite as MERGE INTO <table> AS {m1} USING (<join>) ON <key> WHEN MATCHED THEN UPDATE ..."),
+    Detector("raise-error-placeholder", ERROR, ALL,
+             re.compile(r"\bRAISE_ERROR\s*\(\s*'[^']*\bwould\b", I),
+             "The transpiler inserted a RAISE_ERROR placeholder: this statement fails at runtime until it is rewritten.", raw=True),
+    Detector("cursor", WARNING, ALL, re.compile(r"\bDECLARE\s+\w+\s+CURSOR\b|\bFETCH\s+NEXT\b", I),
+             "Cursor logic: rewrite as a set-based query."),
+    Detector("dynamic-sql", WARNING, ALL, re.compile(r"\bEXEC(?:UTE)?\s*\(|\bsp_executesql\b|\bEXECUTE\s+IMMEDIATE\s+'", I),
+             "Dynamic SQL: review it and use EXECUTE IMMEDIATE."),
+    Detector("transaction", INFO, ALL, re.compile(r"\bBEGIN\s+TRAN(?:SACTION)?\b|\bROLLBACK\b", I),
+             "Explicit transaction: each Databricks statement is atomic; review multi-statement transaction semantics."),
+]
+
+_COMMENT_MARKERS = re.compile(r"\b(FIXME|TODO|UNSUPPORTED|NOT\s+SUPPORTED|CANNOT\s+BE\s+TRANSLATED)\b[:\s-]*(.*)", I)
+
+# Transpiler notes that are informational, not work items.
+BENIGN_NOTES = [
+    re.compile(r"returns datetime with approximately 3\.33 ms resolution", I),
+    re.compile(r"Databricks SQL does not return row count messages", I),
+    # NOLOCK allowed dirty reads; Delta always reads a committed snapshot, which is strictly safer.
+    re.compile(r"table hint .* NOLOCK\s*$", I),
+]
+
+# Transpiler notes that mean code was NOT converted - these block deployment.
+BLOCKING_NOTES = re.compile(
+    r"cannot (?:currently )?(?:be )?(?:convert|translat)|no equivalent|Unparsed input|parse error|ErrorNode", I)
+
+# Databricks guidance appended to transpiler notes about untranslatable features.
+GUIDANCE: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"temporal table|SYSTEM_TIME", I), "Delta keeps history itself: drop the period columns and history "
+                                                    "table; use VERSION AS OF / TIMESTAMP AS OF"),
+    (re.compile(r"table-valued function", I), "use a SQL table function: CREATE FUNCTION f(...) RETURNS TABLE RETURN SELECT ..."),
+    (re.compile(r"\bUNLOAD\b", I), "write the query result with INSERT OVERWRITE DIRECTORY, or from a notebook to a volume"),
+    (re.compile(r"\bVACUUM\b", I), "run OPTIMIZE on the Delta table (Delta's VACUUM only removes old files)"),
+    (re.compile(r"\bSTREAM\b", I), "use Delta Change Data Feed (delta.enableChangeDataFeed) and table_changes()"),
+    (re.compile(r"\bTASK\b", I), "schedule the statement as a Databricks Job (Lakeflow Jobs)"),
+    (re.compile(r"\bCOPY INTO\b|\bstage\b", I), "load with COPY INTO from a Unity Catalog volume, or Auto Loader"),
+    (re.compile(r"SEQUENCE|NEXTVAL|CURRVAL", I), "use an IDENTITY column (GENERATED ALWAYS AS IDENTITY)"),
+    (re.compile(r"START WITH|CONNECT BY", I), "rewrite as a recursive CTE (WITH RECURSIVE)"),
+    (re.compile(r"\bPRINT\b", I), "drop it, or SELECT the value if it is needed"),
+    (re.compile(r"\(\+\)", I), "rewrite the (+) join as LEFT/RIGHT OUTER JOIN"),
+]
+
+
+EMPTY_NOTE = "Transpiler marked this line for review"
+
+
+def is_benign(message: str) -> bool:
+    return any(p.search(message) for p in BENIGN_NOTES)
+
+
+def note_finding(note: str, line: int) -> Finding:
+    note = note or EMPTY_NOTE
+    if is_benign(note):
+        return Finding("converter-note", INFO, line, note)
+    for pat, advice in GUIDANCE:
+        if pat.search(note):
+            note = f"{note} -> Databricks: {advice}"
+            break
+    return Finding("converter-note", ERROR if BLOCKING_NOTES.search(note) else WARNING, line, note)
+
+
+_UNCONVERTED = re.compile(r"\A\s*--\s*internal error\b", I)
+
+
+def structural_checks(sql: str) -> list[Finding]:
+    """Problems with the shape of the converted file rather than any one construct."""
+    findings = []
+    if _UNCONVERTED.match(sql):
+        findings.append(Finding("unconverted-file", ERROR, 1,
+                                "The converter failed on this file and copied it unchanged: it is still source-dialect "
+                                "SQL. Rewrite it by hand in overrides/."))
+    pos = 0
+    for stmt in split_statements(sql):
+        start = sql.find(stmt, pos)
+        pos = start + len(stmt) if start >= 0 else pos
+        code = mask(stmt)
+        if code.count("(") != code.count(")"):
+            findings.append(Finding("unbalanced-parentheses", ERROR, line_of(sql, max(start, 0)),
+                                    "Unbalanced parentheses: the converter left broken syntax in this statement."))
+    return findings
+
+
+def count_statements(sql: str) -> int:
+    """Statements at any depth (so wrapping statements in BEGIN ... END does not hide or invent a drop):
+    one per ';' in code, plus a final statement without one. Comments and strings are ignored."""
+    code = mask(sql)
+    tail = code.rsplit(";", 1)[-1]
+    return code.count(";") + (1 if tail.strip() else 0)
+
+
+# Session settings and batch commands that are correctly dropped in Databricks - not counted as lost statements.
+_SESSION_SETTINGS = re.compile(
+    r"^[ \t]*(?:SET\s+(?:NOCOUNT|ANSI_\w+|QUOTED_IDENTIFIER|XACT_ABORT|ARITHABORT|CONCAT_NULL_YIELDS_NULL|"
+    r"NUMERIC_ROUNDABORT|IMPLICIT_TRANSACTIONS|DEADLOCK_PRIORITY|LOCK_TIMEOUT|TRANSACTION\s+ISOLATION\s+LEVEL)\b[^;\n]*;?"
+    r"|USE\s+\[?\w+\]?\s*;?|GO\b)[ \t]*$", I | M)
+
+
+def dropped_statement_check(source_sql: str, converted_sql: str, findings: list[Finding]) -> Finding | None:
+    """Warn when the converted file has fewer statements than the source and the gap is not explained by notes."""
+    notes = sum(1 for f in findings if f.rule in ("converter-note", "empty-create"))
+    source_sql = _SESSION_SETTINGS.sub("", source_sql)
+    missing = count_statements(source_sql) - count_statements(converted_sql) - notes
+    if missing > 0:
+        return Finding("dropped-statements", WARNING, 1,
+                       f"{missing} statement(s) from the source file are missing from the converted file without any "
+                       "note - check that nothing was silently dropped.")
+    return None
+
+
+def _dedupe(findings: list[Finding]) -> list[Finding]:
+    """Report a repeated issue once, listing the other lines."""
+    first: dict[tuple[str, str], Finding] = {}
+    extra: dict[tuple[str, str], list[int]] = {}
+    for f in sorted(findings, key=lambda x: x.line):
+        key = (f.rule, f.message)
+        if key in first:
+            extra.setdefault(key, []).append(f.line)
+        else:
+            first[key] = f
+    for key, lines in extra.items():
+        first[key].message += f" (also line{'s' if len(lines) > 1 else ''} {', '.join(map(str, lines))})"
+    return list(first.values())
+
+
+def detect(sql: str, dialect: str | None = None) -> list[Finding]:
+    findings: list[Finding] = []
+    code = mask(sql, keep_idents=True)
+    for d in _DETECTORS:
+        if not _applies(d.scope, dialect):
+            continue
+        for hit in d.pattern.finditer(sql if d.raw else code):
+            if d.raw and code[hit.start()] != sql[hit.start()]:
+                continue  # match starts inside a string or comment
+            m1 = hit.group(1) if d.pattern.groups else ""
+            text = hit.group(0).strip()
+            if d.raw:
+                text = text.split("(")[0]
+            findings.append(Finding(d.rule, d.severity, line_of(sql, hit.start()), d.message.format(m=text, m1=m1)))
+    for off, text in comments(sql):
+        hit = _COMMENT_MARKERS.search(text)
+        if hit:
+            note = (hit.group(2) or "").strip().rstrip("*/").strip()
+            findings.append(note_finding(note, line_of(sql, off)))
+    findings += structural_checks(sql)
+    # A local-variable hit inside a system-variable hit (@@X) is the same issue.
+    sys_lines = {f.line for f in findings if f.rule == "system-variable"}
+    findings = [f for f in findings if not (f.rule == "local-variable" and f.line in sys_lines)]
+    # A bare /*FIXME*/ marker next to an issue a rule already explains on the same line adds nothing.
+    explained = {f.line for f in findings if f.rule != "converter-note"}
+    findings = [f for f in findings if not (f.rule == "converter-note" and f.message == EMPTY_NOTE and f.line in explained)]
+    return _dedupe(findings)
+
+
+_BOOLEAN_COLUMN = re.compile(r"`?(\w+)`?\s+BOOLEAN\b", I)
+
+
+def boolean_columns(sql: str) -> set[str]:
+    """Column names declared BOOLEAN in converted CREATE TABLE statements (SQL Server BIT columns end up here)."""
+    return {m.group(1).lower() for m in _BOOLEAN_COLUMN.finditer(mask(sql, keep_idents=True))}
+
+
+def _fix_bool_compare(sql: str, bool_columns: set[str] | frozenset[str]) -> tuple[str, list[Finding]]:
+    """`IsActive = 1` -> `IsActive = true` for columns known to be BOOLEAN (Databricks rejects BOOLEAN = INT)."""
+    if not bool_columns:
+        return sql, []
+    pat = re.compile(r"(?<![\w.`])((?:`?\w+`?\.)?`?(\w+)`?)(\s*(?:=|<>|!=)\s*)([01])\b(?!\s*\.)")
+
+    def repl(m: re.Match) -> str:
+        if m.group(2).lower() not in bool_columns:
+            return m.group(0)
+        return f"{m.group(1)}{m.group(3)}{'true' if m.group(4) == '1' else 'false'}"
+
+    hits = [h.start() for h in pat.finditer(mask(sql, keep_idents=True)) if h.group(2).lower() in bool_columns]
+    if not hits:
+        return sql, []
+    new, _ = _sub_code(sql, pat, repl, keep_idents=True)
+    return new, [Finding("boolean-compare", INFO, line_of(sql, hits[0]),
+                         f"Compared BOOLEAN columns (BIT on the source) with true/false instead of 1/0 ({len(hits)}x)", True)]
+
+
+def apply_rules(sql: str, schema_map: dict[str, str] | None = None, dialect: str | None = None,
+                bool_columns: set[str] | frozenset[str] = frozenset()) -> tuple[str, list[Finding]]:
+    findings: list[Finding] = []
+    sql, f = _fix_schema_map(sql, schema_map or {})
+    findings += f
+    sql, f = _fix_bool_compare(sql, bool_columns)
+    findings += f
+    for rule, scope, pat, repl, msg in _SIMPLE_FIXES:
+        if not _applies(scope, dialect):
+            continue
+        before = sql
+        sql, hits = _sub_code(sql, pat, repl)
+        if hits and sql != before:
+            findings.append(Finding(rule, INFO, line_of(before, hits[0]), f"{msg} ({len(hits)}x)", True))
+    for fixer in (_fix_dangling_comment, _fix_empty_create, _fix_explicit_null):
+        sql, f = fixer(sql)
+        findings += f
+    sql, f = _fix_empty_alter(sql, schema_map or {})
+    findings += f
+    sql = re.sub(r"\n{3,}", "\n\n", sql)
+    findings += detect(sql, dialect)
+    return sql, sorted(findings, key=lambda x: (x.line, x.rule))
+
+
+# --------------------------------------------------------------- notebooks generated from ETL jobs
+# BladeBridge turns ETL jobs (SSIS, Informatica, DataStage) into PySpark notebooks whose logic is Spark SQL in
+# f\"\"\"...\"\"\" strings. Expression languages of the ETL tools leak into that SQL; these rules work only
+# inside those strings, so the Python around them is never changed.
+_NB_SQL = re.compile(r'f?"""(.*?)"""', S)
+_NB_FIXES: list[tuple[str, re.Pattern, str | Callable[[re.Match], str], str]] = [
+    ("etl-quoted-literal", re.compile(r"`([^`A-Za-z0-9_#][^`]{0,20}|)`"), lambda m: "'" + m.group(1).replace("'", "''") + "'",
+     "Turned an ETL string literal that became a `backtick identifier` back into a 'string'"),
+    ("etl-string-concat", re.compile(r"(?<=[')\w])\s*\+\s*(?=')|(?<=')\s*\+\s*(?=[\w(])"), " || ",
+     "Replaced + between strings with || (Spark SQL + only adds numbers)"),
+    ("etl-findstring", re.compile(r"\bFINDSTRING\s*\(\s*([^,()]+(?:\([^()]*\))?)\s*,\s*('[^']*')\s*,\s*1\s*\)", I),
+     r"instr(\1, \2)", "Replaced SSIS FINDSTRING(s, x, 1) with instr(s, x)"),
+    ("etl-len", re.compile(r"\bLEN\s*\(", I), "length(", "Replaced LEN( with length("),
+    ("etl-replacenull", re.compile(r"\bREPLACENULL\s*\(", I), "coalesce(", "Replaced SSIS REPLACENULL with coalesce"),
+]
+_NB_DETECTORS: list[tuple[str, str, re.Pattern, str]] = [
+    ("empty-select", ERROR, re.compile(r"\bSELECT\s+FROM\b", I),
+     "Empty column list: the converter could not translate this ETL step (often an Aggregate). Rebuild it from "
+     "the original component, e.g. SELECT <group columns>, SUM(...) ... GROUP BY <group columns>."),
+    ("etl-cast", ERROR, re.compile(r"\(\s*DT_[A-Z0-9]+\s*(?:,[^)]*)?\)", I),
+     "SSIS type cast {m} left in the SQL: use CAST(x AS STRING / INT / DECIMAL(p,s) / DATE / TIMESTAMP)."),
+    ("etl-function", ERROR, re.compile(r"\b(?:FINDSTRING|TOKENCOUNT|TOKEN|CODEPOINT|REPLACENULL)\s*\(", I),
+     "SSIS function {m} is not Spark SQL: FINDSTRING -> instr/locate, TOKEN -> split(...)[n], TOKENCOUNT -> size(split(...))."),
+    ("etl-datepart", ERROR, re.compile(r"\bDATE(?:PART|ADD|DIFF)\s*\(\s*\"", I),
+     "SSIS date function with a quoted part ({m}...): use dateadd/datediff/date_part with an unquoted unit, e.g. dateadd(DAY, 1, d)."),
+    ("etl-ternary", WARNING, re.compile(r"\?\s*[^:?\n]+\s:\s"),
+     "Looks like an SSIS conditional (cond ? a : b): use CASE WHEN cond THEN a ELSE b END."),
+    ("etl-variable", WARNING, re.compile(r"@\[(?:User|System)::\w+\]", I),
+     "SSIS variable {m}: pass it as a notebook widget / job parameter and reference it in the SQL."),
+    ("bit-flag-compare", WARNING,
+     re.compile(r"\b(?:[A-Za-z_]\w*\.)?`?(?:Is|Has|Can|Should|Allow)[A-Z_]\w*`?\s*(?:=|<>|!=)\s*[01]\b"),
+     "{m}: SQL Server BIT columns arrive in Databricks as BOOLEAN, which cannot be compared with 1/0. "
+     "If this column is a BIT, compare with true / false (or just use the column)."),
+]
+
+
+def check_notebook(text: str, schema_map: dict[str, str] | None = None,
+                   bool_columns: set[str] | frozenset[str] = frozenset()) -> tuple[str, list[Finding]]:
+    """Fix and flag ETL expression leftovers inside the Spark SQL strings of a converted notebook,
+    and rename source schemas (schema_map) there."""
+    findings: list[Finding] = []
+    counts: dict[str, list[int]] = {}
+    out, pos = [], 0
+    for m in _NB_SQL.finditer(text):
+        sql = m.group(1)
+        if schema_map:
+            new, _ = _fix_schema_map(sql, schema_map)
+            if new != sql:
+                counts.setdefault("schema-map", []).append(line_of(text, m.start(1)))
+                sql = new
+        new, _ = _fix_bool_compare(sql, bool_columns)
+        if new != sql:
+            counts.setdefault("boolean-compare", []).append(line_of(text, m.start(1)))
+            sql = new
+        for rule, pat, repl, _msg in _NB_FIXES:
+            new = pat.sub(repl, sql)
+            if new != sql:
+                counts.setdefault(rule, []).append(line_of(text, m.start(1)))
+                sql = new
+        for rule, sev, pat, msg in _NB_DETECTORS:
+            for d in pat.finditer(sql):
+                line = line_of(text, m.start(1)) + sql.count("\n", 0, d.start())
+                findings.append(Finding(rule, sev, line, msg.format(m=d.group(0).strip())))
+        out += [text[pos:m.start(1)], sql]
+        pos = m.end(1)
+    out.append(text[pos:])
+    if "boolean-compare" in counts:
+        findings.append(Finding("boolean-compare", INFO, counts["boolean-compare"][0],
+                                f"Compared BOOLEAN columns (BIT on the source) with true/false ({len(counts['boolean-compare'])} step(s))", True))
+    if "schema-map" in counts:
+        findings.append(Finding("schema-map", INFO, counts["schema-map"][0],
+                                f"Mapped source schemas to Databricks ({len(counts['schema-map'])} step(s))", True))
+    for rule, pat, repl, msg in _NB_FIXES:
+        if rule in counts:
+            findings.append(Finding(rule, INFO, counts[rule][0], f"{msg} ({len(counts[rule])} step(s))", True))
+    return "".join(out), _dedupe(sorted(findings, key=lambda f: (f.line, f.rule)))

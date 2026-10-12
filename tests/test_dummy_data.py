@@ -4,9 +4,9 @@ import csv
 
 import pytest
 
-from wishbridge import dummy_data
-from wishbridge.config import load_config
-from wishbridge.inventory import import_file
+from wishbridge.warehouses.sqlserver import dummy_data
+from wishbridge.warehouses.sqlserver.config import load_config
+from wishbridge.warehouses.sqlserver.inventory import import_file
 
 CSV = """schema_name,table_name,column_name,ordinal,data_type,max_length,precision,scale,is_nullable,row_count,size_mb
 dbo,Customer,CustomerId,1,int,4,10,0,NO,100,1

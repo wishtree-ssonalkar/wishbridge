@@ -1,7 +1,7 @@
 """Files the converter never produced (it can stop part-way) must be reported, never silently dropped."""
 
-from wishbridge import convert, lakebridge
-from wishbridge.config import load_config
+from wishbridge.warehouses.sqlserver import convert, lakebridge
+from wishbridge.warehouses.sqlserver.config import load_config
 
 
 def test_fatal_error_line_is_extracted():

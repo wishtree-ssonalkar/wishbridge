@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from wishbridge.config import ConfigError, load_config
-from wishbridge.fit import classify, excluded_files
-from wishbridge.staging import read_source, staged
+from wishbridge.warehouses.sqlserver.config import ConfigError, load_config
+from wishbridge.warehouses.sqlserver.fit import classify, excluded_files
+from wishbridge.warehouses.sqlserver.staging import read_source, staged
 
 APP_DB = {
     "dbo/Tables/Users.sql": "CREATE TABLE [dbo].[Users] ([Id] INT IDENTITY, [Email] NVARCHAR(200), [CreatedBy] INT, "

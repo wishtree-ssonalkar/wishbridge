@@ -1,4 +1,4 @@
-from wishbridge.sqltext import mask, split_statements, statement_kind
+from wishbridge.warehouses.sqlserver.sqltext import mask, split_statements, statement_kind
 
 
 def test_mask_blanks_strings_and_comments_keeping_length():

@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from wishbridge import companion, dbcode
-from wishbridge.config import load_config
-from wishbridge.inventory import import_file
+from wishbridge.warehouses.ssis import companion, dbcode
+from wishbridge.warehouses.ssis.config import load_config
+from wishbridge.warehouses.ssis.inventory import import_file
 
 DEMO = Path(__file__).parents[1] / "examples" / "ssis-demo"
 

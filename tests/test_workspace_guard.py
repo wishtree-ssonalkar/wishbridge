@@ -5,8 +5,8 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from wishbridge.config import load_config
-from wishbridge.dbx import SqlError, Warehouse, check_workspace, normalise_host
+from wishbridge.warehouses.sqlserver.config import load_config
+from wishbridge.warehouses.sqlserver.dbx import SqlError, Warehouse, check_workspace, normalise_host
 from wishbridge.ui import helpers as h
 
 CFG = """[DEFAULT]

@@ -214,38 +214,38 @@ Rules for one warehouse are in its file in [src/wishbridge/sources/](src/wishbri
 
 ## Where the code is
 
-**One file per warehouse** in [src/wishbridge/sources/](src/wishbridge/sources/) holds everything WishBridge knows
-about it, so changing how one warehouse is handled means opening one file:
+**Every warehouse has its own complete, independent copy of WishBridge** in
+[src/wishbridge/warehouses/](src/wishbridge/warehouses/). A change in one warehouse's folder - its code or its
+screens - affects only that warehouse's projects; the code is duplicated on purpose.
 
-| File | Warehouse |
+| Folder | Projects (`source:` in project.yml) |
 |---|---|
-| `sqlserver.py` | SQL Server / Azure SQL: table-list query, code reader (procedures, views, functions, triggers), tidy-ups before conversion, T-SQL fixes and checks |
-| `synapse.py` | Azure Synapse (shares the T-SQL rules of `sqlserver.py`) |
-| `oracle.py`, `snowflake.py`, `teradata.py`, `redshift.py`, `bigquery.py`, `netezza.py` | Each database's table-list query, type differences, connection type and checks |
-| `ssis.py` | SSIS: package order (master packages) and what the packages read, write and call |
-| `informatica.py`, `datastage.py` | Informatica PowerCenter / Cloud, DataStage |
-| `postgresql.py`, `mysql.py` | Connection types for copying data |
-| `base.py`, `__init__.py` | The building blocks, and the list of warehouses (what each file can define is described at its top) |
+| `warehouses/sqlserver/` | `mssql` - SQL Server / Azure SQL |
+| `warehouses/synapse/` | `synapse` |
+| `warehouses/snowflake/`, `oracle/`, `teradata/`, `redshift/`, `bigquery/`, `netezza/` | one each |
+| `warehouses/ssis/` | `ssis` |
+| `warehouses/informatica/` | `informatica`, `informatica-cloud` |
+| `warehouses/datastage/` | `datastage` |
 
-To add a warehouse (e.g. Microsoft Fabric), copy the closest file, fill in what applies and add it to
-`WAREHOUSES` in `sources/__init__.py`. **The steps shared by every warehouse** stay in `src/wishbridge/`:
-`discover.py` (open a folder), `inventory.py` / `dbcode.py` / `schema.py` (read the database, table scripts),
-`convert.py` + `rules.py` (convert and check), `deploy.py`, `data.py`, `mapping.py`, `reconcile.py`,
-`report.py`, `package.py`.
+Inside each copy (its own `README.md` says the same):
 
-**The app** is split the same way, in [src/wishbridge/ui/](src/wishbridge/ui/):
-
-| File | What it holds |
+| Where | What |
 |---|---|
-| `app.py` | The shell: system check, first page (assessment or migration), sidebar, step bar |
-| `steps/settings.py`, `code.py`, `run.py`, `report.py`, `data.py`, `share.py`, `fix.py` | One file per step |
-| `warehouses/ssis.py` | Screens only SSIS has (e.g. *What the packages use*) |
-| `warehouses/etl.py` | Screens for ETL tools (Informatica, DataStage; SSIS builds on it) |
-| `warehouses/default.py` | Everything else (SQL Server, Oracle, Snowflake, ...) |
-| `database.py`, `common.py`, `helpers.py` | The Code step's database section; pieces every step uses; logic without Streamlit |
+| `sources/<warehouse>.py` | What WishBridge knows about the warehouse: table-list query, types, connection, fixes and checks |
+| `analysis.py`, `convert.py`, `rules.py`, `deploy.py`, `data.py`, `mapping.py`, `reconcile.py`, `report.py`, `package.py`, ... | The pipeline: analyze, convert, deploy, copy the data, reconcile, report, zip |
+| `ui/main.py`, `ui/steps/`, `ui/screens/` | The step bar, one file per step, and the screens that differ per warehouse (e.g. SSIS's *What the packages use*) |
+| `cli.py` | The project commands (`wishbridge convert -c project.yml`, ...) for these projects |
 
-A change to SSIS screens goes in `ui/warehouses/ssis.py` and reaches no other warehouse; the top of
-`ui/warehouses/__init__.py` lists what a warehouse file can change.
+**Shared (the main screen only)**, in `src/wishbridge/`: `ui/app.py` (system check, first page, sidebar, opening
+and creating projects), `cli.py` (`wishbridge init / setup / ui / open-package / sources`, and handing every
+project command to the project's warehouse), `discover.py`, `snapshot.py`, `open_package.py`, `system.py`,
+`config.py` and `sources/` (labels and keywords for detecting the source system). Once a project is open, its
+warehouse's copy takes over (`warehouses/__init__.py` maps each source to its folder).
+
+**To add a warehouse** (e.g. Microsoft Fabric): copy the closest warehouse folder (e.g. `warehouses/synapse/`),
+change what differs, add its source to `WAREHOUSE_OF` in `warehouses/__init__.py` and to the shared `sources/`
+(label and keywords), and add tests. `tests/test_warehouses.py` checks that every copy is complete and runs on
+its own.
 
 ## Development
 

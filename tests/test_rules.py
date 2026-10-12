@@ -1,4 +1,4 @@
-from wishbridge.rules import apply_rules, detect
+from wishbridge.warehouses.sqlserver.rules import apply_rules, detect
 
 
 def rules_of(findings, fixed=None):

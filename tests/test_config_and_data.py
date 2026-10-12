@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from wishbridge.analysis import estimate_hours, parse_report
-from wishbridge.config import ConfigError, load_config, looks_like_prod, render_template
-from wishbridge.data import build_plan
+from wishbridge.warehouses.sqlserver.analysis import estimate_hours, parse_report
+from wishbridge.warehouses.sqlserver.config import ConfigError, load_config, looks_like_prod, render_template
+from wishbridge.warehouses.sqlserver.data import build_plan
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

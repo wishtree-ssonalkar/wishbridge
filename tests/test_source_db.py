@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from wishbridge import source_db as sd
-from wishbridge.config import load_config
-from wishbridge.dbx import SqlError, SqlResult
+from wishbridge.warehouses.sqlserver import source_db as sd
+from wishbridge.warehouses.sqlserver.config import load_config
+from wishbridge.warehouses.sqlserver.dbx import SqlError, SqlResult
 
 
 class FakeSecrets:
@@ -118,7 +118,7 @@ def test_test_connection_and_list_tables():
 
 
 def test_every_source_has_a_default_or_a_files_hint():
-    from wishbridge.config import SOURCES
+    from wishbridge.warehouses.sqlserver.config import SOURCES
     for key in ("mssql", "synapse", "oracle", "snowflake", "teradata", "redshift"):
         assert sd.DEFAULT_FOR_SOURCE[key] in sd.DB_TYPES
     assert sd.DEFAULT_FOR_SOURCE["bigquery"] is None and sd.DEFAULT_FOR_SOURCE["netezza"] is None

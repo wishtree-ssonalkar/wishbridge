@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import anthropic
 import pytest
 
-from wishbridge import ai
-from wishbridge.rules import Finding
+from wishbridge.warehouses.sqlserver import ai
+from wishbridge.warehouses.sqlserver.rules import Finding
 
 OPEN = [Finding("system-variable", "error", 3, "@@ROWCOUNT is not supported")]
 

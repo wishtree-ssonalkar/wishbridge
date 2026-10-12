@@ -4,11 +4,11 @@ from pathlib import Path
 
 import openpyxl
 
-from wishbridge.analysis import parse_report
-from wishbridge.config import load_config
-from wishbridge.convert import orchestration_findings
-from wishbridge.orchestration import job_tasks, ssis_plan, write_job_definition
-from wishbridge.rules import check_notebook, detect
+from wishbridge.warehouses.ssis.analysis import parse_report
+from wishbridge.warehouses.ssis.config import load_config
+from wishbridge.warehouses.ssis.convert import orchestration_findings
+from wishbridge.warehouses.ssis.orchestration import job_tasks, ssis_plan, write_job_definition
+from wishbridge.warehouses.ssis.rules import check_notebook, detect
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "ssis-demo"
 
@@ -93,9 +93,9 @@ def test_etl_export_formats_are_detected_and_explained(tmp_path):
 
     import pytest
 
-    from wishbridge.config import ConfigError, load_config
-    from wishbridge.discover import detect_source
-    from wishbridge.staging import staged
+    from wishbridge.warehouses.ssis.config import ConfigError, load_config
+    from wishbridge.warehouses.ssis.discover import detect_source
+    from wishbridge.warehouses.ssis.staging import staged
 
     ds = tmp_path / "ds"
     ds.mkdir()

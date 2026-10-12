@@ -2,9 +2,9 @@
 
 import pytest
 
-from wishbridge import dbcode
-from wishbridge.config import load_config
-from wishbridge.state import load_state
+from wishbridge.warehouses.sqlserver import dbcode
+from wishbridge.warehouses.sqlserver.config import load_config
+from wishbridge.warehouses.sqlserver.state import load_state
 
 ROWS = [
     ("dbo", "usp_Load", "P", "CREATE PROCEDURE dbo.usp_Load AS\r\nSELECT 1", 0),

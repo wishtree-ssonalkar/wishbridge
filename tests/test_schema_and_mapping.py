@@ -2,13 +2,13 @@
 
 import pytest
 
-from wishbridge.config import load_config
-from wishbridge.data import build_plan
-from wishbridge.dbx import SqlError, SqlResult
-from wishbridge.inventory import connection_string, import_file
-from wishbridge.mapping import check, compare_columns, propose
-from wishbridge.schema import databricks_type
-from wishbridge.ui.helpers import rows_to_tables
+from wishbridge.warehouses.sqlserver.config import load_config
+from wishbridge.warehouses.sqlserver.data import build_plan
+from wishbridge.warehouses.sqlserver.dbx import SqlError, SqlResult
+from wishbridge.warehouses.sqlserver.inventory import connection_string, import_file
+from wishbridge.warehouses.sqlserver.mapping import check, compare_columns, propose
+from wishbridge.warehouses.sqlserver.schema import databricks_type
+from wishbridge.warehouses.sqlserver.ui.helpers import rows_to_tables
 
 CSV = """schema_name,table_name,column_name,ordinal,data_type,max_length,precision,scale,is_nullable,row_count,size_mb
 dbo,Orders,OrderId,1,int,4,10,0,NO,100,1.5
@@ -54,7 +54,7 @@ def test_unknown_type_is_string_and_flagged():
 
 
 def test_scripts_skip_tables_the_code_creates(cfg, tmp_path):
-    from wishbridge.state import load_state
+    from wishbridge.warehouses.sqlserver.state import load_state
 
     _import(cfg, tmp_path)
     sch = load_state(cfg)["schema"]
@@ -67,7 +67,7 @@ def test_scripts_skip_tables_the_code_creates(cfg, tmp_path):
 
 
 def test_convert_puts_database_tables_first(cfg, tmp_path):
-    from wishbridge.convert import schema_entries
+    from wishbridge.warehouses.sqlserver.convert import schema_entries
 
     _import(cfg, tmp_path)
     entries = schema_entries(cfg, cfg.output_dir / "final")

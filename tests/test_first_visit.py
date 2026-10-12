@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from wishbridge import inventory, lakebridge
-from wishbridge.config import load_config
-from wishbridge.dbx import SqlError, Warehouse
-from wishbridge.rules import apply_rules, boolean_columns, check_notebook
+from wishbridge.warehouses.sqlserver import inventory, lakebridge
+from wishbridge.warehouses.sqlserver.config import load_config
+from wishbridge.warehouses.sqlserver.dbx import SqlError, Warehouse
+from wishbridge.warehouses.sqlserver.rules import apply_rules, boolean_columns, check_notebook
 
 CSV = ("schema_name,table_name,column_name,ordinal,data_type,max_length,precision,scale,is_nullable,row_count,size_mb\n"
        "dbo,Users,UserID,1,int,4,10,0,NO,1250,0.52\n"
@@ -86,8 +86,8 @@ def test_offline_steps_never_see_the_real_databricks_login(tmp_path, monkeypatch
 
 
 def test_review_package(tmp_path):
-    from wishbridge.package import build_package
-    from wishbridge.state import save_step
+    from wishbridge.warehouses.sqlserver.package import build_package
+    from wishbridge.warehouses.sqlserver.state import save_step
 
     cfg = project(tmp_path)
     (cfg.input_dir / "a.sql").write_text("SELECT 1;", encoding="utf-8")
@@ -110,8 +110,8 @@ def test_review_package(tmp_path):
 def test_package_opens_as_a_working_project_elsewhere(tmp_path):
     import json
 
-    from wishbridge.package import build_package, open_package
-    from wishbridge.state import save_step
+    from wishbridge.warehouses.sqlserver.package import build_package, open_package
+    from wishbridge.warehouses.sqlserver.state import save_step
 
     visit = tmp_path / "client-visit"
     visit.mkdir()
@@ -141,7 +141,7 @@ def test_package_opens_as_a_working_project_elsewhere(tmp_path):
 
 
 def test_package_is_made_even_without_conversion(tmp_path):
-    from wishbridge.package import build_package
+    from wishbridge.warehouses.sqlserver.package import build_package
 
     cfg = project(tmp_path)
     (cfg.input_dir / "a.sql").write_text("CREATE TABLE dbo.T (a INT);", encoding="utf-8")
@@ -150,7 +150,7 @@ def test_package_is_made_even_without_conversion(tmp_path):
 
 
 def test_mail_addresses_and_message():
-    from wishbridge import mailer
+    from wishbridge.warehouses.sqlserver import mailer
 
     assert mailer.split_addresses("a@x.com; b@y.org , c@z.in") == ["a@x.com", "b@y.org", "c@z.in"]
     assert mailer.invalid_addresses(["a@x.com", "not-an-address", "b@y"]) == ["not-an-address", "b@y"]
@@ -162,7 +162,7 @@ def test_mail_addresses_and_message():
 
 
 def test_mail_draft_is_opened_never_sent(tmp_path, monkeypatch):
-    from wishbridge import mailer
+    from wishbridge.warehouses.sqlserver import mailer
 
     z = tmp_path / "acme.zip"
     z.write_bytes(b"PK")
@@ -190,7 +190,7 @@ def test_mail_draft_is_opened_never_sent(tmp_path, monkeypatch):
 
 
 def test_big_zips_go_through_onedrive(tmp_path, monkeypatch):
-    from wishbridge import mailer
+    from wishbridge.warehouses.sqlserver import mailer
 
     od = tmp_path / "OneDrive - Client"
     od.mkdir()

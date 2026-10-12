@@ -16,7 +16,6 @@ import streamlit as st
 from wishbridge import __version__
 from wishbridge.config import PURPOSE, SCOPE_ROWS, SOURCES, ConfigError, load_config
 from wishbridge import discover
-from wishbridge.state import load_state
 from wishbridge.ui import helpers as h
 
 
@@ -184,7 +183,7 @@ with st.sidebar:
             pkg_parent = st.text_input("Create the project in", value=h.default_parent(goal), key=f"pkg_parent_{goal}",
                                        disabled=locked, help="Migrations and assessments have their own folders.")
             if st.button("Open package", width="stretch", disabled=locked or pkg_up is None or not pkg_parent.strip()):
-                from wishbridge.package import open_package
+                from wishbridge.open_package import open_package
 
                 tmp = Path(pkg_parent).expanduser() / ".wishbridge-incoming" / Path(pkg_up.name).name
                 try:
@@ -353,74 +352,9 @@ if ss.get("goal") and ss.get("goal_applied") != (ss.project, ss.goal):
         h.save_raw(ss.project, raw)
         st.rerun()
 
-from wishbridge import runner
+# ----------------------------------------------------------------- the project's warehouse takes over
+# Everything after opening a project (step bar, steps) is in wishbridge/warehouses/<warehouse>/ui/.
 
-LABELS = {"settings": "Settings", "code": "Code", "run": "Run", "data": "Map the data", "results": "Report",
-          "fix": "Fix code", "send": "Share the zip"}
-from_package = (Path(ss.project) / "opened_from_package.json").exists()
-if cfg.phase == "assessment":
-    # At the client: everything ends up in the zip, so the last step is sending it. Fixing happens later,
-    # in the project opened from that zip.
-    ORDER = ["settings", "code", "run", "results"] + (["fix"] if from_package else []) + ["send"]
-else:
-    # The report right after the run gives the overview; it is updated again after the data copy.
-    ORDER = ["settings", "code", "run", "results", "data", "fix"]
-state_now = load_state(cfg)
-running = runner.is_running(cfg)
-has_code = bool(h.input_files(ss.project, raw.get("input", "input")))
-has_results = any(k in state_now for k in ("analyze", "convert", "fit", "deploy", "reconcile"))
-packages = sorted((cfg.output_dir / "review_package").glob("*.zip"), key=lambda q: q.stat().st_mtime)
-done = {
-    "settings": bool(ss.get(f"settings_done:{ss.project}")) or has_results,  # confirmed with Next (or used before)
-    "code": has_code,
-    "run": has_results and not running,
-    "data": bool((state_now.get("load") or {}).get("executed")) and not running,
-    "results": has_results and not running,
-    "fix": False,
-    "send": bool(ss.get(f"sent:{ss.project}")),
-}
+from wishbridge.warehouses import ui_for  # noqa: E402
 
-
-def reachable(key: str) -> bool:
-    if running:
-        return key in ("run", "data")  # while a run (or the data copy) is going, stay there to follow it
-    if key == "results":
-        return all(done[k] for k in ("settings", "code", "run"))  # copying the data is not required to look
-    if key == "fix":
-        return "convert" in state_now and all(done[k] for k in ("settings", "code"))
-    if key == "send":
-        return bool(packages) and all(done[k] for k in ("settings", "code", "run"))
-    return all(done[k] for k in ORDER[:ORDER.index(key)])
-
-
-if ss.get("step") not in ORDER or ss.get("step_project") != ss.project:
-    ss.step_project = ss.project
-    ss.step = next((k for k in ORDER if not done[k]), ORDER[-1])  # first unfinished step
-if ss.get("go_step") is not None:
-    _go = ss.pop("go_step")
-    if _go in ORDER:
-        ss.step = _go
-if running and ss.step not in ("run", "data"):
-    ss.step = "run"
-if not reachable(ss.step):
-    ss.step = [k for k in ORDER if reachable(k)][-1]
-STEP = ss.step
-
-cols = st.columns(len(ORDER))
-for i, (col, key) in enumerate(zip(cols, ORDER)):
-    mark = "✓ " if done[key] else ""
-    if col.button(f"{i + 1} · {mark}{LABELS[key]}", key=f"step-{key}", width="stretch", disabled=not reachable(key),
-                  type="primary" if key == STEP else "secondary"):
-        ss.step = key
-        st.rerun()
-if running:
-    st.caption("🔒 A run is going in the background - the other steps open when it has finished.")
-st.divider()
-
-
-# ----------------------------------------------------------------- the open step (one file each in ui/steps/)
-
-from wishbridge.ui.steps import code, data, fix, report, run, settings, share  # noqa: E402
-
-{"settings": settings, "code": code, "run": run, "data": data, "results": report, "send": share,
- "fix": fix}[STEP].render(cfg, raw, packages)
+ui_for(cfg.source.key).run(raw)

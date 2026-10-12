@@ -2,8 +2,8 @@
 
 import pytest
 
-from wishbridge import convert
-from wishbridge.config import fallback_converter, load_config
+from wishbridge.warehouses.sqlserver import convert
+from wishbridge.warehouses.sqlserver.config import fallback_converter, load_config
 
 BROKEN = "-- internal error\nSELECT * EXCEPT (email) FROM t;\n"   # main converter gave up on this file
 CLEAN = "SELECT 1 AS one;\n"
@@ -69,7 +69,7 @@ def test_fewer_warnings_alone_do_not_switch_converter(tmp_path, monkeypatch):
 
 
 def test_oracle_date_columns_are_flagged():
-    from wishbridge.rules import detect
+    from wishbridge.warehouses.sqlserver.rules import detect
     ddl = "CREATE TABLE t (\n    ID DECIMAL(10) NOT NULL,\n    CREATED_AT DATE DEFAULT current_date(),\n    D2 DATE\n);"
     f = [x for x in detect(ddl, "oracle") if x.rule == "oracle-date-column"]
     assert len(f) == 1 and f[0].line == 3 and "also line 4" in f[0].message

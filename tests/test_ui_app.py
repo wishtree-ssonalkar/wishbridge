@@ -106,8 +106,8 @@ def test_next_saves_settings_and_opens_code(project):
 
 
 def test_fix_code_handles_missing_converted_file(project):
-    from wishbridge.config import load_config
-    from wishbridge.state import save_step
+    from wishbridge.warehouses.sqlserver.config import load_config
+    from wishbridge.warehouses.sqlserver.state import save_step
 
     cfg = load_config(project / "project.yml")
     summary = {"files": 1, "ready": 1, "review": 0, "needs_fix": 0, "auto_fixed": 0, "open_errors": 0, "open_warnings": 0}
@@ -152,9 +152,9 @@ def test_assessment_ends_with_sharing_the_zip(project):
 def test_share_page_switches_to_onedrive_for_big_zips(project, monkeypatch):
     import zipfile
 
-    from wishbridge import mailer
-    from wishbridge.config import load_config
-    from wishbridge.state import save_step
+    from wishbridge.warehouses.sqlserver import mailer
+    from wishbridge.warehouses.sqlserver.config import load_config
+    from wishbridge.warehouses.sqlserver.state import save_step
 
     text = (project / "project.yml").read_text(encoding="utf-8")
     (project / "project.yml").write_text(text + "\nphase: assessment\n", encoding="utf-8")
@@ -193,8 +193,8 @@ def test_create_connection_waits_for_its_fields(project):
 
 
 def _after_deploy(project):
-    from wishbridge.config import load_config
-    from wishbridge.state import save_step
+    from wishbridge.warehouses.sqlserver.config import load_config
+    from wishbridge.warehouses.sqlserver.state import save_step
 
     cfg = load_config(project / "project.yml")
     save_step(cfg, "deploy", {"summary": {}, "files": []})
@@ -202,10 +202,10 @@ def _after_deploy(project):
 
 
 def test_map_the_data_proposes_checks_and_copies(project, monkeypatch):
-    from wishbridge import dbx, mapping, runner
+    from wishbridge.warehouses.sqlserver import dbx, mapping, runner
 
     _after_deploy(project)
-    from wishbridge.ui.steps import data as data_step
+    from wishbridge.warehouses.sqlserver.ui.steps import data as data_step
 
     monkeypatch.setattr(dbx, "Warehouse", lambda cfg: object())
     monkeypatch.setattr(data_step, "Warehouse", lambda cfg: object())  # the step keeps its own reference
@@ -252,9 +252,9 @@ def test_migration_run_stops_before_copying(project):
 def _with_database_code(project):
     import shutil
 
-    from wishbridge import dbcode
-    from wishbridge.config import load_config
-    from wishbridge.inventory import import_file
+    from wishbridge.warehouses.sqlserver import dbcode
+    from wishbridge.warehouses.sqlserver.config import load_config
+    from wishbridge.warehouses.sqlserver.inventory import import_file
 
     cfg = load_config(project / "project.yml")
     csv = project / "inv.csv"
@@ -284,7 +284,7 @@ def test_code_from_the_database_is_used_when_there_are_no_files(project):
 def test_choose_between_code_files_and_database_code(project):
     import yaml
 
-    from wishbridge import dbcode
+    from wishbridge.warehouses.sqlserver import dbcode
 
     cfg, _ = _with_database_code(project)
     dbcode.compare(cfg, project / "input")

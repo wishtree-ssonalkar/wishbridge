@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -10,8 +9,6 @@ import click
 
 from . import __version__
 from .config import SOURCES, ConfigError, load_config, render_template
-from .dbx import SqlError
-from .lakebridge import LakeBridgeError
 
 config_option = click.option("-c", "--config", "config_path", default="project.yml", show_default=True,
                              type=click.Path(dir_okay=False), help="Project file.")
@@ -36,7 +33,7 @@ def _load(path: str):
 def _guard(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
-    except (LakeBridgeError, SqlError, ConfigError, FileNotFoundError, RuntimeError) as e:
+    except (ConfigError, FileNotFoundError, RuntimeError, ValueError, OSError) as e:
         _fail(str(e))
 
 
@@ -116,206 +113,6 @@ def init(name: str, source: str | None, directory: str, code: str | None, split:
 
 
 @main.command()
-@config_option
-def analyze(config_path: str) -> None:
-    """Assess the legacy code (LakeBridge Analyzer)."""
-    from .analysis import run_analyze
-
-    cfg = _load(config_path)
-    click.echo(f"Analyzing {cfg.input_dir} as {cfg.source.analyzer_tech} ...")
-    res = _guard(run_analyze, cfg)
-    cx = ", ".join(f"{k}={v}" for k, v in sorted(res["complexity"].items()))
-    _ok(f"{len(res['programs'])} files ({cx}); manual estimate {res['estimated_hours_baseline']} h")
-    click.echo(f"  Report: {res['report_file']}")
-    from .state import load_state
-
-    _print_fit(load_state(cfg).get("fit"), cfg)
-
-
-def _print_fit(fit: dict | None, cfg) -> None:
-    if not fit:
-        return
-    from .fit import CATEGORY_LABELS
-
-    click.echo(f"Is this a data warehouse? {fit['headline']}")
-    for line in fit["advice"]:
-        click.echo(f"  - {line}")
-    click.echo("  " + " | ".join(f"{CATEGORY_LABELS[k]}: {v}" for k, v in fit["counts"].items() if v))
-    if cfg.scope != "recommended":
-        click.echo("  Tip: set `scope: recommended` in project.yml to deploy only what belongs on Databricks.")
-
-
-@main.command()
-@config_option
-@click.option("--details", is_flag=True, help="List every object with its recommendation and reasons.")
-def fit(config_path: str, details: bool) -> None:
-    """Check which objects belong on Databricks and which should stay with the application (fast, no LakeBridge)."""
-    from .fit import CATEGORY_LABELS, run_fit
-
-    cfg = _load(config_path)
-    res = _guard(run_fit, cfg)
-    _print_fit(res, cfg)
-    if details:
-        for o in sorted(res["objects"], key=lambda o: (list(CATEGORY_LABELS).index(o["category"]), o["file"])):
-            click.echo(f"  {CATEGORY_LABELS[o['category']]:<20} {o['file']}  - {'; '.join(o['reasons'])}")
-
-
-@main.command()
-@config_option
-@click.option("--ai/--no-ai", default=None, help="Ask Claude for fix suggestions (overrides project.yml).")
-def convert(config_path: str, ai: bool | None) -> None:
-    """Transpile to Databricks SQL and apply WishBridge fix rules."""
-    from .convert import run_convert
-
-    cfg = _load(config_path)
-    from .config import fallback_converter
-
-    second = fallback_converter(cfg)
-    click.echo(f"Converting {cfg.source.analyzer_tech} with {cfg.transpiler}"
-               + (f" (automatic: {second} is tried on files {cfg.transpiler} can't convert)" if second else "") + " ...")
-    res = _guard(run_convert, cfg, ai)
-    s = res["summary"]
-    manual = f"; {s['manual_overrides']} manual fixes applied" if s.get("manual_overrides") else ""
-    _ok(f"{s['files']} files: {s['ready']} ready, {s['review']} to review, {s['needs_fix']} need fixes; "
-        f"{s['auto_fixed']} issues auto-fixed{manual}")
-    for f in res["files"]:
-        colour = {"ready": "green", "review": "yellow", "needs-fix": "red"}[f["status"]]
-        tag = "  (manual fix)" if f.get("manual_override") else ""
-        if not tag and f.get("converter") not in (None, cfg.transpiler):
-            tag = f"  (converted by {f['converter']})"
-        click.echo(f"  {click.style(f'{f["status"]:<9}', fg=colour)} {f['file']}{tag}")
-        for x in f["findings"]:
-            if not x["fixed"] and x["severity"] != "info":
-                click.echo(f"      line {x['line']}: {x['message']}")
-    click.echo(f"  Output: {res['final_dir']}")
-
-
-@main.command()
-@config_option
-@click.option("--execute-dml", is_flag=True, help="Also execute INSERT/UPDATE/DELETE/MERGE (default: EXPLAIN only).")
-@click.option("--allow-prod", is_flag=True, help="Allow a target schema whose name contains 'prod'.")
-@click.option("--recreate", is_flag=True, help="Rebuild existing tables/views/procedures (CREATE OR REPLACE).")
-def deploy(config_path: str, execute_dml: bool, allow_prod: bool, recreate: bool) -> None:
-    """Create converted objects in the dev schema and validate every statement."""
-    from .deploy import run_deploy
-
-    cfg = _load(config_path)
-    click.echo(f"Deploying to {cfg.target_schema} ...")
-    res = _guard(run_deploy, cfg, execute_dml, allow_prod, recreate)
-    s = res["summary"]
-    kept = f" ({s['kept_existing']} existing objects kept)" if s.get("kept_existing") else ""
-    _ok(f"{s['statements_ok']}/{s['statements']} statements OK, {s['files_ok']}/{s['files']} files clean{kept}")
-    for f in res["files"]:
-        for x in f["results"]:
-            if not x["ok"]:
-                click.secho(f"  {f['file']} #{x['n']}: {x['error']}", fg="red")
-
-
-@main.command()
-@config_option
-@click.option("--execute", is_flag=True, help="Run the load (default: write the plan only).")
-@click.option("--allow-prod", is_flag=True, help="Allow targets whose name contains 'prod'.")
-def load(config_path: str, execute: bool, allow_prod: bool) -> None:
-    """Copy table data into Databricks (federation or files)."""
-    from .data import run_load
-
-    cfg = _load(config_path)
-    res = _guard(run_load, cfg, execute, allow_prod)
-    s = res["summary"]
-    if execute:
-        _ok(f"{s['loaded']}/{s['tables']} tables loaded, {s['failed']} failed")
-        for t in res["tables"]:
-            if t["status"] == "failed":
-                click.secho(f"  {t['target']}: {t['error']}", fg="red")
-    else:
-        _ok(f"Plan for {s['tables']} tables written to {res['plan_file']} (re-run with --execute)")
-
-
-@main.command()
-@config_option
-@click.option("--test", "test_only", is_flag=True, help="Only test the existing connection.")
-@click.option("--remove", is_flag=True, help="Remove the connection, catalog and stored password.")
-def connect(config_path: str, test_only: bool, remove: bool) -> None:
-    """Connect the legacy source database to Databricks, so data can be copied.
-
-    Reads type, host, port, database and user from the source_db section of project.yml and asks for the
-    password, which is stored only in Databricks secrets.
-    """
-    from . import source_db as sd
-    from .dbx import Warehouse
-    from .ui.helpers import read_raw, save_raw
-
-    cfg = _load(config_path)
-    folder = cfg.path.parent
-    raw = read_raw(folder)
-    s = cfg.source_db
-    if remove:
-        _guard(sd.remove_connection, cfg)
-        raw.pop("source_db", None)
-        raw.setdefault("data", {})["source_catalog"] = ""
-        save_raw(folder, raw)
-        _ok("Removed the connection, catalog and stored password from Databricks")
-        return
-    if not test_only:
-        if not s.get("type") or not s.get("host"):
-            _fail("Add a source_db section to project.yml first, e.g.\n"
-                  "source_db: {type: sqlserver, host: sqlprod01.client.com, port: 1433, database: SalesDB, user: reader}\n"
-                  f"Types: {', '.join(sd.DB_TYPES)}")
-        # Non-interactive use (scripts, CI): WISHBRIDGE_SOURCE_PASSWORD; otherwise ask without echoing it.
-        password = os.environ.get("WISHBRIDGE_SOURCE_PASSWORD") or click.prompt(
-            f"Password for {s.get('user')}@{s.get('host')}", hide_input=True)
-        made = _guard(sd.create_connection, cfg, s, password)
-        raw["source_db"] = {**s, "connection": made["connection"], "catalog": made["catalog"]}
-        raw["data"] = {**(raw.get("data") or {}), "method": "federation", "source_catalog": made["catalog"]}
-        save_raw(folder, raw)
-        _ok(f"Created connection {made['connection']} and catalog {made['catalog']} (password in Databricks secrets)")
-        s = raw["source_db"]
-    if not s.get("catalog"):
-        _fail("No connection yet - run `wishbridge connect` first")
-    schemas = _guard(sd.test_connection, s["catalog"], _guard(Warehouse, cfg))
-    _ok(f"Databricks reached the database: {len(schemas)} schema(s): {', '.join(schemas[:15])}"
-        + (" ..." if len(schemas) > 15 else ""))
-
-
-@main.command()
-@config_option
-@click.option("--allow-prod", is_flag=True, help="Allow a target schema whose name contains 'prod'.")
-def execute(config_path: str, allow_prod: bool) -> None:
-    """Run the converted ETL notebooks on Databricks (after deploy and load)."""
-    from .execute import run_execute
-
-    cfg = _load(config_path)
-    click.echo("Running converted notebooks as a Databricks job (this can take a few minutes) ...")
-    res = _guard(run_execute, cfg, allow_prod)
-    s = res["summary"]
-    _ok(f"{s['succeeded']}/{s['notebooks']} notebooks succeeded")
-    for r in res["runs"]:
-        colour = {"succeeded": "green", "skipped": "yellow"}.get(r["status"], "red")
-        after = f"  (after {', '.join(r['depends_on'])})" if r.get("depends_on") else ""
-        click.secho(f"  {r['status']:<9} {r['file']}{after}" + (f"  {r.get('url')}" if r.get("url") else ""), fg=colour)
-        for key, col in (("error", "red"), ("note", None)):
-            if r.get(key):
-                click.secho(f"      {r[key]}", fg=col)
-    click.echo(f"  Job definition (to schedule it): {res['job_definition']}")
-
-
-@main.command()
-@config_option
-@click.option("--full", is_flag=True, help="Use LakeBridge reconcile (row/column level) instead of quick checks.")
-def reconcile(config_path: str, full: bool) -> None:
-    """Compare source and target data."""
-    from .reconcile import run_reconcile
-
-    cfg = _load(config_path)
-    res = _guard(run_reconcile, cfg, full)
-    if res["mode"] == "quick":
-        s = res["summary"]
-        _ok(f"{s['matched']}/{s['tables']} tables match ({s['mismatched']} mismatched, {s['errors']} errors)")
-    else:
-        _ok("LakeBridge reconcile finished - see the reconcile dashboard in Databricks")
-
-
-@main.command()
 @click.option("--check-only", is_flag=True, help="Only report; do not install anything.")
 @click.option("-c", "--config", "config_path", default=None,
               help="Project file: install only what this project needs (its converters, Java for Morph).")
@@ -359,134 +156,13 @@ def setup(check_only: bool, config_path: str | None, need: str | None, status_fi
         _fail("Some requirements are missing (see above) - the record has the details")
 
 
-@main.command(hidden=True)
-@config_option
-@click.option("--steps", required=True, help="Comma-separated steps: describe, analyze, convert, deploy, load, reconcile, report, package.")
-@click.option("--options", "options", default="{}", help="JSON options (ai, recreate, execute).")
-@click.option("--keep-going", is_flag=True, help="Note a failed step and continue (the assessment visit).")
-def pipeline(config_path: str, steps: str, options: str, keep_going: bool) -> None:
-    """Run steps and write progress to output/logs/run_status.json (used by the app, in the background)."""
-    import json
-
-    from .runner import run_pipeline
-
-    cfg = _load(config_path)
-    res = run_pipeline(cfg, steps.split(","), json.loads(options), keep_going,
-                       lambda s: None)
-    for st in res["steps"]:
-        click.echo(f"  {st['state']:<8} {st['label']}: {st['summary'] or st['error']}")
-
-
-@main.command()
-@config_option
-def assess(config_path: str) -> None:
-    """Offline first visit: analyze + convert + report. Nothing goes to Databricks or the client's database."""
-    from .analysis import run_analyze
-    from .convert import run_convert
-    from .report import build_report
-
-    from .fit import run_fit
-    from .overview import build_overview
-    from .package import build_package
-
-    cfg = _load(config_path)
-    click.echo(f"Assessing {cfg.input_dir} offline as {cfg.source.label} ...")
-    errors = (LakeBridgeError, SqlError, ConfigError, FileNotFoundError, RuntimeError, ValueError, OSError)
-    skipped = []
-
-    def step(label: str, fn, done):
-        try:
-            done(fn())
-        except errors as e:  # note it and carry on: the visit is about collecting everything
-            skipped.append(label)
-            click.secho(f"[skipped] {label}: {str(e).splitlines()[0][:300]}", fg="yellow")
-
-    step("fit check", lambda: run_fit(cfg), lambda f: _print_fit(f, cfg))
-    step("code overview", lambda: build_overview(cfg), lambda p: _ok(f"Code overview: {p}"))
-    step("analyze", lambda: run_analyze(cfg),
-         lambda a: _ok(f"Analyzed {len(a['programs'])} files; manual estimate {a['estimated_hours_baseline']} h"))
-    step("convert", lambda: run_convert(cfg, False), lambda c: _ok(
-        f"Converted {c['summary']['files']} files: {c['summary']['ready']} ready, {c['summary']['review']} to review, "
-        f"{c['summary']['needs_fix']} need fixes"))
-    step("report", lambda: build_report(cfg), lambda p: _ok(f"Report: {p}"))
-    step("package", lambda: build_package(cfg), lambda p: _ok(f"Everything in one zip: {p}"))
-    if skipped:
-        click.secho(f"Not done: {', '.join(skipped)} - run `wishbridge assess` again later (e.g. after `wishbridge setup`).",
-                    fg="yellow")
-
-
-@main.command()
-@config_option
-def snapshot(config_path: str) -> None:
-    """Copy the client's code into the project (with a receipt), so their folder is not needed again."""
-    from .snapshot import copy_project_code
-
-    cfg = _load(config_path)
-    try:
-        rec = copy_project_code(cfg.path)
-    except (ValueError, OSError) as e:
-        _fail(str(e))
-    _ok(f"Copied {rec['files']} files ({rec['bytes'] // 1024} KB) from {rec['copied_from']} into "
-        f"{cfg.path.parent / 'input'}; fingerprint {rec['fingerprint'][:16]}")
-    for f in rec["skipped_large_files"]:
-        click.echo(f"  skipped large file: {f}")
-
-
-@main.command()
-@config_option
-@click.option("--script", "make_script", is_flag=True, help="Write the read-only inventory query for the client's DBA.")
-@click.option("--db", default=None, help="Database type for --script (sqlserver, synapse, oracle, snowflake, teradata, "
-                                         "redshift, bigquery, netezza). Default: from the source system.")
-@click.option("--import", "import_file", default=None, type=click.Path(exists=True, dir_okay=False),
-              help="Import the CSV the DBA sent back.")
-def inventory(config_path: str, make_script: bool, db: str | None, import_file: str | None) -> None:
-    """Source database inventory (tables, columns, row counts, sizes) without connecting to the database."""
-    from . import inventory as inv
-
-    cfg = _load(config_path)
-    if not make_script and not import_file:
-        make_script = True
-    if make_script:
-        try:
-            name, text = inv.script(cfg, db)
-        except ValueError as e:
-            _fail(str(e))
-        out = cfg.out("inventory", name)
-        out.write_text(text, encoding="utf-8")
-        _ok(f"Inventory query for the DBA: {out}")
-        click.echo("  It only reads the database catalog. Ask the DBA to run it and send back the result as CSV, then:")
-        click.echo(f"  wishbridge inventory --import <file.csv>")
-    if import_file:
-        try:
-            res = inv.import_file(cfg, import_file)
-        except (ValueError, OSError) as e:
-            _fail(str(e))
-        s = res["summary"]
-        _ok(f"{s['tables']} tables, {s['columns']} columns, {s['rows']:,} rows, {s['size_mb']:,} MB "
-            f"in schemas {', '.join(s['schemas'])}")
-        for t in res["tables"][:10]:
-            click.echo(f"  {t['schema']}.{t['table']:<40} {int(t['rows'] or 0):>14,} rows {t['size_mb'] or 0:>10,} MB")
-
-
-@main.command()
-@config_option
-@click.option("--no-original", is_flag=True, help="Leave the client's original code out of the package.")
-def package(config_path: str, no_original: bool) -> None:
-    """Zip the review package: report, open items, fit check, inventory, converted (and original) code."""
-    from .package import build_package
-
-    cfg = _load(config_path)
-    _ok(f"Package: {_guard(build_package, cfg, not no_original)}")
-    click.echo("  Everything from this run in one zip. Open it later on any computer: wishbridge open-package <zip>")
-
-
 @main.command("open-package")
 @click.argument("zip_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--dir", "directory", default=".", type=click.Path(file_okay=False), help="Parent folder for the project.")
 @click.option("--name", default=None, help="Project folder name (default: the name in the package).")
 def open_package_cmd(zip_file: str, directory: str, name: str | None) -> None:
     """Recreate a project from a package, to review and fix the code on this computer."""
-    from .package import open_package
+    from .open_package import open_package
 
     try:
         dest = open_package(zip_file, directory, name)
@@ -494,16 +170,6 @@ def open_package_cmd(zip_file: str, directory: str, name: str | None) -> None:
         _fail(str(e))
     _ok(f"Project ready: {dest}")
     click.echo(f"  Next: open it in the app (wishbridge ui --project {dest}), or cd {dest} and fix files in overrides/.")
-
-
-@main.command()
-@config_option
-def report(config_path: str) -> None:
-    """Build the HTML migration report."""
-    from .report import build_report
-
-    cfg = _load(config_path)
-    _ok(f"Report: {_guard(build_report, cfg)}")
 
 
 @main.command()
@@ -536,49 +202,69 @@ def ui(project: str | None, port: int, host: str, no_browser: bool) -> None:
     subprocess.run(args)
 
 
-@main.command("sql")
-@config_option
-@click.argument("sql_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("--allow-prod", is_flag=True, help="Allow statements that name a 'prod' catalog/schema.")
-def sql_cmd(config_path: str, sql_file: str, allow_prod: bool) -> None:
-    """Run a SQL file on the project's SQL warehouse, statement by statement."""
-    from .config import looks_like_prod
-    from .dbx import Warehouse
-    from .sqltext import mask, split_statements
+# --- Project commands: run by the project's warehouse (src/wishbridge/warehouses/<warehouse>/cli.py) ----------
 
-    cfg = _load(config_path)
-    stmts = split_statements(Path(sql_file).read_text(encoding="utf-8-sig"))
-    if not allow_prod and any(looks_like_prod(w) for s in stmts for w in mask(s).split()):
-        _fail("The file references a 'prod' object. Re-run with --allow-prod if that is intended.")
-    wh = _guard(Warehouse, cfg)
-    for i, stmt in enumerate(stmts, 1):
-        res = _guard(wh.run, stmt)
-        first = " ".join(mask(stmt).split())[:70]
-        click.echo(f"  #{i} ok  {first}" + (f"  -> {res.rows[0]}" if res.rows and len(res.rows) == 1 else ""))
-    _ok(f"{len(stmts)} statements run on warehouse {wh.warehouse_id}")
+def _project_file(args: list[str]) -> str:
+    for i, a in enumerate(args):
+        if a in ("-c", "--config") and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith("--config="):
+            return a.split("=", 1)[1]
+    return "project.yml"
 
 
-@main.command()
-@config_option
-@click.option("--ai/--no-ai", default=None, help="Ask Claude for fix suggestions.")
-@click.option("--deploy", "with_deploy", is_flag=True, help="Also deploy & validate on Databricks.")
-@click.option("--load", "with_load", is_flag=True, help="Also load data (executes) and reconcile.")
-@click.pass_context
-def run(ctx: click.Context, config_path: str, ai: bool | None, with_deploy: bool, with_load: bool) -> None:
-    """Run the pipeline: analyze, convert, report (+ deploy, load, reconcile when asked)."""
-    ctx.invoke(analyze, config_path=config_path)
-    ctx.invoke(convert, config_path=config_path, ai=ai)
-    if with_deploy or with_load:
-        ctx.invoke(deploy, config_path=config_path, execute_dml=False, allow_prod=False, recreate=False)
-    if with_load:
-        ctx.invoke(load, config_path=config_path, execute=True, allow_prod=False)
-        from .execute import notebooks_to_run
+def _forward(name: str, help_text: str, hidden: bool = False) -> None:
+    @main.command(name, help=help_text + " (run by the project's warehouse)", hidden=hidden, add_help_option=False,
+                  context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+    @click.argument("args", nargs=-1, type=click.UNPROCESSED)
+    def command(args: tuple[str, ...]) -> None:
+        import yaml
 
-        if notebooks_to_run(_load(config_path)):
-            ctx.invoke(execute, config_path=config_path, allow_prod=False)
-        ctx.invoke(reconcile, config_path=config_path, full=False)
-    ctx.invoke(report, config_path=config_path)
+        from .warehouses import module
+
+        args = list(args)
+        if "--help" in args or "-h" in args:
+            source = "mssql"  # any warehouse shows the same options
+        else:
+            path = Path(_project_file(args))
+            if not path.is_file():
+                _fail(f"Project file not found: {path}. Pass -c <project.yml> or create one with `wishbridge init`.")
+            source = str((yaml.safe_load(path.read_text(encoding="utf-8-sig")) or {}).get("source", ""))
+        try:
+            warehouse_cli = module(source, "cli")
+        except ValueError as e:
+            _fail(str(e))
+        warehouse_cli.main.main(args=[name, *args], prog_name="wishbridge")
 
 
-if __name__ == "__main__":
-    main()
+_forward("analyze", "Assess the legacy code (LakeBridge Analyzer).")
+
+_forward("fit", "Check which objects belong on Databricks and which should stay with the application (fast, no LakeBridge).")
+
+_forward("convert", "Transpile to Databricks SQL and apply WishBridge fix rules.")
+
+_forward("deploy", "Create converted objects in the dev schema and validate every statement.")
+
+_forward("load", "Copy table data into Databricks (federation or files).")
+
+_forward("connect", "Connect the legacy source database to Databricks, so data can be copied.")
+
+_forward("execute", "Run the converted ETL notebooks on Databricks (after deploy and load).")
+
+_forward("reconcile", "Compare source and target data.")
+
+_forward("pipeline", "Run steps and write progress to output/logs/run_status.json (used by the app, in the background).", hidden=True)
+
+_forward("assess", "Offline first visit: analyze + convert + report. Nothing goes to Databricks or the client's database.")
+
+_forward("snapshot", "Copy the client's code into the project (with a receipt), so their folder is not needed again.")
+
+_forward("inventory", "Source database inventory (tables, columns, row counts, sizes) without connecting to the database.")
+
+_forward("package", "Zip the review package: report, open items, fit check, inventory, converted (and original) code.")
+
+_forward("report", "Build the HTML migration report.")
+
+_forward("sql", "Run a SQL file on the project's SQL warehouse, statement by statement.")
+
+_forward("run", "Run the pipeline: analyze, convert, report (+ deploy, load, reconcile when asked).")

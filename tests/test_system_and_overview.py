@@ -3,8 +3,8 @@
 from pathlib import Path
 
 from wishbridge import system
-from wishbridge.config import load_config
-from wishbridge.overview import build_overview, parse_tables
+from wishbridge.warehouses.sqlserver.config import load_config
+from wishbridge.warehouses.sqlserver.overview import build_overview, parse_tables
 
 
 def test_missing_requirements_are_installed_in_order(monkeypatch):
@@ -72,7 +72,7 @@ def test_overview_describes_the_code_base(tmp_path):
     assert "2 tables, 1 stored procedures" in html
     assert "dbo.usp_load_daily_sales" in html and "Cursors" in html and "Dynamic SQL" in html
     assert "Old and new files" in html and "Procs/LoadDaily.sql" in html
-    from wishbridge.state import load_state
+    from wishbridge.warehouses.sqlserver.state import load_state
 
     ov = load_state(cfg)["overview"]
     assert ov["tables"] == 2 and ov["procedures"] == 1 and ov["features"]["cursor"] == 1

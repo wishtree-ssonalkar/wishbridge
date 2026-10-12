@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from wishbridge.convert import _transpile_notes
-from wishbridge.rules import apply_rules, detect
+from wishbridge.warehouses.sqlserver.convert import _transpile_notes
+from wishbridge.warehouses.sqlserver.rules import apply_rules, detect
 
 
 def rules(findings, fixed=None):

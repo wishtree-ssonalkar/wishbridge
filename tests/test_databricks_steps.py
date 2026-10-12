@@ -4,12 +4,12 @@ import re
 
 import pytest
 
-from wishbridge.config import load_config
-from wishbridge.data import run_load
-from wishbridge.dbx import SqlError, SqlResult
-from wishbridge.deploy import or_replace, run_deploy
-from wishbridge.reconcile import run_reconcile
-from wishbridge.state import save_step
+from wishbridge.warehouses.sqlserver.config import load_config
+from wishbridge.warehouses.sqlserver.data import run_load
+from wishbridge.warehouses.sqlserver.dbx import SqlError, SqlResult
+from wishbridge.warehouses.sqlserver.deploy import or_replace, run_deploy
+from wishbridge.warehouses.sqlserver.reconcile import run_reconcile
+from wishbridge.warehouses.sqlserver.state import save_step
 
 
 class FakeWarehouse:
