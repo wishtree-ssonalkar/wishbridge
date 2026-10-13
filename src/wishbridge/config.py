@@ -8,44 +8,57 @@ from pathlib import Path
 
 import yaml
 
+from . import sources as _sources
+from .sources.base import Source
+
 
 class ConfigError(Exception):
     pass
 
 
-@dataclass(frozen=True)
-class Source:
-    key: str
-    analyzer_tech: str  # value for `lakebridge analyze --source-tech`
-    transpiler: str  # "morph" or "bladebridge"
-    dialect: str  # value for `lakebridge transpile --source-dialect`
+SOURCE_LABELS = _sources.LABELS  # per warehouse: sources/<warehouse>.py
+
+# What WishBridge is for, in one place (shown by the app, the CLI and the docs).
+PURPOSE = "Migrate your data warehouse and the ETL that loads it to Databricks."
+SCOPE_ROWS = [
+    ("SQL Server used as a data warehouse (fact/dimension tables, SSIS loads, Power BI or SSRS reports)", "Yes"),
+    ("Oracle used as a data warehouse (often Exadata, PL/SQL loads, Informatica)", "Yes"),
+    ("Teradata, Snowflake, Azure Synapse, Amazon Redshift, Google BigQuery, IBM Netezza", "Yes"),
+    ("SSIS, Informatica or DataStage jobs that load a warehouse", "Yes"),
+    ("SQL Server or Oracle behind a live application (order entry, bookings, HR screens)",
+     "No - it stays; the fit check warns if you open one"),
+]
 
 
-# Analyzer names come from lakebridge Analyzer.supported_source_technologies();
-# dialects come from each transpiler's lib/config.yml.
-SOURCES: dict[str, Source] = {
-    s.key: s
-    for s in [
-        Source("mssql", "MS SQL Server", "morph", "mssql"),
-        Source("synapse", "Synapse", "morph", "synapse"),
-        Source("snowflake", "Snowflake", "morph", "snowflake"),
-        Source("oracle", "Oracle", "morph", "oracle"),
-        Source("teradata", "Teradata", "morph", "teradata"),
-        Source("redshift", "Redshift", "morph", "redshift"),
-        Source("bigquery", "BigQuery", "morph", "bigquery"),
-        Source("netezza", "Netezza", "bladebridge", "netezza"),
-        Source("datastage", "Datastage", "bladebridge", "datastage"),
-        Source("informatica", "Informatica - PC", "bladebridge", "informatica (desktop edition)"),
-        Source("informatica-cloud", "Informatica Cloud", "bladebridge", "informatica cloud"),
-        Source("ssis", "SSIS", "bladebridge", "ssis"),
-    ]
-}
+# Every source system, from its warehouse file (sources/<warehouse>.py).
+SOURCES: dict[str, Source] = _sources.SOURCES
 
 TRANSPILER_DIRS = {"morph": "databricks-morph-plugin", "bladebridge": "bladebridge"}
+
+# ETL tools: BladeBridge asks which code to generate; WishBridge defaults to SPARKSQL.
+ETL_SOURCES = frozenset(_sources.ETL_TARGETS)  # the warehouse files that set ETL_TARGETS
+# What BladeBridge can generate for each ETL tool (tech_mapper_main.json): Informatica Cloud only to PySpark.
+ETL_TARGETS = _sources.ETL_TARGETS
+
+# Source dialects each LakeBridge converter accepts (from each transpiler's lib/config.yml).
+CONVERTER_DIALECTS = {
+    "morph": frozenset({"bigquery", "oracle", "teradata", "mssql", "redshift", "snowflake", "synapse"}),
+    "bladebridge": frozenset({"datastage", "informatica (desktop edition)", "informatica cloud", "ssis", "mssql",
+                              "netezza", "oracle", "redshift", "synapse", "teradata"}),
+}
 
 DEFAULT_HOURS_PER_FILE = {"LOW": 0.5, "MEDIUM": 2.0, "HIGH": 6.0, "VERY HIGH": 12.0}
 
 _PROD_SEGMENT = re.compile(r"(^|[._\-])(prod|production)($|[._\-])", re.IGNORECASE)
+
+
+PHASES = ("assessment", "code-migration", "data-migration")
+
+
+def normalise_phase(value) -> str:
+    """The project's phase; projects saved before the split say 'migration', which is the code migration."""
+    phase = str(value or "code-migration").strip().lower()
+    return "code-migration" if phase == "migration" else phase
 
 
 def looks_like_prod(name: str) -> bool:
@@ -56,6 +69,8 @@ def looks_like_prod(name: str) -> bool:
 class TableMapping:
     source: str
     target: str
+    load: bool = True  # False = compare only (e.g. an ETL job's output, produced by `wishbridge execute`)
+    columns: dict[str, str] = field(default_factory=dict)  # target column -> source column (empty: same names)
 
 
 @dataclass
@@ -66,7 +81,12 @@ class ProjectConfig:
     transpiler: str
     input_dir: Path
     output_dir: Path
+    target_technology: str = ""  # BladeBridge ETL sources: SPARKSQL or PYSPARK
+    auto_converter: bool = True  # transpiler "auto": also try the other converter on files with errors
+    source_db: dict = field(default_factory=dict)  # legacy database connection settings (no password)
+    overrides_dir: Path | None = None  # hand-fixed files that replace converted output
     profile: str = "DEFAULT"
+    host: str = ""  # workspace this project belongs to; WishBridge refuses to run against another
     warehouse_id: str = ""
     catalog: str = "main"
     schema: str = "wishbridge"
@@ -81,6 +101,8 @@ class ProjectConfig:
     tables: list[TableMapping] = field(default_factory=list)
     hours_per_file: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_HOURS_PER_FILE))
     hours_per_issue: float = 0.5
+    scope: str = "all"  # all | recommended: deploy leaves out objects the fit check says stay on the source
+    phase: str = "code-migration"  # assessment (offline) | code-migration (deploy the code) | data-migration (copy data)
 
     @property
     def target_schema(self) -> str:
@@ -103,11 +125,29 @@ class ProjectConfig:
         return f"{self.target_schema}.{table}"
 
 
+def fallback_converter(cfg: ProjectConfig) -> str | None:
+    """The second converter automatic mode tries, if it supports this source; None when there is none."""
+    if not cfg.auto_converter:
+        return None
+    other = "bladebridge" if cfg.transpiler == "morph" else "morph"
+    return other if cfg.source.dialect in CONVERTER_DIALECTS[other] else None
+
+
+def converter_summary(source_key: str) -> str:
+    """Plain-words description of automatic mode for a source, e.g. for the app."""
+    s = SOURCES[source_key]
+    other = "bladebridge" if s.transpiler == "morph" else "morph"
+    if s.dialect in CONVERTER_DIALECTS[other]:
+        return ("Each file is converted automatically; a file that can't be fully converted is also tried a second "
+                "way, and the better result is kept.")
+    return "Each file is converted automatically (one method fits this source)."
+
+
 def load_config(path: str | Path) -> ProjectConfig:
     path = Path(path).resolve()
     if not path.exists():
         raise ConfigError(f"Project file not found: {path}. Create one with `wishbridge init`.")
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8-sig")) or {}
     base = path.parent
 
     source_key = str(raw.get("source", "")).lower()
@@ -115,7 +155,9 @@ def load_config(path: str | Path) -> ProjectConfig:
         raise ConfigError(f"Unknown source '{source_key}'. Supported: {', '.join(SOURCES)}")
     source = SOURCES[source_key]
 
-    transpiler = raw.get("transpiler") or source.transpiler
+    chosen = str(raw.get("transpiler") or "auto").lower()
+    auto_converter = chosen == "auto"
+    transpiler = source.transpiler if auto_converter else chosen
     if transpiler not in TRANSPILER_DIRS:
         raise ConfigError(f"Unknown transpiler '{transpiler}'. Use one of: {', '.join(TRANSPILER_DIRS)}")
 
@@ -129,9 +171,14 @@ def load_config(path: str | Path) -> ProjectConfig:
         name=raw.get("name") or base.name,
         source=source,
         transpiler=transpiler,
+        auto_converter=auto_converter,
+        source_db=dict(raw.get("source_db") or {}),
+        target_technology=str(raw.get("target_technology") or ETL_TARGETS.get(source.key, "")).upper(),
         input_dir=(base / raw.get("input", "input")).resolve(),
         output_dir=(base / raw.get("output", "output")).resolve(),
+        overrides_dir=(base / raw.get("overrides", "overrides")).resolve(),
         profile=dbx.get("profile", "DEFAULT"),
+        host=str(dbx.get("host") or ""),
         warehouse_id=str(dbx.get("warehouse_id") or ""),
         catalog=dbx.get("catalog", "main"),
         schema=dbx.get("schema", "wishbridge"),
@@ -145,7 +192,13 @@ def load_config(path: str | Path) -> ProjectConfig:
         load_mode=data.get("mode", "append"),
         hours_per_file={**DEFAULT_HOURS_PER_FILE, **(est.get("hours_per_file") or {})},
         hours_per_issue=float(est.get("hours_per_issue", 0.5)),
+        scope=str(raw.get("scope") or "all").lower(),
+        phase=normalise_phase(raw.get("phase")),
     )
+    if cfg.phase not in PHASES:
+        raise ConfigError(f"phase must be one of: {', '.join(PHASES)}")
+    if cfg.scope not in ("all", "recommended"):
+        raise ConfigError("scope must be 'all' or 'recommended'")
     if cfg.data_method not in ("federation", "files"):
         raise ConfigError("data.method must be 'federation' or 'files'")
     if cfg.load_mode not in ("append", "overwrite"):
@@ -153,7 +206,9 @@ def load_config(path: str | Path) -> ProjectConfig:
     for t in data.get("tables") or []:
         if isinstance(t, str):
             t = {"source": t}
-        cfg.tables.append(TableMapping(source=t["source"], target=t.get("target") or cfg.map_table(t["source"])))
+        cfg.tables.append(TableMapping(source=t["source"], target=t.get("target") or cfg.map_table(t["source"]),
+                                       load=bool(t.get("load", True)),
+                                       columns={str(k): str(v) for k, v in (t.get("columns") or {}).items() if v}))
     return cfg
 
 
@@ -161,14 +216,20 @@ PROJECT_TEMPLATE = """\
 # WishBridge project file. Paths are relative to this file.
 name: {name}
 source: {source}            # one of: {sources}
-# transpiler: morph         # optional override: morph | bladebridge
+# transpiler: auto          # auto (default): best converter per file | morph | bladebridge
 input: input                # put the legacy SQL / ETL files here
 output: output              # everything WishBridge produces goes here
+overrides: overrides        # hand-fixed versions of converted files (same file names) - kept across runs
+scope: all                  # all | recommended: deploy only what belongs on Databricks (see the fit check)
+phase: assessment           # assessment: offline - analyze and convert only, nothing goes to Databricks or the client
+                            # database. Then code-migration (deploy the code to Databricks) and data-migration
+                            # (copy the data and check it matches).
 
 databricks:
   profile: DEFAULT          # profile in ~/.databrickscfg
+  host: ""                  # workspace URL this project belongs to; WishBridge refuses to run against another
   warehouse_id: ""          # SQL warehouse used by deploy/load/reconcile (blank = auto-pick)
-  catalog: main
+  catalog: main             # newer workspaces usually use `workspace`
   schema: wishbridge_{name_id}   # dev/test schema the converted objects are deployed to
 
 # Rename source schemas to target catalog.schema in the converted code

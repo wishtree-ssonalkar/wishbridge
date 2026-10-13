@@ -1,4 +1,4 @@
-from wishbridge.rules import apply_rules, detect
+from wishbridge.warehouses.sqlserver.rules import apply_rules, detect
 
 
 def rules_of(findings, fixed=None):
@@ -55,7 +55,7 @@ SELECT TOP 5 * FROM t;
     assert by_rule["system-variable"].severity == "error" and by_rule["system-variable"].line == 1
     assert by_rule["temp-table"].line == 2
     assert by_rule["top-clause"].line == 3
-    assert by_rule["transpiler-note"].message == "precision differs"
+    assert by_rule["converter-note"].message == "precision differs"
     assert "local-variable" not in by_rule  # @@ROWCOUNT is not double-reported
 
 

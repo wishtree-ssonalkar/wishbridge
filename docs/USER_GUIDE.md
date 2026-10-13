@@ -1,0 +1,438 @@
+# Wishtree WishBridge – User Guide
+
+This guide takes you from a fresh laptop to a finished migration report. Follow the steps in order.
+Commands are for **Windows PowerShell**; Mac/Linux differences are noted where they matter.
+
+**What WishBridge does:** it migrates a **data warehouse** and the ETL that loads it to Databricks. You give
+it the warehouse code (SQL Server, Oracle, Teradata, Snowflake, … or SSIS / Informatica / DataStage jobs). It
+assesses the code, converts it to Databricks, fixes or flags what the converter got wrong, deploys it to a test
+schema in Databricks, copies the data, checks the data matches, and writes an HTML report you can share with
+the client.
+
+**What WishBridge migrates:** data warehouses and the ETL that loads them.
+
+| What the client has | Migrate with WishBridge? |
+|---|---|
+| SQL Server used as a data warehouse (fact/dimension tables, SSIS loads, Power BI or SSRS reports) | Yes |
+| Oracle used as a data warehouse (often Exadata, PL/SQL loads, Informatica) | Yes |
+| Teradata, Snowflake, Azure Synapse, Amazon Redshift, Google BigQuery, IBM Netezza | Yes |
+| SSIS, Informatica or DataStage jobs that load a warehouse | Yes |
+| SQL Server or Oracle behind a live application (order entry, bookings, HR screens) | No: it stays where it is |
+
+SQL Server and Oracle are general database products, so the same software can hold a warehouse or an
+application's data. Analyze runs a **fit check** that confirms the code is a warehouse and warns when it is not.
+
+---
+
+## Part A – One-time setup (about 20 minutes)
+
+### Quick setup (recommended)
+
+Get the WishBridge folder (`git clone https://github.com/wishtree-ssonalkar/wishbridge.git C:\wishbridge`,
+or download it as a ZIP from GitHub and unzip it), then:
+
+| System | Run once | Then start WishBridge with |
+|---|---|---|
+| Windows 10/11 | Double-click **`Install WishBridge.cmd`** | The **Wishtree WishBridge** icon on the desktop |
+| macOS | `./install.sh` in Terminal | **Wishtree WishBridge.command** on the Desktop |
+| Linux (Ubuntu/Debian, RHEL/Fedora) | `./install.sh` in a terminal | **Wishtree WishBridge** in the app menu, or `./start-wishbridge.sh` |
+
+The setup installs whatever is missing (Python, Java and the Databricks CLI, via winget on Windows, Homebrew on
+macOS, apt or dnf on Linux), opens a browser to sign in to Databricks, installs LakeBridge and its converters,
+installs WishBridge and adds the launcher. It is safe to run again; finished steps are skipped. Add
+`-DryRun` (Windows) or `DRY_RUN=1` (macOS/Linux) to see what it would do without changing anything.
+
+**Linux server without a desktop:** run `./start-wishbridge.sh --no-browser` on the server, open an SSH tunnel
+from your laptop (`ssh -L 8501:localhost:8501 <server>`) and browse to http://localhost:8501. The app only
+listens on its own machine unless started with `--host 0.0.0.0`; don't do that on an untrusted network, because
+the app runs with that machine's Databricks login.
+
+If the quick setup works, skip to [Part B](#part-b--try-the-demo-5-minutes-nothing-touches-databricks).
+Steps A1–A4 below are the same setup done by hand.
+
+### A1. What you need
+
+| Item | Check with | Get it from |
+|---|---|---|
+| Python 3.10 or newer | `python --version` | python.org (tick "Add to PATH") |
+| Java 11 or newer | `java -version` | adoptium.net |
+| Git | `git --version` | git-scm.com |
+| Databricks CLI | `databricks --version` | `winget install Databricks.DatabricksCLI` |
+| A Databricks workspace you can log in to, with a **SQL warehouse** | Databricks UI → SQL Warehouses | your Databricks admin |
+
+> **Office network:** if any download fails with a *certificate* error (`x509`, `SSL`, `unknown authority`),
+> the company firewall is inspecting traffic. Do the one-time setup on another network (e.g. a mobile hotspot)
+> or ask IT to trust the firewall certificate. Day-to-day use works on the office network.
+
+### A2. Log in to Databricks
+
+```powershell
+databricks auth login --host https://<your-workspace>.cloud.databricks.com --profile DEFAULT
+```
+
+A browser opens – sign in. Then confirm:
+
+```powershell
+databricks auth profiles        # the DEFAULT row should say Valid: YES
+```
+
+### A3. Install LakeBridge (Databricks' migration toolkit, which WishBridge uses)
+
+```powershell
+databricks labs install lakebridge
+databricks labs lakebridge install-transpile --interactive false
+```
+
+Press Enter to accept the defaults if the installer asks questions.
+
+### A4. Install WishBridge
+
+```powershell
+git clone https://github.com/wishtree-ssonalkar/wishbridge.git C:\wishbridge
+cd C:\wishbridge
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[ai,ui]"
+```
+
+Check it works:
+
+```powershell
+.\.venv\Scripts\wishbridge.exe --version          # wishbridge, version 1.0.0
+```
+
+> **Tip – shorter commands:** run `.\.venv\Scripts\Activate.ps1` once per PowerShell window, then you can type
+> just `wishbridge ...`. If PowerShell blocks the script, run
+> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or keep using the full path
+> `C:\wishbridge\.venv\Scripts\wishbridge.exe`. The rest of this guide writes `wishbridge` for short.
+> (Mac/Linux: `source .venv/bin/activate`.)
+
+---
+
+## The WishBridge app (no commands needed)
+
+Everything in this guide can also be done in the WishBridge app, which opens in your browser.
+
+- **Start it:** double-click `Start WishBridge.cmd` in the WishBridge folder (right-click → *Send to → Desktop*
+  to make a desktop shortcut), or run `wishbridge ui`. It opens at http://localhost:8501 and runs only on
+  your computer; close the black window to stop it.
+- **First page - what do you want to do?** Choose **Assessment** or **Migration** first (on the page or at the top
+  of the sidebar). The sidebar then offers the ways to start that fit:
+  - *Assessment*: **Open a folder** (the client's code) or **Start from the database** (no code folder: create
+    the project, then read the tables and code in *Code › Read from the database*).
+  - *Migration*: **Open the assessment zip**, **Open a project** or **Create new**.
+  The project you open is set to the chosen phase; changing the phase in Settings changes the choice too.
+  While a project is open, the ways to start another one are folded under *Open or start another project*.
+  The Code step follows how the project started: a **folder** project shows its files, and reading from the
+  database is an optional extra (*Optional: add the table list from the database* - for code without table
+  scripts, such as SSIS packages, or for row counts); a project that **started from the database** opens with
+  *Read the tables and code from the database*, and adding files is the optional extra.
+- **Sidebar:** *Open a folder* takes either a WishBridge project or **any folder of client code** — a Git
+  repository, a Visual Studio database project, an ETL export. For client code the app detects the source system
+  (from `.sqlproj`, `.dtsx`, Informatica or DataStage XML, Informatica Cloud `.zip`, or the SQL keywords), finds
+  separate databases inside it (e.g. TenantDB, AuditDB) and offers to create one project per database.
+  **Assessments and migrations have their own folders** so they are easy to tell apart later:
+  `C:\WishBridge\Assessments` and `C:\WishBridge\Migrations` (`~/WishBridge/...` on macOS/Linux) - the app
+  suggests the one that matches the first-page choice; you can type another. WishBridge keeps its own working copy of the code inside the project (with a fingerprint of every
+  file, in `code_received.json`), so the client's folder is needed only once; the app does not show this. The
+  client's folder is never written to.
+  New projects start in the phase chosen on the first page. *Create new* makes an empty project to upload code into.
+  Same from the command line: `wishbridge init acme --code C:\client-repo --dir C:\WishBridge\Assessments`.
+- **1 · Settings:** the **Phase** comes first and saves as soon as you change it.
+  - *Assessment* (offline): only the source system and the converter (leave it on *Automatic*: it picks the right
+    converter and retries files it can't convert with the other one). Schema names and AI / estimates
+    are folded away. Nothing here needs Databricks.
+  - *Migration*: the settings come in four parts, **one after the other** - the next part appears when the one
+    before it is filled in, and each finished part is saved right away (ticked ✅):
+    1. **Databricks workspace** - pick the saved login for the client's workspace, or *Connect to another
+       workspace* to sign in; *Load warehouses and catalogs* fills the lists. If the project belongs to another
+       workspace, *Move this project to ...* is an explicit choice.
+    2. **Target in Databricks** - SQL warehouse, catalog, test schema (production-looking names are refused) and
+       what to deploy.
+    3. **Source data** - copy from the source database directly (create the Lakehouse Federation connection, or
+       use an existing federation catalog) or from exported files in a volume.
+    4. **Copy options** - append or overwrite. Which tables go where is chosen later, in *Map the data*.
+    Required fields carry a red * and a red note until they are filled in. *Next: add the code* appears with
+    part 4; it saves the settings and opens the Code tab (bad values are refused and the old settings kept). The
+    project records the workspace URL: from then on WishBridge refuses to deploy, load or reconcile with a login
+    for any other workspace.
+- **2 · Code:** the **code overview** (a document describing how the system is built), upload more files and preview
+  them, and **Read from the database (optional) - tables and code** - for clients without a code repository (or
+  with only part of it). This works in the assessment phase too: it needs a read-only login to the client's
+  database (ask for a dev/test copy or a replica, with VIEW DEFINITION), not Databricks.
+  - *Connect to the database* (SQL Server, Azure SQL, Synapse): server, database, Windows login or user and
+    password (used once, never saved), and *Trust the server certificate* for servers with a self-signed
+    certificate. Only the catalog is read - table and column names, data types, row counts and sizes - never
+    business data. With *Also read the code* (on by default) the **procedures, views, functions and triggers** are
+    saved too, one `.sql` file per object in `database_code/<schema>/<kind>/`. Encrypted objects cannot be read and
+    are listed so the client can send their scripts; objects the login may not see are listed too.
+  - *Send a query to the client's DBA* (every supported database): download the read-only query, import the CSV
+    they send back. For the code, the DBA uses SSMS › Tasks › Generate Scripts and you add the files.
+  **SSIS, Informatica and DataStage projects:** the packages only *move* the data; the tables they load and the
+  stored procedures, views and functions where the data is updated live in the warehouse database. For these
+  projects the section is called *Recommended: the warehouse database these packages load* and reads the code by
+  default. Both are assessed **together**: the packages as ETL, the database code as the database's SQL - both
+  converted (the database code under `_database_code/`), counted in the estimate, deployed in the migration phase
+  and in the zip (`database_code/`). **What the packages use** (Code step, Report and report.html) lists every
+  table the SSIS packages read or write and every procedure they call, marked *found* or *missing* in what was
+  read from the database - missing procedures first, so you know what else to ask the client for (tables that are
+  only read may belong to the source system).
+  **Which code is assessed:** when the project has no code files, the run uses the code read from the database.
+  When it has both, WishBridge compares them (the same / different / only in the database / only in the files -
+  the database holds what really runs) and *Code to assess* chooses which one the run uses.
+  WishBridge also writes a Databricks `CREATE TABLE IF NOT EXISTS` script for every table the chosen code does not
+  already create (types mapped to Databricks; unknown types become STRING and are marked `review`), one file per
+  source schema. The scripts go into the converted code (`_database_schema/`), into the zip, and in the migration
+  phase they are created in Databricks first, before the converted code.
+- **3 · Run:** in the assessment phase one button does it all, offline. In the migration phase tick the steps
+  (analyze, convert, create the tables and code in the test schema, report) and press *Start*. Each step shows its
+  result; a failed step stops the run and says why. No data is copied here.
+- **4 · Report:** right after the run, so the overview is there at once. *At a glance* says what the code is
+  (files, lines, tables, procedures, views, functions), whether it is a data warehouse, how the conversion went,
+  the manual effort WishBridge saves and, in the migration phase, what was deployed and whether the copied data
+  matches. Below: the code overview and the report to download, the fit check with every object's
+  recommendation, file statuses, open items, deployment errors, reconciliation and the full report on the page.
+  *Next* goes on to *Share the zip* (assessment) or *Map the data* (migration).
+  **Dummy data:** every run (and every table list read from the database) also makes **5 made-up rows per
+  table** - never client data. The values come from the column definitions only: they fit each type, length,
+  precision and NULL rule, look realistic where the column name says what it holds (email, name, phone, city,
+  date, amount, status...), keep end dates after start dates, use 1..5 in key columns so related tables join, and
+  leave the last row NULL wherever NULL is allowed. Tables come from the database's table list, or from the
+  CREATE TABLE statements in the code. The Report shows them per table; the zip has `dummy_data/` (one CSV per
+  table) and `dummy_data.sql` to load them into the Databricks tables and try the converted code.
+- **5 · Map the data (migration):** *Propose the mapping* lists the source tables (from the database tables read in
+  Code, or through the connection) and the Databricks tables, and pairs them by name; tables that do not exist in
+  Databricks yet are flagged. Untick what should not be copied, change a target if needed, then *Save and check
+  the columns*: WishBridge reads the columns on both sides. Columns with different names can be paired by hand
+  (*Map the columns*; an empty source keeps the column NULL). *Copy the data* is locked while a table is missing on
+  either side; it copies in the background (append or overwrite, from Settings), compares source and target, and
+  rebuilds the report (*Next: see the updated report*).
+- **6 · Fix code (later):** pick a file, see its open items and the original next to the Databricks version, edit it
+  and press *Save as manual fix*. Then run Convert again.
+- **Step 0 · System check (sidebar):** press **Check this computer**. If something is missing, press **Install missing**:
+  it installs in the background (winget on Windows, Homebrew on macOS, the migration toolkit and the converters
+  through the Databricks CLI) and checks again when done. Opening a project unlocks once the computer is ready. If
+  an install cannot succeed here (e.g. an office network blocks downloads), tick **Continue anyway**: steps that need
+  the missing tool are skipped with a note. Every check and install is saved to `~/.wishbridge/system_check.json`.
+  Same from the command line: `wishbridge setup` (`-c project.yml` for a project).
+- **Steps:** a project is worked through in order, and a step opens only when the one before it is complete.
+  - *Assessment* (at the client): **1 Settings → 2 Code → 3 Run → 4 Report → 5 Share the zip**. Settings need only the source
+    system. Run makes the zip. **Share the zip** does not send anything: it shows where the zip is, its size and
+    what is inside, who to send it to (Wishtree, optional CC) and a ready-made message the client's team can copy
+    when they share the file (e-mail, OneDrive, SharePoint...). At the bottom, **Send mail with the zip attached**
+    opens a new e-mail (Outlook) with To, CC, subject, message and the zip attached - nothing is sent until someone
+    checks it and presses Send; without Outlook the default mail program opens with the text and the zip's folder
+    opens to drag the file in. **Zips over 20 MB** (the usual mail limit) go through **OneDrive** instead: *Put the
+    zip in OneDrive* copies it to a WishBridge folder there (or *Open OneDrive* to upload it when OneDrive is not set
+    up), you share it and paste the link, and *Send mail with the OneDrive link* opens the e-mail with the link in
+    the text. Projects opened from a package also get **Fix code**.
+  - *Code migration* from an assessment (the zip): **1 Fix code → 2 Settings → 3 Deploy → 4 Deployment report**.
+    The code was analyzed and converted in the assessment, so there is no Code tab and *Deploy* only creates the
+    tables and code in Databricks - with every hand fix from Fix code (they are deployed directly; *Analyze and
+    convert again first* is there for when the client's code changed). A new project without an assessment:
+    **1 Settings → 2 Code → 3 Run → 4 Deployment report → 5 Fix code**. *Next* on Settings stays locked until the
+    workspace login (signed in), catalog and test schema are filled in; no source data is needed.
+  - *Data migration* (on the same project, once its code migration is done): **1 Settings → 2 Map the data →
+    3 Data report**.
+    - *Settings* show the workspace and target from the code migration as one ticked line (*Change the workspace or
+      target* to edit) and the project settings folded away; only the **source data** is new: the database
+      connection, or the files folder.
+    - *Map the data*: pair the tables, check the columns, and per table **Copy now** (untick what waits) and **Only
+      rows where** (e.g. `ModifiedDate >= '2026-10-01'` - a table with a condition is added to, never emptied).
+      **When copying**: add to, or replace, what is in Databricks. **Check before copying** confirms the source is
+      reachable and every Databricks table exists, and shows rows, sizes and a rough copy time. While copying, the
+      progress shows per table. **Copy again: only the failed or different tables** repeats just those.
+    - *Data report*: tables and rows copied, failures, tables matching the source; **Make the sign-off file for the
+      client** - one zip with the report, every table's result, the comparison, the mapping and the copy
+      statements (no data in it).
+  - Projects saved as `phase: migration` (before the split) open as a code migration.
+  - **Run** and **Copy the data** work in the background: you can wait on the step and watch each step's progress;
+    the other steps stay locked until it has finished, so nothing is interrupted.
+- **Good fit**: a data warehouse / ETL code base. Migrate it all.
+- **Application database**: not a warehouse. Do not migrate it; if the warehouse needs its data, add it as a
+  new source (Lakehouse Federation, Lakeflow Connect or CDC).
+- **Mixed**: migrate the warehouse part (`scope: recommended`), leave the application part.
+
+To deploy only what belongs on Databricks, set `scope: recommended` in `project.yml` (or **What to deploy**
+in the app's Settings). The fit check uses names and code patterns, so read the reasons before you rely on it.
+
+### C5. Fix what WishBridge could not
+
+1. Copy the file from `output\final\` into a new folder `acme-dw\overrides\` (same file name).
+2. Fix it there, using the open items as a checklist.
+3. Run `wishbridge convert` again. Your fixed file now replaces the converted one on every run, is still
+   checked, and shows as **manual fix** in the report.
+
+Never edit files in `output\` – that folder is rebuilt on every run.
+
+*Optional – AI suggestions:* with a Claude API key, Claude proposes a fix for each file with open items:
+
+```powershell
+$env:ANTHROPIC_API_KEY = "<your key>"
+wishbridge convert --ai
+```
+
+Suggestions appear in `output\ai_suggestions\`. Review them, then copy what you accept into `overrides\`.
+This sends the code to the Claude API – only use it where the client allows that.
+
+### C6. Deploy to the test schema
+
+```powershell
+wishbridge deploy
+```
+
+Tables, views and procedures are created in your test schema. Queries and updates are only *checked*
+(EXPLAIN), not run, so no data changes. Any statement that fails is listed – fix it in `overrides\` and
+deploy again. Re-running is safe; add `--recreate` to rebuild objects that already exist.
+
+### C7. Copy the data
+
+Code alone can't copy data: WishBridge needs to know **where the old database is and how to log in**.
+Copying data is optional — skip this step and WishBridge still converts and deploys the code.
+
+**Connect the source database (recommended).** In the app (migration phase): *Settings → Source database*. Choose the database
+type, enter the server, port, database (or Oracle service name) and a read-only user and password, then press
+**Create connection**. WishBridge stores the password in Databricks secrets (never in `project.yml` or on your
+computer), creates a Lakehouse Federation connection and a catalog `wb_<project>_source` that shows the old
+database inside Databricks, and fills in the data-copy settings. Press **Test connection** — Databricks reads the
+list of schemas — then pick a schema, **List tables**, tick the tables and **Add** them to the copy list.
+
+From the command line, put the details in `project.yml` and run `wishbridge connect` (it asks for the password,
+or reads `WISHBRIDGE_SOURCE_PASSWORD`):
+
+```yaml
+source_db: {type: sqlserver, host: sqlprod01.client.com, port: 1433, database: SalesDB, user: migration_reader}
+```
+
+Types: `sqlserver`, `sqldw` (Synapse), `oracle` (`database` = service name), `snowflake` (also
+`options: {sfWarehouse: ETL_WH}`), `teradata`, `redshift`, `postgresql`, `mysql`.
+`wishbridge connect --test` re-tests, `--remove` deletes the connection, catalog and stored password.
+
+Creating a connection needs the Databricks *CREATE CONNECTION* privilege. **Databricks must be able to reach the
+database over the network**: a cloud database usually needs an allow-list entry, an on-premises one a VPN or
+private link — ask IT early. *Test connection* tells you within 3 minutes if it can't.
+
+**No network route? Use files.** Export each table to Parquet/CSV, upload into a Unity Catalog volume with one
+folder per table, and set *Method* to `files` and *Files root* to `/Volumes/<catalog>/<schema>/<volume>`. This is
+also the route for BigQuery and Netezza, which Lakehouse Federation can't reach with a user and password.
+
+Then list the tables (or pick them in the app as above):
+
+```yaml
+data:
+  method: federation
+  source_catalog: sqlserver_fed
+  mode: overwrite            # or append
+  tables:
+    - dbo.Customers
+    - dbo.Orders
+```
+
+Preview, then run:
+
+```powershell
+wishbridge load               # writes the plan to output\data\load_plan.sql - read it
+wishbridge load --execute     # copies the data
+```
+
+**ETL tools (Informatica, DataStage, SSIS).** These convert to Databricks notebooks (PySpark) instead of SQL.
+`wishbridge deploy` uploads them to your workspace folder (`/Workspace/Users/<you>/wishbridge/<project>`), and
+
+```powershell
+wishbridge execute            # runs the converted notebooks as one Databricks job
+```
+
+**SSIS master packages.** LakeBridge drops Execute Package tasks, so a master package converts to an empty
+notebook. WishBridge reads the order from the packages (Execute Package tasks and precedence constraints) and
+runs the notebooks as **one Databricks job whose tasks depend on each other**, e.g. `LoadDimCustomer -> LoadFactSales`.
+If a task fails, the tasks after it are skipped, as in SSIS. The job definition is written to
+`output\jobs\<project>.json`; create the scheduled job from it with `databricks jobs create --json @output\jobs\<project>.json`.
+
+WishBridge also checks the Spark SQL inside the notebooks. It fixes SSIS expression leftovers (`+` between
+strings, `"x"` literals that became backtick identifiers, `FINDSTRING`, `LEN`, `REPLACENULL`), applies `schema_map`,
+and flags what needs a person: empty column lists (often an Aggregate), `(DT_...)` casts, SSIS functions, and BIT
+flags compared with 1/0 (BIT arrives in Databricks as BOOLEAN). See `examples\ssis-demo`.
+
+runs them after the input tables are loaded. To prove the migrated job produces the same result as the old one,
+list the job's output table with `load: false` and its legacy output as the source:
+
+```yaml
+  tables:
+    - dbo.Orders                                                          # input: copied
+    - {source: legacy_out.ORDERS_CLEAN, target: main.sales.ORDERS_CLEAN, load: false}   # output: compared only
+```
+
+`load` never copies a `load: false` table (in `overwrite` mode it empties it so a re-run starts clean), and
+`reconcile` compares it with the legacy output. ETL exports contain no table definitions, so put the
+`CREATE TABLE` statements for the job's tables in `overrides\` as an extra file (e.g. `00_tables.sql`).
+
+### C8. Check the data matches
+
+```powershell
+wishbridge reconcile
+```
+
+For each table WishBridge compares the old and new copy: row count, totals of number columns, and a
+checksum of every row. `match` means they are the same; `mismatch` shows which check differed.
+
+### C9. Share the report
+
+```powershell
+wishbridge report
+start output\report.html
+```
+
+`output\report.html` is a single file – email it or attach it to the project documentation.
+It contains the assessment, conversion results, open items, deployment results, data load and
+reconciliation.
+
+---
+
+## Part D – Command cheat sheet
+
+| Command | What it does |
+|---|---|
+| `wishbridge init NAME --source X` | Create a project |
+| `wishbridge assess` | Offline first visit: analyze + convert + report |
+| `wishbridge inventory [--import FILE]` | Read-only inventory query for the DBA / import their CSV |
+| `wishbridge package` | Review package zip (report, open items, converted + original code) |
+| `wishbridge snapshot` | Copy the client's code into the project (for projects that read it in place) |
+| `wishbridge run` | Assess + convert + report |
+| `wishbridge run --deploy --load` | The whole pipeline |
+| `wishbridge analyze` | Assess the legacy code (includes the fit check) |
+| `wishbridge fit [--details]` | What belongs on Databricks vs stays with the application |
+| `wishbridge convert [--ai]` | Convert and check |
+| `wishbridge deploy [--recreate]` | Create objects in the test schema |
+| `wishbridge load [--execute]` | Plan / copy the data |
+| `wishbridge execute` | Run converted ETL notebooks as a Databricks job |
+| `wishbridge reconcile` | Compare old vs new data |
+| `wishbridge report` | Rebuild the HTML report |
+| `wishbridge sql FILE` | Run a SQL file on the warehouse |
+| `wishbridge sources` | List supported source systems |
+
+Run commands from the project folder, or add `-c path\to\project.yml`.
+
+---
+
+## Part E – Troubleshooting
+
+| Message | Fix |
+|---|---|
+| `certificate signed by unknown authority` / `SSL` | Company firewall – see the note in A1 |
+| `DEFAULT and <name> match ... Use --profile` | Two CLI logins for the same workspace: delete the extra section from `C:\Users\<you>\.databrickscfg` |
+| `cannot get access token` / `Valid: NO` | Log in again: `databricks auth login --profile DEFAULT` |
+| `Transpiler 'morph' is not installed` | `databricks labs lakebridge install-transpile --interactive false` |
+| `No SQL warehouses in this workspace` | Create a SQL warehouse, or set `databricks.warehouse_id` |
+| `Catalog 'main' was not found` | Set `databricks.catalog` (and `schema_map`) to a catalog that exists, e.g. `workspace` |
+| `looks like production` | WishBridge refuses `prod` schemas on purpose. Use a test schema |
+| `already existed - kept` | Normal on re-runs. Use `wishbridge deploy --recreate` to rebuild |
+| `AI fixes need Claude credentials` | Set `ANTHROPIC_API_KEY`, or run without `--ai` |
+| `Project file not found` | Run the command inside the project folder, or pass `-c path\to\project.yml` |
+
+---
+
+## Good practice
+
+- Always deploy to a **test** schema first; promote to production through your normal release process.
+- Keep each project folder (including `overrides\`) in Git – it is the record of every manual fix.
+- Don't commit `output\`; it is rebuilt on every run.
+- Every manual fix you repeat across files is a candidate for a new WishBridge rule – tell the WishBridge team.

@@ -1,0 +1,287 @@
+<?xml version="1.0"?>
+<DTS:Executable xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:refId="Package"
+  DTS:CreationDate="9/14/2025 10:12:41 AM"
+  DTS:CreationName="Microsoft.Package"
+  DTS:CreatorComputerName="WT-ETL-DEV01"
+  DTS:CreatorName="WISHTREE\etl.developer"
+  DTS:Description="Loads active customers from SalesOLTP into dw.DimCustomer (staging + MERGE)."
+  DTS:DTSID="{A5610DA6-5509-5275-BC71-59D62EF4E3A3}"
+  DTS:ExecutableType="Microsoft.Package"
+  DTS:LastModifiedProductVersion="15.0.2000.180"
+  DTS:LocaleID="1033"
+  DTS:ObjectName="LoadDimCustomer"
+  DTS:PackageType="5"
+  DTS:VersionBuild="12"
+  DTS:VersionGUID="{82F19A4C-402F-5696-8AD2-5A6B4ACD92F5}">
+  <DTS:Property DTS:Name="PackageFormatVersion">8</DTS:Property>
+  <DTS:ConnectionManagers>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[SalesOLTP]"
+      DTS:CreationName="OLEDB"
+      DTS:DTSID="{96930F03-9C02-5BDF-B1F8-298163FBF4AE}"
+      DTS:ObjectName="SalesOLTP">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectionString="Data Source=SRC-SQL01;Initial Catalog=SalesOLTP;Provider=SQLNCLI11.1;Integrated Security=SSPI;Auto Translate=False;" />
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+    <DTS:ConnectionManager
+      DTS:refId="Package.ConnectionManagers[SalesDW]"
+      DTS:CreationName="OLEDB"
+      DTS:DTSID="{503F17A1-E2B4-5D91-BEDB-B5052CB8757C}"
+      DTS:ObjectName="SalesDW">
+      <DTS:ObjectData>
+        <DTS:ConnectionManager
+          DTS:ConnectionString="Data Source=DW-SQL01;Initial Catalog=SalesDW;Provider=SQLNCLI11.1;Integrated Security=SSPI;Auto Translate=False;" />
+      </DTS:ObjectData>
+    </DTS:ConnectionManager>
+  </DTS:ConnectionManagers>
+  <DTS:Variables></DTS:Variables>
+  <DTS:Executables>
+    <DTS:Executable
+      DTS:refId="Package\Truncate Staging Customer"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Execute SQL Task"
+      DTS:DTSID="{41075EA7-0862-5D92-861D-19CFFFFEA873}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="Truncate Staging Customer"
+      DTS:TaskContact="Execute SQL Task; Microsoft Corporation; SQL Server 2019; (c) Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1"
+      DTS:ThreadHint="0">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{503F17A1-E2B4-5D91-BEDB-B5052CB8757C}"
+          SQLTask:SqlStatementSource="TRUNCATE TABLE stg.Customer;" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\Stage Customers"
+      DTS:CreationName="Microsoft.Pipeline"
+      DTS:Description="Data Flow Task"
+      DTS:DTSID="{CB81903B-B873-5956-94C3-53E076A9EDA8}"
+      DTS:ExecutableType="Microsoft.Pipeline"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="Stage Customers"
+      DTS:TaskContact="Performs high-performance data extraction, transformation and loading;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <pipeline version="1">
+          <components>
+              <component
+                refId="Package\Stage Customers\Customer Source"
+                componentClassID="Microsoft.OLEDBSource"
+                contactInfo="OLE DB Source;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;7"
+                description="OLE DB Source"
+                name="Customer Source"
+                usesDispositions="true"
+                version="7">
+                <properties>
+                  <property dataType="System.Int32" description="The number of seconds before a command times out." name="CommandTimeout">0</property>
+                  <property dataType="System.String" description="Specifies the name of the database object used to open a rowset." name="OpenRowset"></property>
+                  <property dataType="System.String" description="The SQL command to be executed." name="SqlCommand" UITypeEditor="Microsoft.DataTransformationServices.Controls.ModalMultilineStringEditor">SELECT c.CustomerID, c.FirstName, c.LastName, c.Email, c.City, c.Country, c.ModifiedDate
+FROM Sales.Customer AS c WITH (NOLOCK)
+WHERE c.IsActive = 1</property>
+                  <property dataType="System.Int32" description="Specifies the mode used to access the database." name="AccessMode" typeConverter="AccessMode">2</property>
+                </properties>
+                <connections>
+                  <connection
+                    refId="Package\Stage Customers\Customer Source.Connections[OleDbConnection]"
+                    connectionManagerID="Package.ConnectionManagers[SalesOLTP]"
+                    connectionManagerRefId="Package.ConnectionManagers[SalesOLTP]"
+                    name="OleDbConnection" />
+                </connections>
+                <outputs>
+                  <output
+                    refId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output]"
+                    name="OLE DB Source Output">
+                    <outputColumns>
+                    <outputColumn
+                      refId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[CustomerID]"
+                      dataType="i4"
+                      externalMetadataColumnId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].ExternalColumns[CustomerID]"
+                      lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[CustomerID]"
+                      name="CustomerID" />
+                    <outputColumn
+                      refId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[FirstName]"
+                      dataType="wstr" length="50"
+                      externalMetadataColumnId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].ExternalColumns[FirstName]"
+                      lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[FirstName]"
+                      name="FirstName" />
+                    <outputColumn
+                      refId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[LastName]"
+                      dataType="wstr" length="50"
+                      externalMetadataColumnId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].ExternalColumns[LastName]"
+                      lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[LastName]"
+                      name="LastName" />
+                    <outputColumn
+                      refId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[Email]"
+                      dataType="wstr" length="200"
+                      externalMetadataColumnId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].ExternalColumns[Email]"
+                      lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[Email]"
+                      name="Email" />
+                    <outputColumn
+                      refId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[City]"
+                      dataType="wstr" length="60"
+                      externalMetadataColumnId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].ExternalColumns[City]"
+                      lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[City]"
+                      name="City" />
+                    <outputColumn
+                      refId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[Country]"
+                      dataType="wstr" length="60"
+                      externalMetadataColumnId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].ExternalColumns[Country]"
+                      lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[Country]"
+                      name="Country" />
+                    <outputColumn
+                      refId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[ModifiedDate]"
+                      dataType="dbTimeStamp"
+                      externalMetadataColumnId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].ExternalColumns[ModifiedDate]"
+                      lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[ModifiedDate]"
+                      name="ModifiedDate" />
+                    </outputColumns>
+                  </output>
+                </outputs>
+              </component>
+              <component
+                refId="Package\Stage Customers\Add Derived Columns"
+                componentClassID="Microsoft.DerivedColumn"
+                contactInfo="Derived Column;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;0"
+                description="Creates new column values by applying expressions to transformation input columns."
+                name="Add Derived Columns"
+                usesDispositions="true">
+                <inputs>
+                  <input refId="Package\Stage Customers\Add Derived Columns.Inputs[Derived Column Input]" description="Input to the Derived Column Transformation" name="Derived Column Input">
+                    <inputColumns>
+                      <inputColumn refId="Package\Stage Customers\Add Derived Columns.Inputs[Derived Column Input].Columns[FirstName]" cachedDataType="wstr" cachedLength="200" cachedName="FirstName" lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[FirstName]" />
+                      <inputColumn refId="Package\Stage Customers\Add Derived Columns.Inputs[Derived Column Input].Columns[LastName]" cachedDataType="wstr" cachedLength="200" cachedName="LastName" lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[LastName]" />
+                      <inputColumn refId="Package\Stage Customers\Add Derived Columns.Inputs[Derived Column Input].Columns[Email]" cachedDataType="wstr" cachedLength="200" cachedName="Email" lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[Email]" />
+                    </inputColumns>
+                    <externalMetadataColumns />
+                  </input>
+                </inputs>
+                <outputs>
+                  <output refId="Package\Stage Customers\Add Derived Columns.Outputs[Derived Column Output]" description="Default Output of the Derived Column Transformation" exclusionGroup="1" name="Derived Column Output" synchronousInputId="Package\Stage Customers\Add Derived Columns.Inputs[Derived Column Input]">
+                    <outputColumns>
+                    <outputColumn
+                      refId="Package\Stage Customers\Add Derived Columns.Outputs[Derived Column Output].Columns[FullName]"
+                      dataType="wstr" length="101"
+                      lineageId="Package\Stage Customers\Add Derived Columns.Outputs[Derived Column Output].Columns[FullName]"
+                      name="FullName">
+                      <properties>
+                        <property containsID="true" dataType="System.String" description="Derived Column Expression" name="Expression">TRIM(FirstName) + " " + TRIM(LastName)</property>
+                        <property dataType="System.String" description="Derived Column Friendly Expression" expressionType="Notify" name="FriendlyExpression">TRIM(FirstName) + " " + TRIM(LastName)</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\Stage Customers\Add Derived Columns.Outputs[Derived Column Output].Columns[EmailDomain]"
+                      dataType="wstr" length="200"
+                      lineageId="Package\Stage Customers\Add Derived Columns.Outputs[Derived Column Output].Columns[EmailDomain]"
+                      name="EmailDomain">
+                      <properties>
+                        <property containsID="true" dataType="System.String" description="Derived Column Expression" name="Expression">LOWER(SUBSTRING(Email, FINDSTRING(Email, "@", 1) + 1, LEN(Email)))</property>
+                        <property dataType="System.String" description="Derived Column Friendly Expression" expressionType="Notify" name="FriendlyExpression">LOWER(SUBSTRING(Email, FINDSTRING(Email, "@", 1) + 1, LEN(Email)))</property>
+                      </properties>
+                    </outputColumn>
+                    <outputColumn
+                      refId="Package\Stage Customers\Add Derived Columns.Outputs[Derived Column Output].Columns[LoadDate]"
+                      dataType="dbTimeStamp"
+                      lineageId="Package\Stage Customers\Add Derived Columns.Outputs[Derived Column Output].Columns[LoadDate]"
+                      name="LoadDate">
+                      <properties>
+                        <property containsID="true" dataType="System.String" description="Derived Column Expression" name="Expression">GETDATE()</property>
+                        <property dataType="System.String" description="Derived Column Friendly Expression" expressionType="Notify" name="FriendlyExpression">GETDATE()</property>
+                      </properties>
+                    </outputColumn>
+                    </outputColumns>
+                  </output>
+                </outputs>
+              </component>
+              <component
+                refId="Package\Stage Customers\Staging Customer"
+                componentClassID="Microsoft.OLEDBDestination"
+                contactInfo="OLE DB Destination;Microsoft Corporation; Microsoft SQL Server; (C) Microsoft Corporation; All Rights Reserved; http://www.microsoft.com/sql/support;4"
+                description="OLE DB Destination"
+                name="Staging Customer"
+                usesDispositions="true"
+                version="4">
+                <properties>
+                  <property dataType="System.Int32" description="The number of seconds before a command times out." name="CommandTimeout">0</property>
+                  <property dataType="System.String" description="Specifies the name of the database object used to open a rowset." name="OpenRowset">[stg].[Customer]</property>
+                  <property dataType="System.Int32" description="Specifies the mode used to access the database." name="AccessMode" typeConverter="AccessMode">3</property>
+                  <property dataType="System.String" description="Specifies options to be used with fast load." name="FastLoadOptions">TABLOCK,CHECK_CONSTRAINTS</property>
+                  <property dataType="System.Int32" description="Specifies when commits are issued during data insertion." name="FastLoadMaxInsertCommitSize">2147483647</property>
+                </properties>
+                <connections>
+                  <connection refId="Package\Stage Customers\Staging Customer.Connections[OleDbConnection]" connectionManagerID="Package.ConnectionManagers[SalesDW]" connectionManagerRefId="Package.ConnectionManagers[SalesDW]" name="OleDbConnection" />
+                </connections>
+                <inputs>
+                  <input refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input]" errorOrTruncationOperation="Insert" errorRowDisposition="FailComponent" hasSideEffects="true" name="OLE DB Destination Input">
+                    <inputColumns>
+                      <inputColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].Columns[CustomerID]" cachedDataType="i4" cachedName="CustomerID" externalMetadataColumnId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]" lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[CustomerID]" />
+                      <inputColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].Columns[FullName]" cachedDataType="wstr" cachedName="FullName" externalMetadataColumnId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[FullName]" lineageId="Package\Stage Customers\Add Derived Columns.Outputs[Derived Column Output].Columns[FullName]" />
+                      <inputColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].Columns[Email]" cachedDataType="wstr" cachedName="Email" externalMetadataColumnId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[Email]" lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[Email]" />
+                      <inputColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].Columns[EmailDomain]" cachedDataType="wstr" cachedName="EmailDomain" externalMetadataColumnId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[EmailDomain]" lineageId="Package\Stage Customers\Add Derived Columns.Outputs[Derived Column Output].Columns[EmailDomain]" />
+                      <inputColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].Columns[City]" cachedDataType="wstr" cachedName="City" externalMetadataColumnId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[City]" lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[City]" />
+                      <inputColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].Columns[Country]" cachedDataType="wstr" cachedName="Country" externalMetadataColumnId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[Country]" lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[Country]" />
+                      <inputColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].Columns[ModifiedDate]" cachedDataType="dbTimeStamp" cachedName="ModifiedDate" externalMetadataColumnId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[SourceModifiedDate]" lineageId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output].Columns[ModifiedDate]" />
+                      <inputColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].Columns[LoadDate]" cachedDataType="dbTimeStamp" cachedName="LoadDate" externalMetadataColumnId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[LoadDate]" lineageId="Package\Stage Customers\Add Derived Columns.Outputs[Derived Column Output].Columns[LoadDate]" />
+                    </inputColumns>
+                    <externalMetadataColumns isUsed="True">
+                      <externalMetadataColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[CustomerID]" dataType="i4" name="CustomerID" />
+                      <externalMetadataColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[FullName]" dataType="wstr" name="FullName" />
+                      <externalMetadataColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[Email]" dataType="wstr" name="Email" />
+                      <externalMetadataColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[EmailDomain]" dataType="wstr" name="EmailDomain" />
+                      <externalMetadataColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[City]" dataType="wstr" name="City" />
+                      <externalMetadataColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[Country]" dataType="wstr" name="Country" />
+                      <externalMetadataColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[SourceModifiedDate]" dataType="dbTimeStamp" name="SourceModifiedDate" />
+                      <externalMetadataColumn refId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input].ExternalColumns[LoadDate]" dataType="dbTimeStamp" name="LoadDate" />
+                    </externalMetadataColumns>
+                  </input>
+                </inputs>
+              </component>
+          </components>
+          <paths>
+              <path refId="Package\Stage Customers.Paths[Customer Source to Add Derived Columns]" endId="Package\Stage Customers\Add Derived Columns.Inputs[Derived Column Input]" name="Customer Source to Add Derived Columns" startId="Package\Stage Customers\Customer Source.Outputs[OLE DB Source Output]" />
+              <path refId="Package\Stage Customers.Paths[to Staging Customer]" endId="Package\Stage Customers\Staging Customer.Inputs[OLE DB Destination Input]" name="to Staging Customer" startId="Package\Stage Customers\Add Derived Columns.Outputs[Derived Column Output]" />
+          </paths>
+        </pipeline>
+      </DTS:ObjectData>
+    </DTS:Executable>
+    <DTS:Executable
+      DTS:refId="Package\Merge DimCustomer"
+      DTS:CreationName="Microsoft.ExecuteSQLTask"
+      DTS:Description="Execute SQL Task"
+      DTS:DTSID="{AD47A58F-950F-52A4-A3B3-77F6B89EC8D1}"
+      DTS:ExecutableType="Microsoft.ExecuteSQLTask"
+      DTS:LocaleID="-1"
+      DTS:ObjectName="Merge DimCustomer"
+      DTS:TaskContact="Execute SQL Task; Microsoft Corporation; SQL Server 2019; (c) Microsoft Corporation; All Rights Reserved;http://www.microsoft.com/sql/support/default.asp;1"
+      DTS:ThreadHint="0">
+      <DTS:Variables />
+      <DTS:ObjectData>
+        <SQLTask:SqlTaskData
+          SQLTask:Connection="{503F17A1-E2B4-5D91-BEDB-B5052CB8757C}"
+          SQLTask:SqlStatementSource="MERGE dw.DimCustomer AS tgt&#10;USING stg.Customer AS src&#10;    ON tgt.CustomerID = src.CustomerID&#10;WHEN MATCHED AND (tgt.FullName &lt;&gt; src.FullName OR tgt.Email &lt;&gt; src.Email OR tgt.City &lt;&gt; src.City OR tgt.Country &lt;&gt; src.Country) THEN&#10;    UPDATE SET tgt.FullName = src.FullName, tgt.Email = src.Email, tgt.EmailDomain = src.EmailDomain,&#10;               tgt.City = src.City, tgt.Country = src.Country, tgt.UpdatedDate = GETDATE()&#10;WHEN NOT MATCHED BY TARGET THEN&#10;    INSERT (CustomerID, FullName, Email, EmailDomain, City, Country, CreatedDate, UpdatedDate)&#10;    VALUES (src.CustomerID, src.FullName, src.Email, src.EmailDomain, src.City, src.Country, GETDATE(), GETDATE());" xmlns:SQLTask="www.microsoft.com/sqlserver/dts/tasks/sqltask" />
+      </DTS:ObjectData>
+    </DTS:Executable>
+  </DTS:Executables>
+  <DTS:PrecedenceConstraints>
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[Constraint 1]"
+      DTS:CreationName=""
+      DTS:DTSID="{DF576838-D767-5B35-A46E-8550F905DB7E}"
+      DTS:From="Package\Truncate Staging Customer"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="Constraint 1"
+      DTS:To="Package\Stage Customers" />
+    <DTS:PrecedenceConstraint
+      DTS:refId="Package.PrecedenceConstraints[Constraint 2]"
+      DTS:CreationName=""
+      DTS:DTSID="{486B0361-4050-5248-BBD7-6FC9A83CA485}"
+      DTS:From="Package\Stage Customers"
+      DTS:LogicalAnd="True"
+      DTS:ObjectName="Constraint 2"
+      DTS:To="Package\Merge DimCustomer" />
+  </DTS:PrecedenceConstraints>
+</DTS:Executable>

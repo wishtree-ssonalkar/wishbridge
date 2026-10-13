@@ -1,5 +1,9 @@
 # Path to a Databricks Brickbuilder Solution: Wishtree WishBridge
 
+**Positioning:** WishBridge is a *data warehouse migration* solution: SQL Server, Oracle, Teradata, Snowflake,
+Synapse, Redshift, BigQuery and Netezza warehouses, and the SSIS, Informatica and DataStage jobs that load them,
+moved to Databricks with the data reconciled. Application databases are out of scope (the fit check flags them).
+
 Brickbuilder Solutions are partner-built migration and industry solutions that Databricks reviews and
 features on databricks.com. **They are granted to a Databricks consulting partner, not to a piece of
 software.** The tool is one part of the submission; your company's partner status and customer track record
@@ -13,17 +17,19 @@ the Databricks Partner Portal before you plan dates.
 | Partner status | Registered Databricks Consulting & SI partner, at a tier that allows Brickbuilder submissions | ☐ Confirm with Partner Manager |
 | Certified people | Databricks-certified engineers/architects on the team delivering the solution | ☐ Check counts in Partner Portal |
 | Customer proof | Real customer implementations of the solution, with referenceable outcomes (time saved, objects migrated) | ☐ None yet. **This is the main gap** |
-| Repeatable solution | Documented method + accelerators that make the delivery faster and lower-risk | ☑ WishBridge v0.1 (this repo) |
-| Technical validation | Databricks reviews architecture and a working demo on Databricks | ◐ Local pipeline works; deploy/load/reconcile need a run on a real workspace |
+| Repeatable solution | Documented method + accelerators that make the delivery faster and lower-risk | ☑ WishBridge v1.0 (this repo) |
+| Technical validation | Databricks reviews architecture and a working demo on Databricks | ☑ Full pipeline demonstrated on a Databricks workspace (deploy, CALL of migrated procedures, load, reconcile); ◐ not yet against a live SQL Server through Lakehouse Federation |
 | Go-to-market assets | Solution brief, architecture diagram, demo video, pricing/packaging of the offer | ☐ To create |
 
 ## Gap plan
 
 ### 0–30 days: make the product solid
-- [ ] Run `wishbridge deploy`, `load --execute` and `reconcile` end-to-end on a dev workspace with a real SQL Server
-      source over Lakehouse Federation; fix what breaks.
+- [x] Run `wishbridge deploy`, `load --execute` and `reconcile` end-to-end on a dev workspace (done with a
+      stand-in source schema; see the README "Tested end to end").
+- [ ] Repeat with a real SQL Server source over Lakehouse Federation.
 - [ ] Grow the rule set from real customer code (every manual fix you make → a rule + a test).
-- [ ] Add rules for the next priority source (Snowflake or Oracle).
+- [x] Add rules for Snowflake, Oracle and Teradata.
+- [ ] Try `wishbridge convert --ai` with a Claude API key on real code and review the suggestions.
 - [ ] Do a trademark search on the name "WishBridge" before using it publicly; rename if it conflicts.
 - [ ] Decide the licence for WishBridge itself (internal-only, or source-available to customers).
 
@@ -50,4 +56,7 @@ the Databricks Partner Portal before you plan dates.
   it auto-fixes mechanical leftovers, catches mis-conversions the transpiler doesn't flag (for example an
   `UPDATE … FROM … JOIN` turned into a `MERGE INTO <alias>`), validates every statement on a SQL warehouse,
   moves the data and proves it matches.
+- WishBridge tells the client **what should move**: its fit check separates reporting / ETL logic (move to
+  Databricks) from application logic (keep with the app, feed the data via Lakehouse Federation, Lakeflow Connect or CDC).
+  LakeBridge converts whatever it is given; this advice avoids migrating a live application's database by mistake.
 - Every run produces a client-ready report with the numbers above. Those same numbers become your case-study metrics.

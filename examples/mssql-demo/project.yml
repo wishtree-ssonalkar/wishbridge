@@ -7,23 +7,27 @@ output: output
 databricks:
   profile: DEFAULT
   warehouse_id: ""          # blank = first running SQL warehouse
-  catalog: main
-  schema: wishbridge_demo    # dev schema - converted objects are created here
+  catalog: workspace        # default catalog on newer workspaces (older ones use `main`)
+  schema: wishbridge_demo   # dev schema - converted objects are created here
 
 schema_map:
-  dbo: main.wishbridge_demo
+  dbo: workspace.wishbridge_demo
 
 autofix:
   ai: false                 # `wishbridge convert --ai` to get Claude suggestions
   model: claude-opus-5-5
 
+# For the demo the "source" is workspace.wishbridge_demo_src, created by
+#   wishbridge sql setup_demo_source.sql
+# In a real project source_catalog is a Lakehouse Federation catalog (e.g. sqlserver_fed)
+# and tables are listed by their source names, e.g. `- dbo.Customers`.
 data:
   method: federation
-  source_catalog: sqlserver_fed   # Lakehouse Federation catalog pointing at the SQL Server database
+  source_catalog: workspace
   mode: overwrite
   tables:
-    - dbo.Customers
-    - dbo.Orders
+    - {source: wishbridge_demo_src.Customers, target: workspace.wishbridge_demo.Customers}
+    - {source: wishbridge_demo_src.Orders, target: workspace.wishbridge_demo.Orders}
 
 estimate:
   hours_per_file: {LOW: 0.5, MEDIUM: 2, HIGH: 6, VERY HIGH: 12}

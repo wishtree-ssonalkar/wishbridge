@@ -1,0 +1,12 @@
+-- First ten customers with a cohort label
+SELECT CUSTOMER_ID, FULL_NAME, NVL(EMAIL, 'n/a') AS EMAIL,
+       DECODE(SIGN(CUSTOMER_ID - 3), 1, 'NEW', 'EARLY') AS COHORT,
+       TO_CHAR(CREATED_AT, 'YYYY-MM-DD') AS CREATED
+FROM SALES.CUSTOMERS
+WHERE ROWNUM <= 10;
+
+-- Every customer with their orders (old-style outer join)
+SELECT c.FULL_NAME, o.ORDER_ID, o.AMOUNT
+FROM SALES.CUSTOMERS c, SALES.ORDERS o
+WHERE c.CUSTOMER_ID = o.CUSTOMER_ID(+)
+ORDER BY c.FULL_NAME;

@@ -1,0 +1,119 @@
+"""Give LakeBridge a clean copy of just the source code.
+
+Client folders carry build output (bin/, obj/ with Model.xml and copies of the scripts), tool folders
+(.git, .vs) and project files (publish.xml, .dacpac). LakeBridge reads everything in the folder it is
+given, which inflates the assessment and wastes conversion time, so WishBridge copies only the code
+files - with their relative paths - into output/staged_input and points LakeBridge there. The
+client's folder is never modified.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+from dataclasses import replace
+from pathlib import Path
+
+from . import sources as _sources
+from .config import ETL_SOURCES, ConfigError, ProjectConfig
+
+TSQL_SOURCES = frozenset({"mssql", "synapse"})
+
+SQL_SUFFIXES = {".sql", ".ddl", ".prc", ".pls", ".pks", ".pkb", ".bteq", ".btq"}
+ETL_SUFFIXES = SQL_SUFFIXES | {".xml", ".dsx", ".isx", ".dtsx"}
+# Informatica Cloud is exported as .zip packages (LakeBridge's analyzer reads only those).
+EXTRA_SUFFIXES = {"informatica-cloud": {".zip"}}
+
+
+def read_source(path: Path) -> str:
+    """Read a client code file whatever its encoding: UTF-8 (with or without BOM), UTF-16 (SSMS / Redgate
+    'Unicode' scripts) or Windows-1252."""
+    data = path.read_bytes()
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return data.decode("utf-16", errors="replace")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
+
+
+def source_files(cfg: ProjectConfig) -> list[Path]:
+    """Relative paths of the code files LakeBridge should see (build and tool folders excluded)."""
+    from .discover import _walk
+
+    allowed = (ETL_SUFFIXES if cfg.source.key in ETL_SOURCES else SQL_SUFFIXES) | EXTRA_SUFFIXES.get(cfg.source.key, set())
+    if not cfg.input_dir.exists():
+        return []
+    return sorted(p.relative_to(cfg.input_dir) for p in _walk(cfg.input_dir) if p.suffix.lower() in allowed)
+
+
+# --- Safe tidy-ups of SQL Server source before conversion (only in the staged copy) ------------------------
+# Generated (SSDT / SSMS) scripts use patterns the converter fails on; the rewrites are in sources/sqlserver.py.
+_TSQL_PREP = _sources.sqlserver.PREP
+
+
+def prepare_tsql(text: str) -> tuple[str, list[dict[str, str]]]:
+    """Apply the T-SQL tidy-ups; returns the new text and one note per kind of change made."""
+    notes: dict[str, dict[str, str]] = {}
+    for key, severity, pattern, repl, message in _TSQL_PREP:
+        text, n = pattern.subn(repl, text)
+        if n:
+            group = "temporal" if key.startswith("temporal") else key
+            if group not in notes:
+                notes[group] = {"rule": f"prep-{group}", "severity": severity,
+                                "message": message or _TSQL_PREP[2][4]}
+    return text, list(notes.values())
+
+
+def check_export_format(cfg: ProjectConfig, files: list[Path]) -> None:
+    """LakeBridge reads only some export formats; say which one to produce instead of failing later."""
+    suffixes = {f.suffix.lower() for f in files}
+    if cfg.source.key == "datastage" and ".xml" not in suffixes and suffixes & {".dsx", ".isx"}:
+        raise ConfigError(
+            "DataStage jobs are read as XML exports, and this folder has only .dsx/.isx exports. "
+            "In DataStage Designer select the jobs, choose Export > DataStage Components, tick "
+            "'Export job designs' and set the file type to XML (.xml), then put the .xml files here.")
+    if cfg.source.key == "informatica-cloud" and ".zip" not in suffixes:
+        raise ConfigError(
+            "Informatica Cloud (IICS) assets are read as export packages (.zip). In Informatica Cloud "
+            "Data Integration select the mappings / taskflows, choose Export, download the .zip and put it here "
+            "(do not unzip it). PowerCenter XML exports belong to the source 'informatica'.")
+
+
+def prep_manifest(cfg: ProjectConfig) -> Path:
+    return cfg.output_dir / "logs" / "prepared.json"
+
+
+def staged(cfg: ProjectConfig) -> ProjectConfig:
+    """Copy the code files to output/staged_input (tidying SQL Server source) and return a config reading from there."""
+    files = source_files(cfg)
+    if not files:
+        raise FileNotFoundError(f"No source code files in {cfg.input_dir}")
+    check_export_format(cfg, files)
+    dest = cfg.output_dir / "staged_input"
+    if dest.exists():
+        shutil.rmtree(dest)
+    manifest: dict[str, list[dict[str, str]]] = {}
+    for rel in files:
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if rel.suffix.lower() in SQL_SUFFIXES:
+            # Always hand LakeBridge UTF-8: it cannot read UTF-16 scripts.
+            text = read_source(cfg.input_dir / rel)
+            if cfg.source.key in TSQL_SOURCES and rel.suffix.lower() == ".sql":
+                text, notes = prepare_tsql(text)
+                if notes:
+                    manifest[rel.as_posix()] = notes
+            target.write_text(text, encoding="utf-8", newline="")  # keep the original line endings
+        else:
+            shutil.copy2(cfg.input_dir / rel, target)
+    m = prep_manifest(cfg)
+    m.parent.mkdir(parents=True, exist_ok=True)
+    m.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return replace(cfg, input_dir=dest)
+
+
+def prepared_notes(cfg: ProjectConfig) -> dict[str, list[dict[str, str]]]:
+    m = prep_manifest(cfg)
+    return json.loads(m.read_text(encoding="utf-8")) if m.exists() else {}
