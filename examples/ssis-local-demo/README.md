@@ -9,6 +9,50 @@ DemoSalesOLTP (source system)  --SSIS packages-->  DemoSalesDW (warehouse: table
    Orders / OrderLines                                FactDailySales (+ _Archive), SalesSummary, LoadLog
 ```
 
+## Demo storyline (about 20 minutes)
+
+| # | Show | Say |
+|---|---|---|
+| 1 | SSMS: `DemoSalesOLTP` | "The client's order system: 500 customers, 20,000 orders, ~50,000 order lines." |
+| 2 | SSMS: `DemoSalesDW` + Visual Studio / the `.dtsx` files | "Every night SSIS loads it into the warehouse: customers merged into a dimension, sales summed per day per customer, old days archived, a monthly summary refreshed. The business rules live in the packages **and** in stored procedures." |
+| 3 | Run `03_verify_sqlserver.sql` | "These are the numbers today. They must be identical after the move." Keep this output on screen. |
+| 4 | WishBridge: **Assessment** | Open the SSIS folder, read the warehouse database, Run. |
+| 5 | WishBridge: **Report** | Effort estimate, ready/review/fix files, and **what the packages use**: found vs missing (`usp_SendLoadReport`). |
+| 6 | WishBridge: **Code migration** | Fix code → Settings → Deploy → deployment report. Show the tables and code in Databricks. |
+| 7 | WishBridge: **Data migration** | Map the data → Check → Copy → data report with rows per table. |
+| 8 | Databricks: run `04_verify_databricks.sql` | Put it next to step 3: **every number matches**. Then download the sign-off package. |
+
+### What the client's system does (step 1-2)
+
+- **`Master.dtsx`** runs the nightly load: first `LoadDimCustomer`, then `LoadFactSales`.
+- **`LoadDimCustomer.dtsx`** empties `stg.Customer`, copies **active** customers from the order system into it
+  (full name, e-mail domain), then `MERGE`s them into `dw.DimCustomer` (new customers added, changed ones updated).
+- **`LoadFactSales.dtsx`**
+  1. `usp_ArchiveOldSales` moves days older than 2 years to `FactDailySales_Archive`;
+  2. deletes the last 7 days and reloads them from the orders: per day and customer, order count, quantity and
+     amount (`qty × price × (1 − discount)`), **cancelled orders and inactive customers left out**;
+  3. `usp_RefreshSalesSummary` rebuilds the monthly summary per country;
+  4. calls `usp_SendLoadReport`, which **nobody created**: a finding the assessment must catch.
+- **In the database**: 7 procedures (the same loads, used for the first full load), `fn_FiscalYear`
+  (fiscal year starts in April), and 2 report views (`vCustomerSales`, `vMonthlySales`).
+- **Why the numbers differ from the source**: 500 customers → 480 (20 inactive); 20,000 orders → 18,700
+  (500 cancelled, plus the orders of inactive customers) - the business rules at work.
+
+### The numbers that must match (step 3 and 8)
+
+| Check | Rows | Total 1 | Total 2 |
+|---|---|---|---|
+| DimCustomer: rows, countries, customer IDs | 480 | 5 | 120,000 |
+| DimProduct: rows, categories, list price | 40 | 4 | 16,919.60 |
+| DimDate: rows, years, date keys | 1,462 | 5 | 29,610,626,995 |
+| FactDailySales: rows, orders, amount | 18,478 | 18,700 | 63,499,363.80 |
+| FactDailySales_Archive | 0 | 0 | 0 |
+| SalesSummary: rows, orders, amount | 125 | 18,700 | 63,499,363.80 |
+| LoadLog: rows, rows loaded | 1 | 18,478 | 0 |
+
+(Taken on 14 Oct 2026. Re-running `02_DemoSalesDW.sql` on another day shifts the dates, so always run
+`03_verify_sqlserver.sql` fresh before the demo.)
+
 ## What is in this folder
 
 | Folder | What |
@@ -16,6 +60,8 @@ DemoSalesOLTP (source system)  --SSIS packages-->  DemoSalesDW (warehouse: table
 | `setup\01_DemoSalesOLTP.sql` | Creates the source database: 500 customers, 40 products, 20,000 orders, ~50,000 order lines |
 | `setup\02_DemoSalesDW.sql` | Creates the warehouse: 8 tables, 7 procedures, 2 views, 1 function, and runs the first load |
 | `setup\export_for_databricks.py` | Exports the warehouse tables to Parquet (for the data migration) |
+| `setup\03_verify_sqlserver.sql` | Counts and totals per table in SQL Server (before) |
+| `setup\04_verify_databricks.sql` | The same counts and totals in Databricks (after) |
 | `SSIS\SalesDW_ETL\` | The SSIS project: `Master.dtsx`, `LoadDimCustomer.dtsx`, `LoadFactSales.dtsx` |
 | `export\` | The Parquet export, one folder per table |
 
