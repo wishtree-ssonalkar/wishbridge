@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns:SSIS="www.microsoft.com/SqlServer/SSIS">
+  <DeploymentModel>Project</DeploymentModel>
+  <ProductVersion>15.0.2000.180</ProductVersion>
+  <SchemaVersion>9.0.1.0</SchemaVersion>
+  <State>$base64$PFNTSVM6UHJvamVjdCB4bWxuczpTU0lTPSJ3d3cubWljcm9zb2Z0LmNvbS9TcWxTZXJ2ZXIvU1NJUyIgLz4=</State>
+  <Database>
+    <Name>SalesDW_ETL.database</Name>
+    <FullPath>SalesDW_ETL.database</FullPath>
+  </Database>
+  <DataSources />
+  <DataSourceViews />
+  <DeploymentModelSpecificContent>
+    <Manifest>
+      <SSIS:Project SSIS:ProtectionLevel="DontSaveSensitive" xmlns:SSIS="www.microsoft.com/SqlServer/SSIS">
+        <SSIS:Packages>
+          <SSIS:Package SSIS:Name="Master.dtsx" SSIS:EntryPoint="1" />
+          <SSIS:Package SSIS:Name="LoadDimCustomer.dtsx" SSIS:EntryPoint="0" />
+          <SSIS:Package SSIS:Name="LoadFactSales.dtsx" SSIS:EntryPoint="0" />
+        </SSIS:Packages>
+      </SSIS:Project>
+    </Manifest>
+  </DeploymentModelSpecificContent>
+  <Configurations>
+    <Configuration>
+      <Name>Development</Name>
+      <Options>
+        <OutputPath>bin</OutputPath>
+        <TargetServerVersion>SQLServer2019</TargetServerVersion>
+      </Options>
+    </Configuration>
+  </Configurations>
+</Project>

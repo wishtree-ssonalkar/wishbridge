@@ -74,13 +74,16 @@ def test_offline_steps_never_see_the_real_databricks_login(tmp_path, monkeypatch
 
     monkeypatch.setattr(lakebridge, "_databricks_cli", lambda: "databricks")
     monkeypatch.setattr(lakebridge.subprocess, "run", fake_run)
-    monkeypatch.setattr(lakebridge.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(lakebridge, "_toolkit_home", lambda: tmp_path)
+    for f in ("state/venv/Scripts/python.exe", "state/venv/bin/python", "lib/src/databricks/labs/lakebridge/cli.py"):
+        (tmp_path / f).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f).write_text("")
     monkeypatch.setenv("DATABRICKS_HOST", "https://client.cloud.databricks.com")
     monkeypatch.setenv("DATABRICKS_TOKEN", "secret")
     cfg = project(tmp_path)
     lakebridge.run(cfg, "analyze", "--source-directory", ".")
-    assert "DATABRICKS_HOST" not in seen and "DATABRICKS_TOKEN" not in seen
-    assert Path(seen["DATABRICKS_CONFIG_FILE"]).read_text(encoding="utf-8").count("wishbridge-offline.invalid") == 1
+    assert seen["DATABRICKS_HOST"].startswith("http://127.0.0.1:") and seen["DATABRICKS_TOKEN"] == "offline"
+    assert "DATABRICKS_CONFIG_FILE" not in seen
     lakebridge.run(cfg, "reconcile")
     assert seen["DATABRICKS_HOST"] == "https://client.cloud.databricks.com"  # online steps use the real login
 

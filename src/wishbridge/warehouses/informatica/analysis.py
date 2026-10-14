@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +99,13 @@ def run_analyze(cfg: ProjectConfig) -> dict[str, Any]:
     if not cfg.input_dir.exists() or not any(cfg.input_dir.rglob("*")):
         raise FileNotFoundError(f"No input files in {cfg.input_dir}")
     report = cfg.out("analysis", "analysis.xlsx")
+    # Clear what an earlier, interrupted run left behind (an empty report, .tmp files, the *_TEMP folder): the
+    # analyzer cannot write its working files over them and stops with "Cannot open file ... for writing".
+    for old in report.parent.glob(report.stem + "*"):
+        if old.is_dir():
+            shutil.rmtree(old, ignore_errors=True)
+        else:
+            old.unlink(missing_ok=True)
     lakebridge.analyze(staged(cfg), report)  # code files only: no bin/obj or project files
     if not report.exists():
         # Some analyzer versions drop the extension.

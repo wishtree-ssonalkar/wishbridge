@@ -11,6 +11,19 @@ APP = str(Path(__file__).parents[1] / "src" / "wishbridge" / "ui" / "app.py")
 DEMO = Path(__file__).parents[1] / "examples" / "mssql-demo"
 
 
+@pytest.fixture(autouse=True)
+def _signed_in_login(monkeypatch):
+    """A saved, working Databricks login, whatever is (or isn't) in this computer's ~/.databrickscfg."""
+    import importlib
+
+    from wishbridge.warehouses import WAREHOUSE_OF
+
+    login = [{"name": "DEFAULT", "host": "https://test.cloud.databricks.com", "valid": True}]
+    for w in set(WAREHOUSE_OF.values()):
+        helpers = importlib.import_module(f"wishbridge.warehouses.{w}.ui.helpers")
+        monkeypatch.setattr(helpers, "list_profiles", lambda check_validity=True: login)
+
+
 @pytest.fixture
 def project(tmp_path):
     dest = tmp_path / "mssql-demo"
