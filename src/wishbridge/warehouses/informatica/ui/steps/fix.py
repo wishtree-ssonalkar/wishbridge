@@ -199,26 +199,21 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
         original = (read_source(orig) if orig is not None and orig.is_file()
                     else "(no original file: made from the table definitions read from the database)")
         issues = [f"line {x['line']} [{x['severity']}]: {x['message']}" for x in todo]
-        context = ai.project_context(cfg, original, current)
-        job = {"started": time.time(), "proc": None, "result": None, "done": False}
-
-        def work(job=job):
-            try:
-                job["result"] = ai.ask_claude(cfg.source.label, f["kind"], original, current, issues, details, model,
-                                              chosen, cfg.profile, endpoint, fast=speed == "fast", context=context,
-                                              on_start=lambda p: job.__setitem__("proc", p))
-            except Exception as e:  # noqa: BLE001 - keep the page alive, show what happened
-                job["result"] = ai.Suggestion(None, f"Asking Claude failed: {e}", "failed")
-            job["done"] = True
-
-        _JOBS[job_key] = job
-        threading.Thread(target=work, daemon=True).start()
+        req = {"source": cfg.source.label, "kind": f["kind"], "original": original, "current": current,
+               "issues": issues, "details": details, "model": model, "via": chosen, "profile": cfg.profile,
+               "endpoint": endpoint, "fast": speed == "fast", "context": ai.project_context(cfg, original, current)}
+        ss[f"claude-req:{pick}"] = req  # kept so WishBridge can ask again by itself after repairing the sign-in
+        ss.pop("claude_signin_opened", None)
+        _start_job(job_key, req)
         ss.pop(key, None)
         asked = None
     if job_key in _JOBS:
         _wait_for_claude(job_key, key)
         return
     if not asked:
+        return
+    if asked.status == "signin":
+        _repair_sign_in(job_key, key, pick, model)
         return
     took = f" ({asked.seconds:.0f} s)" if asked.seconds else ""
     if asked.status != "ok":
@@ -304,4 +299,58 @@ def _wait_for_claude(job_key: str, key: str) -> None:
         if proc is not None and proc.poll() is None:
             proc.kill()
         _JOBS.pop(job_key, None)
+        st.rerun()
+
+
+def _start_job(job_key: str, req: dict) -> None:
+    """Ask Claude in a background thread; _wait_for_claude shows the timer and picks up the answer."""
+    job = {"started": time.time(), "proc": None, "result": None, "done": False}
+
+    def work():
+        try:
+            job["result"] = ai.ask_claude(req["source"], req["kind"], req["original"], req["current"], req["issues"],
+                                          req["details"], req["model"], req["via"], req["profile"], req["endpoint"],
+                                          fast=req["fast"], context=req["context"],
+                                          on_start=lambda p: job.__setitem__("proc", p))
+        except Exception as e:  # noqa: BLE001 - keep the page alive, show what happened
+            job["result"] = ai.Suggestion(None, f"Asking Claude failed: {e}", "failed")
+        job["done"] = True
+
+    _JOBS[job_key] = job
+    threading.Thread(target=work, daemon=True).start()
+
+
+@st.fragment(run_every=10)
+def _repair_sign_in(job_key: str, key: str, pick: str, model: str) -> None:
+    """Claude Code's sign-in stopped working: open the sign-in window once, wait for the person to finish it in the
+    browser, test every 10 s, and ask Claude again by itself when it works."""
+    if "claude_signin_opened" not in ss:
+        problem = ai.open_claude_sign_in()
+        ss.claude_signin_opened = time.time()
+        if problem:
+            st.warning(problem)
+    waited = time.time() - ss.claude_signin_opened
+    if waited > 600:
+        st.error("Claude Code is still not signed in after 10 minutes. Click **Open the sign-in window again**, or "
+                 "choose another connection above (Databricks workspace or a Claude API key).")
+    else:
+        st.warning(f"🔑 Claude Code's sign-in on this computer had stopped working, so WishBridge opened a sign-in "
+                   f"window (it signs out, updates Claude Code and opens your browser). **Finish the sign-in in the "
+                   f"browser** - WishBridge checks every 10 s and asks Claude again by itself. ({waited:.0f} s)")
+        if waited > 20:  # give the window time to sign out and update first
+            ok, _ = ai.test_claude_code(model, seconds=30)
+            if ok:
+                req = ss.get(f"claude-req:{pick}")
+                for k in (key, "claude_signin_opened", "claude_code_test", "claude_code_status"):
+                    ss.pop(k, None)
+                if req:
+                    _start_job(job_key, req)
+                st.rerun()
+    c1, c2 = st.columns(2)
+    if c1.button("Open the sign-in window again", key=f"claude-reopen:{pick}"):
+        ss.pop("claude_signin_opened", None)
+        st.rerun()
+    if c2.button("Stop", key=f"claude-stop:{pick}"):
+        for k in (key, "claude_signin_opened"):
+            ss.pop(k, None)
         st.rerun()

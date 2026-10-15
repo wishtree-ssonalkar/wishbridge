@@ -44,6 +44,10 @@ class AssistError(RuntimeError):
     """A message for the person in Fix code: why Claude could not help this time."""
 
 
+class SignInError(AssistError):
+    """Claude Code's sign-in on this computer does not work: Fix code repairs it and asks again."""
+
+
 def _client():
     try:
         import anthropic
@@ -250,7 +254,7 @@ def _ask_claude_code(system: str, user: str, model: str, effort: str = "high", t
     if out.get("is_error"):
         # The real answer wins over `claude auth status`, which can say "signed in" for a sign-in Claude rejects.
         if re.search(r"\b401\b|invalid.{0,20}token|not logged in|/login|authenticat|oauth", result, re.IGNORECASE):
-            raise AssistError("Claude Code's sign-in on this computer does not work (" + result[:160] + "). "
+            raise SignInError("Claude Code's sign-in on this computer does not work (" + result[:160] + "). "
                               "Click **Sign in again** below (it signs out, updates Claude Code and signs in), "
                               "then click Test connection.")
         raise AssistError(f"Claude Code: {result or out.get('terminal_reason') or 'unknown error'}. Click Ask again; "
@@ -294,6 +298,8 @@ def ask_claude(source_name: str, kind: str, original: str, current: str, issues:
         else:
             text = _ask_claude_code(system, user, model, "medium" if fast else "high",
                                     timeout=300 if fast else 600, on_start=on_start)
+    except SignInError as e:
+        return Suggestion(None, str(e), "signin", time.time() - started)
     except AssistError as e:
         return Suggestion(None, str(e), "failed", time.time() - started)
     s = apply_edits(current, text)

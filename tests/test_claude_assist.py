@@ -60,14 +60,14 @@ def test_claude_code_not_signed_in_says_what_to_do(monkeypatch):
     _claude_code(monkeypatch, {"is_error": True, "result": "Failed to authenticate: OAuth session expired"},
                  signed_in=False)
     s = ai.ask_claude("SSIS", "notebook", "", "x = 1", [], "", "claude-opus-5-5")
-    assert s.status == "failed" and "Sign in again" in s.notes
+    assert s.status == "signin" and "Sign in again" in s.notes
 
 
 def test_the_real_answer_wins_over_auth_status(monkeypatch):
     # seen on a real computer: `claude auth status` says signed in, the request says "Not logged in"
     _claude_code(monkeypatch, {"is_error": True, "result": "Not logged in · Please run /login"}, signed_in=True)
     s = ai.ask_claude("SSIS", "notebook", "", "x = 1", [], "", "claude-opus-5-5")
-    assert s.status == "failed" and "Sign in again" in s.notes and "temporary" not in s.notes
+    assert s.status == "signin" and "Sign in again" in s.notes and "temporary" not in s.notes
 
 
 def test_project_background_goes_first(monkeypatch, tmp_path):
@@ -160,7 +160,7 @@ def test_401_means_sign_in_again(monkeypatch):
     _claude_code(monkeypatch, {"is_error": True, "result": "Failed to authenticate. API Error: 401 Invalid access token."},
                  signed_in=True)
     s = ai.ask_claude("SSIS", "notebook", "", "x = 1", [], "", "claude-sonnet-5-5")
-    assert s.status == "failed" and "Sign in again" in s.notes and "401" in s.notes
+    assert s.status == "signin" and "Sign in again" in s.notes and "401" in s.notes
 
 
 def test_connection_test_reports_quickly(monkeypatch):
