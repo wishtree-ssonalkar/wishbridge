@@ -149,12 +149,14 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
             with st.spinner("Checking Claude Code..."):
                 ss.claude_code_status = ai.claude_code_status()
         signed_in, msg = ss.claude_code_status
-        s1, s2 = st.columns([4, 1])
-        (s1.caption if signed_in else s1.warning)(msg)
-        if s2.button("↻ Check again", key="claude-recheck"):
-            ss.pop("claude_code_status", None)
-            st.rerun()
+        if signed_in:
+            st.caption(f"✅ {msg}")
+        else:
+            _setup_steps("claude-code", msg)
     backend, how = ai.assist_backend(chosen, cfg.profile, endpoint)
+    if backend is None and chosen in ("databricks", "api") and not (chosen == "databricks" and cfg.profile
+                                                                   and not endpoint):
+        _setup_steps(chosen, f"Claude is {how}.")
     if not signed_in:
         backend = None
     st.caption(f"Sends this file's original, the Databricks version above (with your unsaved edits) and the open "
@@ -193,3 +195,41 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
     if c2.button("🗑 Discard", key=f"claude-discard:{pick}"):
         ss.pop(key, None)
         st.rerun()
+
+
+def _setup_steps(via: str, why: str) -> None:
+    """One-time setup on this computer, step by step, for the chosen connection."""
+    with st.container(border=True):
+        st.markdown(f"**⚙️ One-time setup on this computer** - {why}")
+        if via == "claude-code":
+            st.markdown(
+                "Claude Code has its own sign-in, separate from the Claude desktop app. Do this once per computer:\n"
+                "1. Click **Sign in to Claude Code** below (or run the command in a terminal). A window opens and "
+                "then your browser.\n"
+                "2. Sign in with your Claude account (Wishtree's Claude plan) and allow access.\n"
+                "3. When the window says you are signed in, close it and click **↻ Check again**.")
+            st.code("claude auth login", language="bash")
+            c1, c2 = st.columns(2)
+            if c1.button("🔑 Sign in to Claude Code", key="claude-sign-in"):
+                problem = ai.open_claude_sign_in()
+                (st.warning if problem else st.info)(problem or "A sign-in window has opened. Finish the sign-in in "
+                                                                "the browser, then click Check again.")
+            if c2.button("↻ Check again", key="claude-recheck"):
+                ss.pop("claude_code_status", None)
+                st.rerun()
+            st.caption("Not installed? Install Claude Code from claude.com/claude-code, then restart WishBridge.")
+        elif via == "databricks":
+            st.markdown(
+                "Uses the Databricks login this project deploys with. Do this once per computer:\n"
+                "1. Sign in to the workspace: **Settings > Databricks workspace > Sign in**, or run the command below.\n"
+                "2. Click **🔎 Find Claude models** and pick one (e.g. databricks-claude-sonnet-4).\n"
+                "3. None found? The workspace serves no Claude model: ask its admin to enable the Claude foundation "
+                "models (Databricks > Serving), or choose another connection.")
+            st.code("databricks auth login --profile DEFAULT", language="bash")
+        else:
+            st.markdown(
+                "Uses a Claude API key from the Claude Console. Do this once per computer:\n"
+                "1. Get a key at console.anthropic.com > API keys (or from your Wishtree admin).\n"
+                "2. Save it for your Windows user with the command below (put your key in place of the dots).\n"
+                "3. Close and restart WishBridge so it sees the key.")
+            st.code("setx ANTHROPIC_API_KEY \"sk-ant-...\"", language="bash")

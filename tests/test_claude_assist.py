@@ -103,6 +103,6 @@ def test_claude_code_status_reads_auth_status(monkeypatch):
     monkeypatch.setattr(ai.subprocess, "run",
                         lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, out["stdout"], ""))
     ok, msg = ai.claude_code_status()
-    assert not ok and "claude auth login" in msg
+    assert not ok and "not signed in" in msg
     out["stdout"] = '{"loggedIn": true, "email": "dev@example.com"}'
     assert ai.claude_code_status() == (True, "Claude Code is signed in (dev@example.com).")

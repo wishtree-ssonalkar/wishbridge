@@ -337,6 +337,16 @@ def claude_code_status() -> tuple[bool, str]:
     if info.get("loggedIn"):
         who = info.get("email") or info.get("account") or info.get("authMethod") or ""
         return True, f"Claude Code is signed in{f' ({who})' if who else ''}."
-    return False, ("Claude Code is not signed in on this computer (its sign-in is separate from the Claude desktop "
-                   "app). In a terminal run `claude auth login`, finish the sign-in in the browser, then click "
-                   "Check again.")
+    return False, "Claude Code is not signed in on this computer yet."
+
+
+def open_claude_sign_in() -> str:
+    """Open a terminal window running `claude auth login` (it opens the browser to sign in). Windows only;
+    elsewhere the person runs the command."""
+    exe = _claude_code_exe()
+    if not exe:
+        return "Claude Code is not installed on this computer."
+    if os.name != "nt":
+        return "Run `claude auth login` in a terminal."
+    subprocess.Popen(["cmd", "/c", "start", "Claude Code sign-in", "cmd", "/k", exe, "auth", "login"])
+    return ""
