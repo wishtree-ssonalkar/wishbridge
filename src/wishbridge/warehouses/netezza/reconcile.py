@@ -83,6 +83,24 @@ def run_reconcile(cfg: ProjectConfig, full: bool = False, wh: Warehouse | None =
         save_step(cfg, "reconcile", result)
         return result
 
+    if cfg.data_method == "local":  # count and sum the source in the database on this computer
+        from . import localdb
+
+        wh = wh or Warehouse(cfg)
+        tables = []
+        for t in cfg.tables:
+            entry = {"source": t.source, "target": t.target}
+            try:
+                entry.update(localdb.compare(cfg, wh, t))
+            except Exception as e:  # noqa: BLE001 - SQL errors from either side
+                entry.update(status="error", error=str(e).splitlines()[0][:400])
+            tables.append(entry)
+        result = {"mode": "quick", "tables": tables, "summary": {
+            "tables": len(tables), "matched": sum(t["status"] == "match" for t in tables),
+            "mismatched": sum(t["status"] == "mismatch" for t in tables),
+            "errors": sum(t["status"] == "error" for t in tables)}}
+        save_step(cfg, "reconcile", result)
+        return result
     if not cfg.source_catalog:
         raise SqlError("Quick reconcile reads the source through a federation catalog: set data.source_catalog, "
                        "or use --full for LakeBridge reconcile.")

@@ -39,7 +39,11 @@ def settings_problems(offline: bool, v: dict) -> list[str]:
         problems.append("Test schema: it looks like production - use a test schema")
     if v.get("phase") != "data-migration":
         return problems  # the source data is needed only to copy the data
-    if v.get("method") == "files":
+    if v.get("method") == "local":
+        db = v.get("local_db") or {}
+        if not (db.get("server") and db.get("database")):
+            problems.append("Data to copy: the server and the database on this computer")
+    elif v.get("method") == "files":
         if not str(v.get("files_root") or "").strip():
             problems.append("Data to copy: the files folder (volume path) the exported tables are in")
     elif not str(v.get("source_catalog") or "").strip():
@@ -108,6 +112,7 @@ def render(cfg, raw, packages) -> None:
     scope = str(raw.get("scope") or "all").lower()
     method, source_catalog = data.get("method", "federation"), data.get("source_catalog", "")
     files_root, file_format, load_mode = data.get("files_root", ""), data.get("file_format", "PARQUET"), data.get("mode", "append")
+    local_db = dict(data.get("local") or {})
     ws, chosen_host, project_host = None, "", str(dbx.get("host") or "")
     src_done = False
 
@@ -280,8 +285,9 @@ def render(cfg, raw, packages) -> None:
         if target_done and phase == "data-migration":  # the code migration needs no source data
             # --- 3. Source data: where the data is copied from
             tick_src = part(3, "Source data", "Where the data is copied from.")
-            method_labels = {"federation": "Read the source database directly (Lakehouse Federation)",
-                             "files": "Exported files in a Unity Catalog volume"}
+            method_labels = {"federation": "Client's database, read directly by Databricks (Lakehouse Federation)",
+                             "local": "A database on this computer (WishBridge exports and uploads it)",
+                             "files": "Exported files already in a Unity Catalog volume"}
             method = st.radio("How to copy the data :red[*]", list(method_labels), format_func=method_labels.get,
                               horizontal=True, key="data_method",
                               index=list(method_labels).index(data.get("method", "federation")))
@@ -385,6 +391,38 @@ def render(cfg, raw, packages) -> None:
                 if not str(source_catalog or "").strip():
                     required("Required: create the connection above (or use an existing federation catalog).")
                 src_done = bool(str(source_catalog or "").strip())
+            elif method == "local":
+                st.markdown("**Database on this computer** :red[*] - for a demo, or a database Databricks cannot reach. "
+                            "When you copy, WishBridge reads the mapped tables (read-only), saves them as Parquet, "
+                            "uploads them to a Databricks volume and copies them into the tables; the comparison counts "
+                            "the source right here. At a client, choose the first option: Databricks reads their "
+                            "database directly.")
+                with st.container(border=True):
+                    l1, l2 = st.columns(2)
+                    lserver = l1.text_input("Server :red[*]", value=local_db.get("server", ""),
+                                            placeholder=".\\SQLEXPRESS", key="local_server")
+                    ldatabase = l2.text_input("Database :red[*]", value=local_db.get("database", ""), key="local_database")
+                    llogin = l1.radio("Login", ["Windows login", "User and password"], horizontal=True, key="local_login",
+                                      index=0 if local_db.get("windows_login", True) else 1)
+                    luser = (l2.text_input("User", value=local_db.get("user", ""), key="local_user")
+                             if llogin == "User and password" else "")
+                    ltrust = st.checkbox("Trust the server certificate", value=bool(local_db.get("trust", True)),
+                                         key="local_trust", help="Needed for local servers with a self-signed certificate.")
+                    if llogin == "User and password":
+                        st.caption("The password is asked in *Map the data* when you copy - used for that copy only, "
+                                   "never saved.")
+                    default_root = (f"/Volumes/{dbx.get('catalog') or cfg.catalog}/{dbx.get('schema') or cfg.schema}"
+                                    "/wishbridge_landing")
+                    files_root = st.text_input("Upload to (Unity Catalog volume folder)", key="local_root",
+                                               value=data.get("files_root") if data.get("method") == "local" and
+                                               data.get("files_root") else default_root,
+                                               help="WishBridge creates the volume when needed.")
+                file_format = "PARQUET"
+                local_db = {"server": lserver.strip(), "database": ldatabase.strip(),
+                            "windows_login": llogin == "Windows login", "user": luser.strip(), "trust": ltrust}
+                if not (lserver.strip() and ldatabase.strip()):
+                    required("Required: the server and the database on this computer.")
+                src_done = bool(lserver.strip() and ldatabase.strip() and files_root.strip())
             else:
                 files_root = st.text_input("Files root (volume path) :red[*]", value=data.get("files_root", ""),
                                            placeholder="/Volumes/main/landing/acme")
@@ -446,6 +484,7 @@ def render(cfg, raw, packages) -> None:
                              "catalog": catalog, "schema": schema}
         new["schema_map"] = h.rows_to_schema_map(map_df.to_dict("records"))
         new["data"] = {**data, "method": method, "source_catalog": source_catalog, "files_root": files_root,
+                       "local": local_db,
                        "file_format": file_format, "mode": load_mode}
         new["autofix"] = {**ai, "ai": ai_on, "assist": assist_on, "model": model}
         new["estimate"] = {**est, "hours_per_issue": hpi}

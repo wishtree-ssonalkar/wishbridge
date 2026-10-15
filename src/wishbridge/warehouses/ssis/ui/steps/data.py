@@ -50,7 +50,7 @@ def render(cfg, raw, packages) -> None:
         targets = sorted(set(ss.get("map_targets") or []) | {r["target"] for r in rows if r["target"]})
         df = pd.DataFrame([{"copy": r["copy"], "source": r["source"], "target": r["target"],
                             "filter": r.get("filter") or wheres.get(r["source"], "")} for r in rows])
-        if not federation:
+        if not federation and cfg.data_method != "local":
             df = df.drop(columns=["filter"])  # exported files are copied whole
         edited = st.data_editor(
             df, hide_index=True, width="stretch", key="map_editor", num_rows="fixed",
@@ -137,6 +137,15 @@ def render(cfg, raw, packages) -> None:
         st.radio("When copying", list(modes), format_func=modes.get, key="load_mode", horizontal=True,
                  index=list(modes).index(cfg.load_mode), on_change=_save_load_mode, args=(raw,))
 
+        if cfg.data_method == "local" and not cfg.local_db.get("windows_login", True):
+            import os
+
+            from wishbridge.warehouses.ssis.localdb import PASSWORD_ENV
+
+            pw = st.text_input(f"Password for {cfg.local_db.get('user')} on {cfg.local_db.get('server')}",
+                               type="password", key="local_pw", help="Used for the check and the copy only; never saved.")
+            if pw:
+                os.environ[PASSWORD_ENV] = pw  # passed to the copy running in the background, never written anywhere
         if st.button("🔎 Check before copying",
                      help="The source is reachable, every Databricks table exists, and how many rows there are."):
             with st.spinner("Checking the source and the Databricks tables..."):

@@ -99,6 +99,7 @@ class ProjectConfig:
     assist_endpoint: str = ""     # the Claude model served in the Databricks workspace
     assist_speed: str = "fast"    # fast (Claude Sonnet) | thorough (the Claude model above, Opus by default)
     data_method: str = "federation"
+    local_db: dict = field(default_factory=dict)  # data.local: a database on this computer (server, database, login)
     source_catalog: str = ""
     files_root: str = ""
     file_format: str = "PARQUET"
@@ -195,6 +196,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         assist_endpoint=str(ai.get("endpoint") or ""),
         assist_speed=str(ai.get("speed") or "fast"),
         data_method=data.get("method", "federation"),
+        local_db=dict(data.get("local") or {}),
         source_catalog=data.get("source_catalog", ""),
         files_root=str(data.get("files_root", "")).rstrip("/"),
         file_format=str(data.get("file_format", "PARQUET")).upper(),
@@ -208,8 +210,8 @@ def load_config(path: str | Path) -> ProjectConfig:
         raise ConfigError(f"phase must be one of: {', '.join(PHASES)}")
     if cfg.scope not in ("all", "recommended"):
         raise ConfigError("scope must be 'all' or 'recommended'")
-    if cfg.data_method not in ("federation", "files"):
-        raise ConfigError("data.method must be 'federation' or 'files'")
+    if cfg.data_method not in ("federation", "files", "local"):
+        raise ConfigError("data.method must be 'federation', 'files' or 'local'")
     if cfg.load_mode not in ("append", "overwrite"):
         raise ConfigError("data.mode must be 'append' or 'overwrite'")
     for t in data.get("tables") or []:

@@ -138,11 +138,19 @@ def preflight(cfg: ProjectConfig, wh: Warehouse | None = None) -> dict[str, Any]
 
             schemas = test_connection(cfg.source_catalog, wh)
             out.update(source_ok=True, source_message=f"Databricks reached the source database ({len(schemas)} schema(s)).")
+        elif cfg.data_method == "local":
+            from . import localdb
+
+            msg = localdb.test(cfg)
+            localdb.ensure_volume(cfg, wh)
+            out.update(source_ok=True, source_message=f"{msg} The tables are uploaded to {cfg.files_root} when you copy.")
         else:
             wh.run(f"LIST '{cfg.files_root}'")
             out.update(source_ok=True, source_message=f"Databricks can read the files in {cfg.files_root}.")
     except SqlError as e:
         out["source_message"] = str(e).splitlines()[0][:300]
+    except Exception as e:  # noqa: BLE001 - the local database (ODBC) raises its own types
+        out["source_message"] = f"Could not read the database on this computer: {str(e).splitlines()[0][:300]}"
     inventory = {f"{t['schema']}.{t['table']}".lower(): t for t in (load_state(cfg).get("inventory") or {}).get("tables", [])}
     for t in cfg.tables:
         if not t.load:

@@ -125,24 +125,31 @@ C:\wishbridge\wishbridge\.venv\Scripts\python.exe C:\WishBridgeDemo\setup\export
 
 ## 3. Data migration (needs the Databricks login)
 
-Databricks runs in the cloud and cannot reach SQL Server Express on this laptop, so the data travels as files.
+*How to copy the data* offers three ways - show all three, use the second for the demo:
 
-1. Create a volume and upload the export (once). In a Databricks SQL editor:
-   ```sql
-   CREATE SCHEMA IF NOT EXISTS workspace.wishbridge_demo;
-   CREATE VOLUME IF NOT EXISTS workspace.wishbridge_demo.landing;
-   ```
-   then upload:
-   ```bash
-   databricks fs cp -r C:\WishBridgeDemo\export dbfs:/Volumes/workspace/wishbridge_demo/landing --profile DEFAULT
-   ```
-2. **🚚 Data migration** → **Open the code migration project** (or continue from the deployment report).
-3. **Settings**: the workspace and target are already settled from the code migration.
-   *How to copy the data*: **Exported files in a Unity Catalog volume** →
-   files root `/Volumes/workspace/wishbridge_demo/landing`, format `PARQUET`.
-4. **Map the data**: **🔄 Propose the mapping** (each export folder → its table), check the columns,
-   **🔎 Check before copying**, then **▶ Copy the data**.
-5. **Data report**: rows per table (DimCustomer 480, FactDailySales 18,478, ...), then the sign-off package.
+| Option | When |
+|---|---|
+| Client's database, read directly by Databricks (Lakehouse Federation) | At a client: Databricks reads their warehouse over the network with a read-only SQL user |
+| **A database on this computer (WishBridge exports and uploads it)** | **The demo** (and any database Databricks cannot reach) |
+| Exported files already in a Unity Catalog volume | The client sends exports themselves |
+
+Say: *"Today it reads my laptop; at a client we pick the first option and Databricks reads their warehouse directly."*
+
+1. **🚚 Data migration** → **Open the code migration project** (or continue from the deployment report).
+2. **Settings**: the workspace and target are already settled from the code migration.
+   *How to copy the data*: **A database on this computer** → server `.\SQLEXPRESS`, database `DemoSalesDW`,
+   **Windows login**, *Trust the server certificate* ticked. The upload folder is filled in
+   (`/Volumes/<catalog>/<schema>/wishbridge_landing`); WishBridge creates the volume.
+3. **Map the data**: **🔄 Propose the mapping**, check the columns, **🔎 Check before copying**
+   (it reads the local database and creates the volume), then **▶ Copy the data**.
+   For each table WishBridge reads it (read-only), saves it as Parquet, uploads it and copies it into the
+   Databricks table with every column cast to the table's type.
+4. **Data report**: rows per table, and the comparison - row counts and the sum of every number column,
+   **counted in SQL Server on this computer** against Databricks (DimCustomer 480, FactDailySales 18,478,
+   amount 63,499,363.80, ...). Then the sign-off package.
+
+The manual way still works: `setup\export_for_databricks.py`, upload `C:\WishBridgeDemo\export` with
+`databricks fs cp -r ... dbfs:/Volumes/...`, and choose *Exported files already in a Unity Catalog volume*.
 
 ## Expected numbers (after the first load)
 
