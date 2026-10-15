@@ -95,6 +95,8 @@ class ProjectConfig:
     ai_enabled: bool = False
     ai_model: str = "claude-opus-5-5"
     assist_enabled: bool = False  # Fix code may ask Claude (the client agreed their code may be sent)
+    assist_via: str = "auto"      # databricks | claude-code | api | auto
+    assist_endpoint: str = ""     # the Claude model served in the Databricks workspace
     data_method: str = "federation"
     source_catalog: str = ""
     files_root: str = ""
@@ -188,6 +190,8 @@ def load_config(path: str | Path) -> ProjectConfig:
         ai_enabled=bool(ai.get("ai", False)),
         ai_model=ai.get("model", "claude-opus-5-5"),
         assist_enabled=bool(ai.get("assist", False)),
+        assist_via=str(ai.get("via") or "auto"),
+        assist_endpoint=str(ai.get("endpoint") or ""),
         data_method=data.get("method", "federation"),
         source_catalog=data.get("source_catalog", ""),
         files_root=str(data.get("files_root", "")).rstrip("/"),

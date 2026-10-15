@@ -60,3 +60,38 @@ def test_project_switch_is_off_until_turned_on(tmp_path):
     assert load_config(tmp_path / "project.yml").assist_enabled is False
     (tmp_path / "project.yml").write_text("source: ssis\nautofix: {assist: true}\n", encoding="utf-8")
     assert load_config(tmp_path / "project.yml").assist_enabled is True
+
+
+class _FakeWorkspace:
+    """Stands in for databricks.sdk.WorkspaceClient: two served models, one answer."""
+    asked = {}
+
+    def __init__(self, profile=None, **kw):
+        from types import SimpleNamespace as N
+
+        self.profile = profile
+
+        def query(name, messages, max_tokens):
+            _FakeWorkspace.asked = {"profile": profile, "name": name, "messages": messages}
+            return N(choices=[N(message=N(content="```python\nx = 2\n```\nNOTES:\n- fixed"), finish_reason="stop")])
+
+        eps = [N(name="databricks-claude-sonnet-4", config=N(served_entities=[])),
+               N(name="databricks-meta-llama-3-3-70b-instruct", config=N(served_entities=[]))]
+        self.serving_endpoints = N(list=lambda: eps, query=query)
+
+
+def test_databricks_lists_claude_models_and_asks_with_the_project_login(monkeypatch):
+    import databricks.sdk
+
+    monkeypatch.setattr(databricks.sdk, "WorkspaceClient", _FakeWorkspace)
+    assert ai.databricks_claude_endpoints("DEFAULT") == ["databricks-claude-sonnet-4"]
+    s = ai.ask_claude("SSIS", "notebook", "<DTS/>", "x = 1", [], "", "claude-opus-5-5",
+                      via="databricks", profile="DEFAULT", endpoint="databricks-claude-sonnet-4")
+    assert s.status == "ok" and s.sql == "x = 2\n"
+    assert _FakeWorkspace.asked["profile"] == "DEFAULT" and _FakeWorkspace.asked["name"] == "databricks-claude-sonnet-4"
+    assert "<DTS/>" in _FakeWorkspace.asked["messages"][1].content
+
+
+def test_databricks_needs_a_chosen_model():
+    assert ai.assist_backend("databricks", "DEFAULT", "")[0] is None
+    assert ai.assist_backend("databricks", "", "x")[0] is None

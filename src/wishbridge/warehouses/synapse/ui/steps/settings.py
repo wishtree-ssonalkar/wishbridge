@@ -442,7 +442,7 @@ def render(cfg, raw, packages) -> None:
         new["schema_map"] = h.rows_to_schema_map(map_df.to_dict("records"))
         new["data"] = {**data, "method": method, "source_catalog": source_catalog, "files_root": files_root,
                        "file_format": file_format, "mode": load_mode}
-        new["autofix"] = {"ai": ai_on, "assist": assist_on, "model": model}
+        new["autofix"] = {**ai, "ai": ai_on, "assist": assist_on, "model": model}
         new["estimate"] = {**est, "hours_per_issue": hpi}
         try:
             h.save_raw(ss.project, new)

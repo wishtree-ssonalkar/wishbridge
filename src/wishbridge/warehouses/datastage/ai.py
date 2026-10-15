@@ -146,8 +146,25 @@ def _claude_code_exe() -> str | None:
     return exe
 
 
-def assist_backend() -> tuple[str | None, str]:
-    """Which Claude Fix code can use: ("api" | "claude-code" | None, what to tell the person)."""
+VIA = {"databricks": "Databricks workspace (the project's login)", "claude-code": "Claude Code on this computer",
+       "api": "Claude API key (ANTHROPIC_API_KEY)"}
+
+
+def assist_backend(via: str = "auto", profile: str = "", endpoint: str = "") -> tuple[str | None, str]:
+    """Which Claude Fix code uses: ("databricks" | "api" | "claude-code" | None, what to tell the person).
+    via: the project's choice; "auto" = the API key when set, else Claude Code."""
+    if via == "databricks":
+        if not profile:
+            return None, "not available: the project has no Databricks login (Settings > Databricks workspace)"
+        if not endpoint:
+            return None, "not ready: choose the Claude model served in the workspace (Find Claude models)"
+        return "databricks", f"the Claude model `{endpoint}` in the Databricks workspace (login {profile})"
+    if via == "claude-code":
+        return (("claude-code", "Claude Code on this computer") if _claude_code_exe() else
+                (None, "not available: Claude Code is not installed on this computer"))
+    if via == "api":
+        return (("api", "the Claude API (ANTHROPIC_API_KEY)") if os.environ.get("ANTHROPIC_API_KEY") else
+                (None, "not available: ANTHROPIC_API_KEY is not set on this computer"))
     if os.environ.get("ANTHROPIC_API_KEY"):
         try:
             import anthropic  # noqa: F401
@@ -233,9 +250,9 @@ def parse_answer(text: str) -> Suggestion:
 
 
 def ask_claude(source_name: str, kind: str, original: str, current: str, issues: list[str], details: str,
-               model: str) -> Suggestion:
+               model: str, via: str = "auto", profile: str = "", endpoint: str = "") -> Suggestion:
     """One corrected version of a file for a person to review in Fix code; never saved by itself."""
-    backend, why = assist_backend()
+    backend, why = assist_backend(via, profile, endpoint)
     if backend is None:
         return Suggestion(None, f"Claude is {why}.", "failed")
     sql = kind == "sql"
@@ -247,7 +264,59 @@ def ask_claude(source_name: str, kind: str, original: str, current: str, issues:
             f"<open_issues>\n{issue_lines}\n</open_issues>\n\n"
             f"<engineer_notes>\n{details.strip() or 'none'}\n</engineer_notes>")
     try:
-        text = _ask_api(system, user, model) if backend == "api" else _ask_claude_code(system, user, model)
+        if backend == "databricks":
+            text = _ask_databricks(system, user, profile, endpoint)
+        elif backend == "api":
+            text = _ask_api(system, user, model)
+        else:
+            text = _ask_claude_code(system, user, model)
     except AssistError as e:
         return Suggestion(None, str(e), "failed")
     return parse_answer(text)
+
+
+# ---------------------------------------------------------------- Claude served in the Databricks workspace
+
+def _first_line(e: Exception) -> str:
+    return (str(e).strip().splitlines() or [type(e).__name__])[0][:300]
+
+
+def databricks_claude_endpoints(profile: str) -> list[str]:
+    """The Claude models the workspace serves (Serving > foundation models, or an external Anthropic model)."""
+    from databricks.sdk import WorkspaceClient
+
+    try:
+        endpoints = list(WorkspaceClient(profile=profile).serving_endpoints.list())
+    except Exception as e:  # the SDK raises many types; the message says what is wrong
+        raise AssistError(f"Could not reach the Databricks workspace with the login '{profile}': {_first_line(e)}. "
+                          "If the login expired, sign in again in Settings > Databricks workspace.") from e
+    names = []
+    for ep in endpoints:
+        served = (ep.config.served_entities or []) if ep.config else []
+        anthropic_external = any(getattr(getattr(s, "external_model", None), "provider", None) is not None
+                                 and str(getattr(s.external_model.provider, "value", s.external_model.provider)).lower()
+                                 == "anthropic" for s in served)
+        if ep.name and ("claude" in ep.name.lower() or anthropic_external):
+            names.append(ep.name)
+    return sorted(names)
+
+
+def _ask_databricks(system: str, user: str, profile: str, endpoint: str) -> str:
+    from databricks.sdk import WorkspaceClient
+    from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
+
+    try:
+        w = WorkspaceClient(profile=profile, http_timeout_seconds=900)
+        r = w.serving_endpoints.query(name=endpoint, max_tokens=32000, messages=[
+            ChatMessage(role=ChatMessageRole.SYSTEM, content=system),
+            ChatMessage(role=ChatMessageRole.USER, content=user)])
+    except Exception as e:  # the SDK raises many types; the message says what is wrong
+        raise AssistError(f"Databricks ({endpoint}, login {profile}): {_first_line(e)}") from e
+    choice = (r.choices or [None])[0]
+    content = choice.message.content if choice is not None and choice.message is not None else ""
+    if isinstance(content, list):  # some endpoints answer in parts
+        content = "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in content)
+    if not content:
+        raise AssistError(f"The Databricks model {endpoint} gave an empty answer.")
+    cut = choice.finish_reason == "length"
+    return ("WARNING: the answer was cut short.\n" if cut else "") + str(content)

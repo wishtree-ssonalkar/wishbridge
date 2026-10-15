@@ -88,10 +88,16 @@ def render(cfg, raw, packages) -> None:
                     st.rerun()
         current = ss.get(f"edit-{pick}")
         if current is not None:
-            _claude_help(cfg, f, pick, orig, current, todo, ovr)
+            _claude_help(cfg, raw, f, pick, orig, current, todo, ovr)
 
 
-def _claude_help(cfg, f, pick, orig, current, todo, ovr) -> None:
+def _save_autofix(raw, **changes) -> None:
+    new = dict(raw)
+    new["autofix"] = {**(raw.get("autofix") or {}), **changes}
+    h.save_raw(ss.project, new)
+
+
+def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
     """Ask Claude for a corrected version of this file; the person checks it and decides whether to use it."""
     st.divider()
     st.markdown("#### ✨ Ask Claude to fix this file")
@@ -99,10 +105,45 @@ def _claude_help(cfg, f, pick, orig, current, todo, ovr) -> None:
     if flash:
         st.success(flash)
     if not cfg.assist_enabled:
-        st.caption("Off for this project. Turn it on in **Settings > AI suggestions and estimates** once the client "
-                   "has agreed that their code may be sent to Claude (code only, never data).")
+        st.caption("Off for this project: Claude only sees a client's code once the client has agreed.")
+        agreed = st.checkbox("The client agreed that their code may be sent to Claude (code only, never data)",
+                             key="claude-agreed")
+        if st.button("Allow Claude for this project", disabled=not agreed, key="claude-allow"):
+            _save_autofix(raw, assist=True, via=cfg.assist_via if cfg.assist_via != "auto" else "databricks")
+            st.rerun()
         return
-    backend, how = ai.assist_backend()
+
+    vias = list(ai.VIA)
+    via = cfg.assist_via if cfg.assist_via in vias else "databricks"
+    c1, c2 = st.columns([3, 2])
+    chosen = c1.radio("Connect with", vias, index=vias.index(via), format_func=ai.VIA.get, horizontal=True,
+                      key="claude-via")
+    if chosen != cfg.assist_via:
+        _save_autofix(raw, via=chosen)
+        st.rerun()
+    endpoint = cfg.assist_endpoint
+    if chosen == "databricks":
+        with c2:
+            st.caption(f"Login **{cfg.profile}** - the one this project deploys with.")
+            if st.button("🔎 Find Claude models", key="claude-find"):
+                with st.spinner("Asking the workspace..."):
+                    try:
+                        ss.claude_endpoints = ai.databricks_claude_endpoints(cfg.profile)
+                    except ai.AssistError as e:
+                        ss.claude_endpoints = None
+                        st.error(str(e))
+        found = ss.get("claude_endpoints")
+        if found == []:
+            st.warning("This workspace serves no Claude model. In Databricks open **Serving** and check the foundation "
+                       "models (e.g. databricks-claude-sonnet-4), or choose another connection.")
+        options = sorted(set((found or []) + ([endpoint] if endpoint else [])))
+        if options:
+            pick_ep = st.selectbox("Claude model in the workspace", options,
+                                   index=options.index(endpoint) if endpoint in options else 0, key="claude-endpoint")
+            if pick_ep != endpoint:
+                _save_autofix(raw, endpoint=pick_ep)
+                st.rerun()
+    backend, how = ai.assist_backend(chosen, cfg.profile, endpoint)
     st.caption(f"Sends this file's original, the Databricks version above (with your unsaved edits) and the open "
                f"issues - never data. Uses {how}.")
     key = f"claude:{pick}"
@@ -116,7 +157,7 @@ def _claude_help(cfg, f, pick, orig, current, todo, ovr) -> None:
         issues = [f"line {x['line']} [{x['severity']}]: {x['message']}" for x in todo]
         with st.spinner("Claude is working on the file - this can take a few minutes..."):
             ss[key] = asked = ai.ask_claude(cfg.source.label, f["kind"], original, current, issues, details,
-                                            cfg.ai_model)
+                                            cfg.ai_model, chosen, cfg.profile, endpoint)
     if not asked:
         return
     if asked.status != "ok":
