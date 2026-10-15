@@ -32,6 +32,6 @@ def test_names_are_mapped_in_sql_and_notebooks_not_in_comments_or_strings():
 def test_local_server_names_are_recognised():
     from wishbridge.warehouses.ssis.ui.helpers import is_local_host
 
-    assert is_local_host(".\SQLEXPRESS") and is_local_host("localhost") and is_local_host("(local)")
+    assert is_local_host(r".\SQLEXPRESS") and is_local_host("localhost") and is_local_host("(local)")
     assert is_local_host("127.0.0.1,1433")
     assert not is_local_host("sqlprod01.client.com") and not is_local_host("")
