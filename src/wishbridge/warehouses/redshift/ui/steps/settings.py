@@ -397,11 +397,16 @@ def render(cfg, raw, packages) -> None:
 
     est = raw.get("estimate") or {}
     ai_on, model = bool(ai.get("ai", False)), ai.get("model", "claude-opus-5-5")
+    assist_on = bool(ai.get("assist", False))
     hpi = float(est.get("hours_per_issue", 0.5))
     if phase != "data-migration":  # about converting the code: not part of the data migration
         with st.expander("AI suggestions and estimates"):
             ai_on = st.checkbox("Ask Claude for fix suggestions during convert (needs ANTHROPIC_API_KEY; sends code, "
                                 "not data)", value=ai_on)
+            assist_on = st.checkbox("Fix code may ask Claude to fix a file (only when the client agreed that their code "
+                                    "may be sent to Claude; never data)", value=assist_on,
+                                    help="Uses ANTHROPIC_API_KEY when it is set, otherwise Claude Code on this computer. "
+                                         "Every suggestion is shown first and saved only when you choose Use this fix.")
             model = st.text_input("Claude model", value=model)
             hpi = st.number_input("Hours per open item", value=hpi, step=0.25)
 
@@ -437,7 +442,7 @@ def render(cfg, raw, packages) -> None:
         new["schema_map"] = h.rows_to_schema_map(map_df.to_dict("records"))
         new["data"] = {**data, "method": method, "source_catalog": source_catalog, "files_root": files_root,
                        "file_format": file_format, "mode": load_mode}
-        new["autofix"] = {"ai": ai_on, "model": model}
+        new["autofix"] = {"ai": ai_on, "assist": assist_on, "model": model}
         new["estimate"] = {**est, "hours_per_issue": hpi}
         try:
             h.save_raw(ss.project, new)

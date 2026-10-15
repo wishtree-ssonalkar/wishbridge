@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import difflib
 from pathlib import Path
 
 import streamlit as st
 
+from wishbridge.warehouses.bigquery import ai
 from wishbridge.warehouses.bigquery.convert import original_file
 from wishbridge.warehouses.bigquery.staging import read_source
 from wishbridge.warehouses.bigquery.state import load_state
@@ -84,3 +86,56 @@ def render(cfg, raw, packages) -> None:
                     ovr.unlink()
                     st.success("Removed. The converted version will be used on the next run.")
                     st.rerun()
+        current = ss.get(f"edit-{pick}")
+        if current is not None:
+            _claude_help(cfg, f, pick, orig, current, todo, ovr)
+
+
+def _claude_help(cfg, f, pick, orig, current, todo, ovr) -> None:
+    """Ask Claude for a corrected version of this file; the person checks it and decides whether to use it."""
+    st.divider()
+    st.markdown("#### ✨ Ask Claude to fix this file")
+    flash = ss.pop("claude_flash", None)
+    if flash:
+        st.success(flash)
+    if not cfg.assist_enabled:
+        st.caption("Off for this project. Turn it on in **Settings > AI suggestions and estimates** once the client "
+                   "has agreed that their code may be sent to Claude (code only, never data).")
+        return
+    backend, how = ai.assist_backend()
+    st.caption(f"Sends this file's original, the Databricks version above (with your unsaved edits) and the open "
+               f"issues - never data. Uses {how}.")
+    key = f"claude:{pick}"
+    details = st.text_area("Extra details for Claude (optional)", key=f"claude-notes:{pick}", height=90,
+                           placeholder="e.g. The order database is the catalog oltp_fed. "
+                                       "Remove the call to usp_SendLoadReport.")
+    asked = ss.get(key)
+    if st.button("✨ Ask again" if asked else "✨ Ask Claude", disabled=backend is None, key=f"claude-ask:{pick}"):
+        original = (read_source(orig) if orig is not None and orig.is_file()
+                    else "(no original file: made from the table definitions read from the database)")
+        issues = [f"line {x['line']} [{x['severity']}]: {x['message']}" for x in todo]
+        with st.spinner("Claude is working on the file - this can take a few minutes..."):
+            ss[key] = asked = ai.ask_claude(cfg.source.label, f["kind"], original, current, issues, details,
+                                            cfg.ai_model)
+    if not asked:
+        return
+    if asked.status != "ok":
+        st.error(asked.notes)
+        return
+    st.success("Claude's suggestion is below. Check it before using it: nothing is saved until you choose.")
+    if asked.notes:
+        st.markdown(asked.notes)
+    diff = "".join(difflib.unified_diff(current.splitlines(keepends=True), asked.sql.splitlines(keepends=True),
+                                        "current", "Claude's suggestion"))
+    st.code(diff or "(Claude suggests no changes)", language="diff")
+    c1, c2 = st.columns(2)
+    if c1.button("✅ Use this fix", type="primary", key=f"claude-use:{pick}", disabled=not diff):
+        ovr.parent.mkdir(parents=True, exist_ok=True)
+        ovr.write_text(asked.sql, encoding="utf-8")
+        ss.pop(key, None)
+        ss.pop(f"edit-{pick}", None)  # the editor shows the saved fix
+        ss.claude_flash = "Saved as a manual fix. Run Convert (or Deploy) again to apply it."
+        st.rerun()
+    if c2.button("🗑 Discard", key=f"claude-discard:{pick}"):
+        ss.pop(key, None)
+        st.rerun()

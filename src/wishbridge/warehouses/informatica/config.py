@@ -94,6 +94,7 @@ class ProjectConfig:
     schema_map: dict[str, str] = field(default_factory=dict)
     ai_enabled: bool = False
     ai_model: str = "claude-opus-5-5"
+    assist_enabled: bool = False  # Fix code may ask Claude (the client agreed their code may be sent)
     data_method: str = "federation"
     source_catalog: str = ""
     files_root: str = ""
@@ -186,6 +187,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         schema_map={str(k): str(v) for k, v in (raw.get("schema_map") or {}).items()},
         ai_enabled=bool(ai.get("ai", False)),
         ai_model=ai.get("model", "claude-opus-5-5"),
+        assist_enabled=bool(ai.get("assist", False)),
         data_method=data.get("method", "federation"),
         source_catalog=data.get("source_catalog", ""),
         files_root=str(data.get("files_root", "")).rstrip("/"),
@@ -239,6 +241,7 @@ schema_map:{schema_map}
 
 autofix:
   ai: false                 # true = ask Claude for fix suggestions (needs ANTHROPIC_API_KEY)
+  assist: false             # true = the client agreed: Fix code may send a file's code to Claude (never data)
   model: claude-opus-5-5
 
 data:
