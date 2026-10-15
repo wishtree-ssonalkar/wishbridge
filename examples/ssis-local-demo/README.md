@@ -1,5 +1,10 @@
 # WishBridge local demo: SSIS + SQL Server
 
+> **Testing status (15 October 2026):** this SSIS + SQL Server sample is the one project WishBridge has been
+> tested with end to end, and it is **ready for the demo**. The other warehouses (Synapse, Snowflake, Oracle,
+> Teradata, Redshift, BigQuery, Netezza, Informatica, DataStage) are built but each still needs its own sample
+> project and data, an end-to-end test, and changes as requirements come up.
+
 A complete client setup on this laptop, for testing every WishBridge phase end to end:
 an order-entry system, a data warehouse with stored procedures, and the SSIS packages that load it.
 
@@ -150,6 +155,26 @@ Say: *"Today it reads my laptop; at a client we pick the first option and Databr
 
 The manual way still works: `setup\export_for_databricks.py`, upload `C:\WishBridgeDemo\export` with
 `databricks fs cp -r ... dbfs:/Volumes/...`, and choose *Exported files already in a Unity Catalog volume*.
+
+## Claude in the demo (optional)
+
+1. Once per computer, sign in: `claude auth login` (or in Fix code: **Sign in again**, then **🔌 Test connection**).
+2. Fix code → **Allow Claude for this project** (tick *the client agreed*).
+3. *What do you want Claude to do?* → **Fix all files that need a fix or a review** → **✨ Review and fix** →
+   untick anything you don't want → **💾 Save selected**. On this project: 9 files in about 40 seconds.
+4. **💬 Ask a question**, e.g. *Which files load the FactDailySales table, and which is the riskiest to migrate?*
+5. After a deploy with failures: Deployment report → **✨ Fix the failed files with Claude**.
+6. On a data-migration error: **✨ Ask Claude about this problem** → **Explain and fix** → **Apply selected**.
+
+## Before the demo - checklist
+
+- [ ] SQL Server (SQLEXPRESS) service running; run `setup\03_verify_sqlserver.sql` and keep the output open
+- [ ] `databricks auth login --profile DEFAULT` (and `claude auth login` for the Claude part)
+- [ ] Restart WishBridge (`Start WishBridge.cmd`)
+- [ ] Catalog: an existing one (`workspace`) with a new schema, or a catalog created in Databricks first
+      (this workspace uses Default Storage: Catalog → + → Create a catalog)
+- [ ] Data migration: *A database on this computer*, **Replace what is in Databricks**
+- [ ] One full dry run the day before; keep its assessment zip as plan B
 
 ## Expected numbers (after the first load)
 
