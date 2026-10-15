@@ -171,7 +171,7 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
                 t1.caption(f"✅ {msg} {tested[1]}")
             else:
                 t1.error(tested[1])
-            if t2.button("🔌 Test connection", key="claude-test"):
+            if t2.button("🔌 Test connection", key="claude-test", type="primary" if tested is None else "secondary"):
                 with st.spinner("Sending a tiny request to Claude (up to 60 s)..."):
                     ss.claude_code_test = ai.test_claude_code(model)
                 st.rerun()
@@ -250,8 +250,8 @@ def _setup_steps(via: str, why: str) -> None:
         if via == "claude-code":
             st.markdown(
                 "Claude Code has its own sign-in, separate from the Claude desktop app. Do this once per computer:\n"
-                "1. Click **Sign in to Claude Code** below (or run the command in a terminal). A window opens and "
-                "then your browser.\n"
+                "1. Click **Sign in again** below (or run the commands in a terminal). A window opens, signs out, "
+                "updates Claude Code, then opens your browser.\n"
                 "2. Sign in with your Claude account (Wishtree's Claude plan) and allow access.\n"
                 "3. When the window says you are signed in, close it and click **↻ Check again**.")
             st.code("claude auth login", language="bash")
@@ -261,7 +261,7 @@ def _setup_steps(via: str, why: str) -> None:
             if version:
                 st.caption(f"Claude Code on this computer: version {version}.")
             c1, c2 = st.columns(2)
-            if c1.button("🔑 Sign in to Claude Code", key="claude-sign-in"):
+            if c1.button("🔑 Sign in again (sign out, update, sign in)", key="claude-sign-in"):
                 problem = ai.open_claude_sign_in()
                 (st.warning if problem else st.info)(problem or "A sign-in window has opened. Finish the sign-in in "
                                                                 "the browser, then click Check again.")

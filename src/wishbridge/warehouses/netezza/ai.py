@@ -248,17 +248,11 @@ def _ask_claude_code(system: str, user: str, model: str, effort: str = "high", t
                                                             f"exit code {proc.returncode}")) from None
     result = str(out.get("result") or "")
     if out.get("is_error"):
-        if re.search(r"\b401\b|invalid access token|invalid.{0,20}token", result, re.IGNORECASE):
-            raise AssistError("Claude Code's saved sign-in is no longer accepted by Claude (" + result[:160] + "). "
-                              "Sign in again: in a terminal run `claude auth logout` and then `claude auth login` "
-                              "(or click Sign in to Claude Code), then click Test connection.")
-        if re.search(r"authenticat|not logged in|oauth", result, re.IGNORECASE):
-            signed_in, _ = claude_code_status()  # confirm before telling the person to sign in
-            if not signed_in:
-                raise AssistError("Claude Code is not signed in on this computer: click Sign in to Claude Code "
-                                  "(or run `claude auth login`), then ask again.")
-            raise AssistError(f"Claude Code could not renew its sign-in this time ({result}). It is still signed "
-                              "in, so this is temporary: click Ask again.")
+        # The real answer wins over `claude auth status`, which can say "signed in" for a sign-in Claude rejects.
+        if re.search(r"\b401\b|invalid.{0,20}token|not logged in|/login|authenticat|oauth", result, re.IGNORECASE):
+            raise AssistError("Claude Code's sign-in on this computer does not work (" + result[:160] + "). "
+                              "Click **Sign in again** below (it signs out, updates Claude Code and signs in), "
+                              "then click Test connection.")
         raise AssistError(f"Claude Code: {result or out.get('terminal_reason') or 'unknown error'}. Click Ask again; "
                           "if it keeps failing, choose another connection.")
     return result
@@ -380,7 +374,10 @@ def open_claude_sign_in() -> str:
         return "Claude Code is not installed on this computer."
     if os.name != "nt":
         return "Run `claude auth login` in a terminal."
-    subprocess.Popen(["cmd", "/c", "start", "Claude Code sign-in", "cmd", "/k", exe, "auth", "login"])
+    # A fresh sign-in: sign out (clears a sign-in Claude no longer accepts), update, sign in.
+    script = (f'"{exe}" auth logout & echo. & echo Updating Claude Code... & "{exe}" update & echo. '
+              f'& echo Sign in in the browser that opens next. & "{exe}" auth login')
+    subprocess.Popen(f'start "Claude Code sign-in" cmd /k "{script}"', shell=True)
     return ""
 
 
