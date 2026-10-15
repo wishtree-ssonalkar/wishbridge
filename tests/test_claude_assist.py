@@ -187,3 +187,16 @@ def test_claude_code_ignores_personal_gateway_settings(monkeypatch):
     cmd = seen["cmd"]
     assert cmd[cmd.index("--setting-sources") + 1] == "project,local"
     assert not {"ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_USE_GATEWAY"} & set(seen["env"])
+
+
+def test_a_question_gets_an_answer_and_optional_changes(monkeypatch):
+    seen = _claude_code(monkeypatch, {"is_error": False, "result": "It loads daily sales.\n"
+                                      "<<<<<<< SEARCH\nx = 1\n=======\nx = 2\n>>>>>>> REPLACE"})
+    monkeypatch.setattr(ai, "_CLAUDE_CODE_OK", {"m": 9e12})
+    s = ai.ask_question("What does it do? Also set x to 2", "SSIS", "notebook", "<DTS/>", "x = 1\n", [],
+                        "- a.py [review]: 1 open issues", "", "m", history=[("earlier q", "earlier a")], file="a.py")
+    assert s.status == "ok" and s.notes == "It loads daily sales." and s.sql == "x = 2\n"
+    assert "earlier q" in seen["input"] and "<project_files>" in seen["input"]
+    _claude_code(monkeypatch, {"is_error": False, "result": "Only a.py uses it."})
+    monkeypatch.setattr(ai, "_CLAUDE_CODE_OK", {"m": 9e12})
+    assert ai.ask_question("Which files?", "SSIS", "notebook", "", "x = 1\n", [], "", "", "m").sql is None

@@ -303,13 +303,25 @@ def ask_claude(source_name: str, kind: str, original: str, current: str, issues:
     if context.strip():
         user = context.strip() + "\n\n" + user
     started = time.time()
+    text, failed = _send(backend, system, user, model, profile, endpoint, fast, on_start)
+    if failed is not None:
+        return failed
+    s = apply_edits(current, text)
+    s.seconds = time.time() - started
+    return s
+
+
+def _send(backend: str, system: str, user: str, model: str, profile: str, endpoint: str, fast: bool,
+          on_start=None) -> tuple[str | None, Suggestion | None]:
+    """Send one request with the chosen connection: (answer text, None) or (None, a failed Suggestion)."""
+    started = time.time()
     if backend == "claude-code" and time.time() - _CLAUDE_CODE_OK.get(model, 0) > 600:
         # A broken Claude Code sign-in does not fail: it hangs retrying for minutes. A tiny request answers in ~5 s
         # when all is well, so check first and repair the sign-in at once instead of waiting.
         ok, msg = test_claude_code(model, seconds=25)
         if not ok:
-            return Suggestion(None, "Claude Code did not answer a quick check, so its sign-in on this computer most "
-                                    f"likely needs renewing. ({msg})", "signin", time.time() - started)
+            return None, Suggestion(None, "Claude Code did not answer a quick check, so its sign-in on this computer "
+                                          f"most likely needs renewing. ({msg})", "signin", time.time() - started)
         _CLAUDE_CODE_OK[model] = time.time()
     try:
         if backend == "databricks":
@@ -320,12 +332,60 @@ def ask_claude(source_name: str, kind: str, original: str, current: str, issues:
             text = _ask_claude_code(system, user, model, "medium" if fast else "high",
                                     timeout=300 if fast else 600, on_start=on_start)
     except SignInError as e:
-        return Suggestion(None, str(e), "signin", time.time() - started)
+        return None, Suggestion(None, str(e), "signin", time.time() - started)
     except AssistError as e:
-        return Suggestion(None, str(e), "failed", time.time() - started)
-    s = apply_edits(current, text)
-    s.seconds = time.time() - started
-    return s
+        return None, Suggestion(None, str(e), "failed", time.time() - started)
+    if backend == "claude-code":
+        _CLAUDE_CODE_OK[model] = time.time()
+    return text, None
+
+
+QUESTION_PROMPT = """You are a senior data engineer helping a team migrate {source} code to Databricks (Unity Catalog,
+Delta Lake). Answer the engineer's question clearly and briefly, in plain language (short paragraphs or bullets).
+Use the project background, the list of project files with their status and open issues, and the open file.
+Base every statement on what you were given; if something is not in it, say so instead of guessing. Never invent
+tables, columns, connection details or credentials. You have no tools: answer with text only.
+Only if the question asks you to change the open file, also give the changes as edit blocks after your answer:
+<<<<<<< SEARCH
+exact lines copied from the Databricks version, just enough to be unique
+=======
+the new lines
+>>>>>>> REPLACE"""
+
+
+def ask_question(question: str, source_name: str, kind: str, original: str, current: str, issues: list[str],
+                 overview: str, context: str, model: str, via: str = "auto", profile: str = "", endpoint: str = "",
+                 fast: bool = True, history: list[tuple[str, str]] | None = None, file: str = "",
+                 on_start=None) -> Suggestion:
+    """A free question about the project or the open file. notes = the answer; sql = the open file with the changes
+    the person asked for (None when the answer has no changes)."""
+    backend, why = assist_backend(via, profile, endpoint)
+    if backend is None:
+        return Suggestion(None, f"Claude is {why}.", "failed")
+    issue_lines = "\n".join(f"- {i}" for i in issues) or "- none listed"
+    earlier = "\n\n".join(f"Engineer: {q}\nYou: {a[:1500]}" for q, a in (history or [])[-3:])
+    user = "\n\n".join(part for part in [
+        context.strip(),
+        f"<project_files>\n{overview.strip() or 'none listed'}\n</project_files>",
+        f"<open_file name=\"{file}\">\n<original>\n{_cap(original)}\n</original>\n"
+        f"<databricks_version>\n{_cap(current)}\n</databricks_version>\n"
+        f"<open_issues>\n{issue_lines}\n</open_issues>\n</open_file>",
+        f"<earlier_conversation>\n{earlier}\n</earlier_conversation>" if earlier else "",
+        f"<question>\n{question.strip()}\n</question>"] if part)
+    started = time.time()
+    text, failed = _send(backend, QUESTION_PROMPT.format(source=source_name), user, model, profile, endpoint, fast,
+                         on_start)
+    if failed is not None:
+        return failed
+    answer = _EDIT.sub("", text).strip()
+    sql = None
+    if _EDIT.search(text):
+        edited = apply_edits(current, text)
+        if edited.status != "ok":
+            answer += "\n\n(" + edited.notes + ")"
+        elif edited.sql != current:
+            sql = edited.sql
+    return Suggestion(sql, answer or "(Claude gave no answer.)", "ok", time.time() - started)
 
 
 # ---------------------------------------------------------------- Claude served in the Databricks workspace

@@ -19,7 +19,7 @@ from wishbridge.warehouses.snowflake.ui.common import STATUS_ICON
 ss = st.session_state
 _JOBS: dict[str, dict] = {}  # Claude requests running in the background: "<project>|<file>" -> job
 _BATCHES: dict[str, dict] = {}  # "fix all files" runs: project -> batch (kept until saved or discarded)
-_SCOPES = {"file": (), "fix": ("needs-fix",), "fix+review": ("needs-fix", "review")}
+_SCOPES = {"file": (), "fix": ("needs-fix",), "fix+review": ("needs-fix", "review"), "ask": ()}
 
 
 def render(cfg, raw, packages) -> None:
@@ -191,11 +191,14 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
     st.caption(f"Sends this file's original, the Databricks version above (with your unsaved edits) and the open "
                f"issues - never data. Uses {how}.")
     key = f"claude:{pick}"
+    scope = st.radio("What do you want Claude to do?", list(_SCOPES), format_func=lambda s: _scope_label(cfg, s, pick),
+                     horizontal=True, key="claude-scope")
+    if scope == "ask":
+        _ask_anything(cfg, raw, f, pick, orig, current, todo, backend, chosen, model, speed, endpoint)
+        return
     details = st.text_area("Extra details for Claude (optional)", key=f"claude-notes:{pick}", height=90,
-                           placeholder="e.g. The order database is the catalog oltp_fed. "
-                                       "Remove the call to usp_SendLoadReport.")
-    scope = st.radio("What to fix", list(_SCOPES), format_func=lambda s: _scope_label(cfg, s, pick), horizontal=True,
-                     key="claude-scope")
+                           placeholder="e.g. a catalog or schema name to use, a call to remove, or how a step "
+                                       "should behave.")
     if scope != "file":
         _fix_all(cfg, raw, scope, details, backend, chosen, model, speed, endpoint)
         return
@@ -315,6 +318,14 @@ def _start_job(job_key: str, req: dict) -> None:
 
     def work():
         try:
+            if req.get("question"):
+                job["result"] = ai.ask_question(req["question"], req["source"], req["kind"], req["original"],
+                                                req["current"], req["issues"], req["overview"], req["context"],
+                                                req["model"], req["via"], req["profile"], req["endpoint"],
+                                                fast=req["fast"], history=req["history"], file=req["file"],
+                                                on_start=lambda p: job.__setitem__("proc", p))
+                job["done"] = True
+                return
             job["result"] = ai.ask_claude(req["source"], req["kind"], req["original"], req["current"], req["issues"],
                                           req["details"], req["model"], req["via"], req["profile"], req["endpoint"],
                                           fast=req["fast"], context=req["context"],
@@ -372,9 +383,12 @@ def _batch_files(cfg, scope: str) -> list[dict]:
 
 def _scope_label(cfg, scope: str, pick: str) -> str:
     if scope == "file":
-        return f"This file ({Path(pick).name})"
+        return f"Fix this file ({Path(pick).name})"
+    if scope == "ask":
+        return "💬 Ask a question"
     n = len(_batch_files(cfg, scope))
-    return {"fix": f"All files that need a fix ({n})", "fix+review": f"All files that need a fix or a review ({n})"}[scope]
+    return {"fix": f"Fix all files that need a fix ({n})",
+            "fix+review": f"Fix all files that need a fix or a review ({n})"}[scope]
 
 
 def _file_request(cfg, raw, f: dict, details: str, chosen: str, model: str, speed: str, endpoint: str) -> dict | None:
@@ -526,4 +540,77 @@ def _batch_results(raw, bkey: str) -> None:
         for r, _ in changed:
             ss.pop(f"bsave:{r['file']}", None)
         _BATCHES.pop(bkey, None)
+        st.rerun()
+
+
+# ---------------------------------------------------------------- ask a question
+
+def _files_overview(cfg) -> str:
+    """Every converted file with its status and open issues - names only, for questions about the whole project."""
+    conv = load_state(cfg).get("convert") or {}
+    lines = []
+    for f in conv.get("files", [])[:300]:
+        todo = [x for x in f.get("findings", []) if not x.get("fixed") and x.get("severity") != "info"]
+        first = f"; e.g. line {todo[0]['line']}: {todo[0]['message'][:160]}" if todo else ""
+        lines.append(f"- {f['file']} [{f.get('status', '')}]: {len(todo)} open issues{first}")
+    return "\n".join(lines)
+
+
+def _ask_anything(cfg, raw, f, pick, orig, current, todo, backend, chosen, model, speed, endpoint) -> None:
+    """A small chat: any question about the project or the open file; follow-ups remember the last answers."""
+    hist_key = f"claude-qa:{ss.project}"
+    history = ss.setdefault(hist_key, [])
+    job_key, key = f"{ss.project}|question", "claude-question-result"
+    question = st.text_area("Your question", key="claude-question", height=90,
+                            placeholder="Ask anything about this project or the open file, e.g. Which files use the "
+                                        "Orders table? / Explain what this package does / Why does this file need a "
+                                        "fix? / Change the target schema in this file to sales")
+    st.caption(f"Claude sees the project background, the list of files with their status and open issues, the open "
+               f"file ({pick}) and your last questions - code only, never data. Changes are shown first and saved only "
+               "when you choose.")
+    if st.button("💬 Ask", type="primary", disabled=backend is None or not question.strip() or job_key in _JOBS,
+                 key="claude-ask-question"):
+        original = (read_source(orig) if orig is not None and orig.is_file()
+                    else "(no original file: made from the table definitions read from the database)")
+        req = {"question": question.strip(), "source": cfg.source.label, "kind": f["kind"], "original": original,
+               "current": current, "file": pick, "model": model, "via": chosen, "profile": cfg.profile,
+               "endpoint": endpoint, "fast": speed == "fast",
+               "issues": [f"line {x['line']} [{x['severity']}]: {x['message']}" for x in todo],
+               "overview": _files_overview(cfg), "context": ai.project_context(cfg, original, current),
+               "history": [(h_["q"], h_["answer"]) for h_ in reversed(history[:3]) if h_["status"] == "ok"]}
+        ss["claude-question-req"] = req
+        _start_job(job_key, req)
+        ss.pop(key, None)
+    if job_key in _JOBS:
+        _wait_for_claude(job_key, key)
+    result = ss.pop(key, None)
+    req = ss.pop("claude-question-req", None) if result is not None else None
+    if result is not None and req is not None:
+        history.insert(0, {"q": req["question"], "file": req["file"], "current": req["current"],
+                           "answer": result.notes, "sql": result.sql, "status": result.status,
+                           "seconds": result.seconds, "id": time.time()})
+    for item in history[:10]:
+        with st.container(border=True):
+            st.markdown(f"**You:** {item['q']}")
+            st.caption(f"About {item['file']} · {item['seconds']:.0f} s")
+            if item["status"] != "ok":
+                st.error(item["answer"] + (" Choose **Fix this file** above and ask once - it repairs the "
+                                           "connection." if item["status"] == "signin" else ""))
+                continue
+            st.markdown(item["answer"])
+            if item.get("sql"):
+                diff = "".join(difflib.unified_diff(item["current"].splitlines(keepends=True),
+                                                    item["sql"].splitlines(keepends=True), "current", "Claude's change"))
+                with st.expander(f"Changes Claude suggests for {item['file']}", expanded=True):
+                    st.code(diff, language="diff")
+                if st.button(f"✅ Use these changes in {item['file']}", key=f"qa-use:{item['id']}"):
+                    ovr = h.override_path(ss.project, item["file"], raw.get("overrides", "overrides"))
+                    ovr.parent.mkdir(parents=True, exist_ok=True)
+                    ovr.write_text(item["sql"], encoding="utf-8")
+                    ss.pop(f"edit-{item['file']}", None)
+                    item["sql"] = None
+                    ss.claude_flash = f"Saved as a manual fix for {item['file']}. Run Convert (or Deploy) again to apply it."
+                    st.rerun()
+    if history and st.button("🗑 Clear the conversation", key="claude-qa-clear"):
+        ss.pop(hist_key, None)
         st.rerun()
