@@ -90,10 +90,12 @@ def _upload(wh: Warehouse, cfg: ProjectConfig, f: dict[str, Any], schema_map: di
         return {"file": f["file"], "statements": 1, "passed": 0, "ok": False, "results": [
             {"n": 1, "kind": f["kind"], "action": "skip", "ok": False, "error": "Not converted - nothing to upload"}]}
     text = src.read_text(encoding="utf-8-sig")
+    renamed = 0
     if f["kind"] == "notebook":
-        from .rules import map_schemas_in_notebook
+        from .rules import map_schemas_in_notebook_counted
 
-        text = with_target_schema(map_schemas_in_notebook(text, schema_map or {}), cfg)
+        text, renamed = map_schemas_in_notebook_counted(text, schema_map or {})
+        text = with_target_schema(text, cfg)
     folder = workspace_folder(wh, cfg)
     name = f["file"].replace("\\", "/")
     path = f"{folder}/{name}"
@@ -105,7 +107,8 @@ def _upload(wh: Warehouse, cfg: ProjectConfig, f: dict[str, Any], schema_map: di
         result.update(ok=True, path=path.removesuffix(".py") if f["kind"] == "notebook" else path)
     except Exception as e:  # the SDK raises several error types; report the message
         result.update(ok=False, error=_first_line(str(e)))
-    return {"file": f["file"], "statements": 1, "passed": int(result["ok"]), "ok": result["ok"], "results": [result]}
+    return {"file": f["file"], "statements": 1, "passed": int(result["ok"]), "ok": result["ok"], "results": [result],
+            "renamed": renamed}
 
 
 def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool = False, recreate: bool = False,
@@ -121,17 +124,20 @@ def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool =
     from dataclasses import replace
 
     from .fit import excluded_files
-    from .rules import map_schemas
+    from .rules import map_schemas_counted
 
     # The table scripts are rebuilt for today's target (the catalog may have changed since the assessment), and the
     # warehouse's own schemas (dw, stg, ...) are mapped to the target in every statement.
     smap = deploy_schema_map(cfg)
     fresh: dict[str, Path] = {}
+    rebuilt: dict[str, int] = {}
     if (load_state(cfg).get("inventory") or {}).get("tables"):
         from .schema import build_scripts
 
         try:
-            fresh = {s["file"]: Path(s["path"]) for s in build_scripts(replace(cfg, schema_map=smap))["files"]}
+            built = build_scripts(replace(cfg, schema_map=smap))["files"]
+            fresh = {s["file"]: Path(s["path"]) for s in built}
+            rebuilt = {s["file"]: s["tables"] for s in built}
         except ValueError:
             fresh = {}
 
@@ -156,7 +162,7 @@ def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool =
         hand_fixed = bool(cfg.overrides_dir) and (cfg.overrides_dir / f["file"]).is_file()
         if f["file"] in fresh and not hand_fixed:
             src = fresh[f["file"]]
-        sql = map_schemas(src.read_text(encoding="utf-8-sig"), smap)
+        sql, renamed = map_schemas_counted(src.read_text(encoding="utf-8-sig"), smap)
         results = []
         for i, stmt in enumerate(split_statements(sql), 1):
             kind = statement_kind(stmt)
@@ -180,7 +186,8 @@ def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool =
                                 "statement": stmt[:300]})
         passed = sum(r["ok"] for r in results)
         files.append({"file": f["file"], "statements": len(results), "passed": passed,
-                      "ok": passed == len(results), "results": results})
+                      "ok": passed == len(results), "results": results, "renamed": renamed,
+                      "rebuilt": f["file"] in fresh and not hand_fixed})
 
     summary = {
         "target": cfg.target_schema,
@@ -192,6 +199,8 @@ def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool =
         "kept_existing": sum(1 for f in files for r in f["results"] if r["action"] == "exists"),
         "left_out": len(left_out),
     }
-    result = {"summary": summary, "files": files}
+    auto_fixed = {"target": cfg.target_schema, "schema_map": smap, "scripts_rebuilt": rebuilt,
+                  "renamed": {f["file"]: f["renamed"] for f in files if f.get("renamed")}}
+    result = {"summary": summary, "files": files, "auto_fixed": auto_fixed}
     save_step(cfg, "deploy", result)
     return result

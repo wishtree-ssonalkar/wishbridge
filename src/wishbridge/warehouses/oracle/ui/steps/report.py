@@ -222,6 +222,7 @@ def _code_migration_report(cfg, raw, state) -> None:
         st.button("Start the data migration →", type="primary", key="to-data-migration", on_click=_start_data_migration,
                   help="Switches this project to the data migration phase: map the tables and copy the data.")
 
+    _auto_fixed(d)
     st.markdown("#### What was created")
     st.dataframe(pd.DataFrame([{
         "file": f["file"],
@@ -366,3 +367,25 @@ def _claude_fix_deploy(cfg, raw, state, failed) -> None:
             fx._batch_progress(bkey)
             return
         fx._batch_results(raw, bkey)
+
+
+def _auto_fixed(d) -> None:
+    """What WishBridge fixed by itself during this deploy (no file was changed for it)."""
+    a = d.get("auto_fixed")
+    if not a or not (a.get("schema_map") or a.get("scripts_rebuilt")):
+        return
+    with st.container(border=True):
+        st.markdown("#### 🛠 Fixed automatically by WishBridge")
+        st.caption("Applied while deploying - your files keep the original names, so a later change of catalog or "
+                   "schema in Settings just works. Nothing to save.")
+        if a.get("schema_map"):
+            st.markdown("**Source schemas mapped to Databricks:** " + ", ".join(
+                f"`{s}` → `{t}`" for s, t in a["schema_map"].items()))
+        if a.get("scripts_rebuilt"):
+            st.markdown(f"**Table scripts rebuilt for `{a['target']}`:** " + ", ".join(
+                f"{f} ({n} table{'s' if n != 1 else ''})" for f, n in a["scripts_rebuilt"].items()))
+        renamed = a.get("renamed") or {}
+        if renamed:
+            st.markdown(f"**Names renamed in {len(renamed)} file(s)** ({sum(renamed.values())} in total):")
+            st.dataframe(pd.DataFrame([{"file": f, "names renamed": n} for f, n in renamed.items()]),
+                         width="stretch", hide_index=True)
