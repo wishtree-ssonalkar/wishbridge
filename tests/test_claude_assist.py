@@ -154,3 +154,16 @@ def test_an_edit_that_does_not_match_fails_clearly():
     s = ai.apply_edits("a = 1\n", "<<<<<<< SEARCH\nzzz\n=======\ny\n>>>>>>> REPLACE")
     assert s.status == "failed" and "does not match" in s.notes
     assert ai.apply_edits("a = 1\n", "NOTES:\n- nothing to change").sql == "a = 1\n"
+
+
+def test_401_means_sign_in_again(monkeypatch):
+    _claude_code(monkeypatch, {"is_error": True, "result": "Failed to authenticate. API Error: 401 Invalid access token."},
+                 signed_in=True)
+    s = ai.ask_claude("SSIS", "notebook", "", "x = 1", [], "", "claude-sonnet-5-5")
+    assert s.status == "failed" and "claude auth logout" in s.notes and "temporary" not in s.notes
+
+
+def test_connection_test_reports_quickly(monkeypatch):
+    _claude_code(monkeypatch, {"is_error": False, "result": "OK"})
+    ok, msg = ai.test_claude_code("claude-sonnet-5-5")
+    assert ok and msg.startswith("Claude Code answered in")

@@ -248,6 +248,10 @@ def _ask_claude_code(system: str, user: str, model: str, effort: str = "high", t
                                                             f"exit code {proc.returncode}")) from None
     result = str(out.get("result") or "")
     if out.get("is_error"):
+        if re.search(r"\b401\b|invalid access token|invalid.{0,20}token", result, re.IGNORECASE):
+            raise AssistError("Claude Code's saved sign-in is no longer accepted by Claude (" + result[:160] + "). "
+                              "Sign in again: in a terminal run `claude auth logout` and then `claude auth login` "
+                              "(or click Sign in to Claude Code), then click Test connection.")
         if re.search(r"authenticat|not logged in|oauth", result, re.IGNORECASE):
             signed_in, _ = claude_code_status()  # confirm before telling the person to sign in
             if not signed_in:
@@ -456,3 +460,27 @@ def project_context(cfg, *texts: str) -> str:
     if files:
         lines.append("Code files in the project: " + ", ".join(files[:200]))
     return "<project_context>\n" + "\n".join(lines) + "\n</project_context>"
+
+
+def claude_code_version() -> str:
+    exe = _claude_code_exe()
+    if not exe:
+        return ""
+    try:
+        out = subprocess.run([exe, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    m = re.search(r"\d+\.\d+\.\d+", out or "")
+    return m.group(0) if m else ""
+
+
+def test_claude_code(model: str, seconds: int = 60) -> tuple[bool, str]:
+    """A tiny real request with a short limit: does Claude Code answer on this computer right now?"""
+    started = time.time()
+    try:
+        text = _ask_claude_code("Reply with exactly: OK", "", model, "low", timeout=seconds)
+    except AssistError as e:
+        return False, str(e)
+    took = time.time() - started
+    return True, f"Claude Code answered in {took:.0f} s{'' if 'OK' in text else ' (unexpected answer: ' + text[:60] + ')'}."

@@ -163,7 +163,21 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
                 ss.claude_code_status = ai.claude_code_status()
         signed_in, msg = ss.claude_code_status
         if signed_in:
-            st.caption(f"✅ {msg}")
+            t1, t2 = st.columns([4, 1])
+            tested = ss.get("claude_code_test")
+            if tested is None:
+                t1.caption(f"✅ {msg} Not tested yet: **Test connection** checks that Claude really answers.")
+            elif tested[0]:
+                t1.caption(f"✅ {msg} {tested[1]}")
+            else:
+                t1.error(tested[1])
+            if t2.button("🔌 Test connection", key="claude-test"):
+                with st.spinner("Sending a tiny request to Claude (up to 60 s)..."):
+                    ss.claude_code_test = ai.test_claude_code(model)
+                st.rerun()
+            if tested is not None and not tested[0]:
+                signed_in = False
+                _setup_steps("claude-code", "Claude Code did not answer the test.")
         else:
             _setup_steps("claude-code", msg)
     backend, how = ai.assist_backend(chosen, cfg.profile, endpoint)
@@ -241,6 +255,11 @@ def _setup_steps(via: str, why: str) -> None:
                 "2. Sign in with your Claude account (Wishtree's Claude plan) and allow access.\n"
                 "3. When the window says you are signed in, close it and click **↻ Check again**.")
             st.code("claude auth login", language="bash")
+            st.markdown("If it says **401 Invalid access token**, sign out first, update Claude Code, then sign in:")
+            st.code("claude auth logout\nclaude update\nclaude auth login", language="bash")
+            version = ai.claude_code_version()
+            if version:
+                st.caption(f"Claude Code on this computer: version {version}.")
             c1, c2 = st.columns(2)
             if c1.button("🔑 Sign in to Claude Code", key="claude-sign-in"):
                 problem = ai.open_claude_sign_in()
@@ -248,6 +267,7 @@ def _setup_steps(via: str, why: str) -> None:
                                                                 "the browser, then click Check again.")
             if c2.button("↻ Check again", key="claude-recheck"):
                 ss.pop("claude_code_status", None)
+                ss.pop("claude_code_test", None)
                 st.rerun()
             st.caption("Not installed? Install Claude Code from claude.com/claude-code, then restart WishBridge.")
         elif via == "databricks":
