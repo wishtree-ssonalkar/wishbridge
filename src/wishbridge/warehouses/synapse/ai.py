@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +37,7 @@ class Suggestion:
     sql: str | None
     notes: str
     status: str  # "ok", "skipped", "failed"
+    seconds: float = 0.0  # how long Claude took (Fix code shows it)
 
 
 class AssistError(RuntimeError):
@@ -120,6 +122,7 @@ WishBridge found, and notes from the engineer doing the migration.
 Fix the open issues and anything the engineer asks. Preserve the original behaviour exactly; where Databricks cannot
 express something identically, choose the closest equivalent and add a REVIEW comment explaining the difference.
 Keep table and column names as in the Databricks version unless the engineer's notes say otherwise.
+Use the project context (Databricks target, table definitions, other objects) to get names and types right.
 Never invent tables, columns, connection details or credentials: where something is unknown, add a REVIEW comment.
 You have no tools: answer with text only, and be brief.
 
@@ -215,33 +218,45 @@ def _ask_api(system: str, user: str, model: str, effort: str = "high") -> str:
     return ("WARNING: the answer was cut short.\n" if response.stop_reason == "max_tokens" else "") + text
 
 
-def _ask_claude_code(system: str, user: str, model: str, effort: str = "high") -> str:
-    """Claude Code, headless, with every tool and MCP server switched off: it can only answer with text."""
+def _ask_claude_code(system: str, user: str, model: str, effort: str = "high", timeout: int = 600,
+                     on_start=None) -> str:
+    """Claude Code, headless, with every tool and MCP server switched off: it can only answer with text.
+    on_start(process) lets Fix code cancel it."""
     exe = _claude_code_exe()
     if not exe:
         raise AssistError("Claude Code is not installed on this computer.")
-    with tempfile.TemporaryDirectory(prefix="wishbridge-claude-") as empty:  # no project files for it to see
+    with tempfile.TemporaryDirectory(prefix="wishbridge-claude-", ignore_cleanup_errors=True) as empty:  # no files to see
+        proc = subprocess.Popen(
+            [exe, "-p", "--model", model, "--effort", effort, "--tools", "", "--strict-mcp-config",
+             "--no-session-persistence", "--output-format", "json"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+            errors="replace", cwd=empty, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if on_start is not None:
+            on_start(proc)
         try:
-            proc = subprocess.run(
-                [exe, "-p", "--model", model, "--effort", effort, "--tools", "", "--strict-mcp-config",
-                 "--no-session-persistence",
-                 "--output-format", "json"],
-                input=system + "\n\n" + user, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                cwd=empty, timeout=900)
+            stdout, stderr = proc.communicate(system + "\n\n" + user, timeout=timeout)
         except subprocess.TimeoutExpired as e:
-            raise AssistError("Claude Code did not answer within 15 minutes.") from e
-    lines = [ln for ln in (proc.stdout or "").splitlines() if ln.lstrip().startswith("{")]
+            proc.kill()
+            proc.communicate()
+            raise AssistError(f"Claude did not answer within {timeout // 60} minutes - the Claude service may be busy "
+                              "right now. Ask again in a moment, or choose Fast.") from e
+    lines = [ln for ln in (stdout or "").splitlines() if ln.lstrip().startswith("{")]
     try:
         out = json.loads(lines[-1])
     except (IndexError, ValueError):
-        raise AssistError("Claude Code gave no answer: " + ((proc.stderr or proc.stdout or "").strip()[-500:] or
+        raise AssistError("Claude Code gave no answer: " + ((stderr or stdout or "").strip()[-500:] or
                                                             f"exit code {proc.returncode}")) from None
     result = str(out.get("result") or "")
     if out.get("is_error"):
-        if re.search(r"authenticat|not logged in|log ?in|oauth", result, re.IGNORECASE):
-            raise AssistError("Claude Code is not signed in on this computer: run `claude auth login` in a terminal, "
-                              "then ask again.")
-        raise AssistError(f"Claude Code: {result or out.get('terminal_reason') or 'unknown error'}")
+        if re.search(r"authenticat|not logged in|oauth", result, re.IGNORECASE):
+            signed_in, _ = claude_code_status()  # confirm before telling the person to sign in
+            if not signed_in:
+                raise AssistError("Claude Code is not signed in on this computer: click Sign in to Claude Code "
+                                  "(or run `claude auth login`), then ask again.")
+            raise AssistError(f"Claude Code could not renew its sign-in this time ({result}). It is still signed "
+                              "in, so this is temporary: click Ask again.")
+        raise AssistError(f"Claude Code: {result or out.get('terminal_reason') or 'unknown error'}. Click Ask again; "
+                          "if it keeps failing, choose another connection.")
     return result
 
 
@@ -256,7 +271,8 @@ def parse_answer(text: str) -> Suggestion:
 
 
 def ask_claude(source_name: str, kind: str, original: str, current: str, issues: list[str], details: str,
-               model: str, via: str = "auto", profile: str = "", endpoint: str = "", fast: bool = True) -> Suggestion:
+               model: str, via: str = "auto", profile: str = "", endpoint: str = "", fast: bool = True,
+               context: str = "", on_start=None) -> Suggestion:
     """One corrected version of a file for a person to review in Fix code; never saved by itself."""
     backend, why = assist_backend(via, profile, endpoint)
     if backend is None:
@@ -269,16 +285,22 @@ def ask_claude(source_name: str, kind: str, original: str, current: str, issues:
             f"<databricks_version>\n{_cap(current)}\n</databricks_version>\n\n"
             f"<open_issues>\n{issue_lines}\n</open_issues>\n\n"
             f"<engineer_notes>\n{details.strip() or 'none'}\n</engineer_notes>")
+    if context.strip():
+        user = context.strip() + "\n\n" + user
+    started = time.time()
     try:
         if backend == "databricks":
             text = _ask_databricks(system, user, profile, endpoint)
         elif backend == "api":
             text = _ask_api(system, user, model, "medium" if fast else "high")
         else:
-            text = _ask_claude_code(system, user, model, "medium" if fast else "high")
+            text = _ask_claude_code(system, user, model, "medium" if fast else "high",
+                                    timeout=300 if fast else 600, on_start=on_start)
     except AssistError as e:
-        return Suggestion(None, str(e), "failed")
-    return apply_edits(current, text)
+        return Suggestion(None, str(e), "failed", time.time() - started)
+    s = apply_edits(current, text)
+    s.seconds = time.time() - started
+    return s
 
 
 # ---------------------------------------------------------------- Claude served in the Databricks workspace
@@ -395,3 +417,42 @@ def apply_edits(current: str, text: str) -> Suggestion:
                                     f"`{first}`). Click Ask again.", "failed")
         new = done
     return Suggestion(new, notes, "ok")
+
+
+def project_context(cfg, *texts: str) -> str:
+    """The project's background for Claude: the Databricks target, the definitions of the tables these texts use
+    (read from the warehouse database), and the names of the other code objects and files. Code names only - no data."""
+    import csv
+
+    words = " ".join(texts).lower()
+    lines = [f"Project: {cfg.name} - {cfg.source.label} code being migrated to Databricks.",
+             f"Databricks target: the migrated tables and code live in `{cfg.catalog}.{cfg.schema}`."]
+    if cfg.schema_map:
+        lines.append("Schema mapping (source schema -> Databricks): "
+                     + ", ".join(f"{k} -> {v}" for k, v in cfg.schema_map.items()))
+    src = getattr(cfg, "source_catalog", "")
+    lines.append(f"The source system is reachable in Databricks as the catalog `{src}` (Lakehouse Federation)." if src
+                 else "No Databricks catalog is set yet for the source system: where the code reads the source "
+                      "system, keep the names and add a REVIEW comment.")
+    tables: dict[str, list[str]] = {}
+    inv = cfg.output_dir / "inventory" / "inventory.csv"
+    if inv.is_file():
+        with open(inv, encoding="utf-8-sig", newline="") as fh:
+            for r in csv.DictReader(fh):
+                t = (r.get("table_name") or "").strip()
+                if t and re.search(rf"\b{re.escape(t.lower())}\b", words):
+                    null = "" if (r.get("is_nullable") or "YES").upper() == "YES" else " NOT NULL"
+                    tables.setdefault(f"{r.get('schema_name')}.{t}", []).append(
+                        f"{r.get('column_name')} {r.get('data_type')}{null}")
+    if tables:
+        lines.append("Tables this file uses, as defined in the warehouse database:")
+        lines += [f"- {t} ({', '.join(cols)})" for t, cols in sorted(tables.items())]
+    dbc = cfg.path.parent / "database_code"
+    objs = sorted(p.stem for p in dbc.rglob("*.sql")) if dbc.is_dir() else []
+    if objs:
+        lines.append("Code objects in the warehouse database: " + ", ".join(objs[:200]))
+    files = (sorted(p.relative_to(cfg.input_dir).as_posix() for p in cfg.input_dir.rglob("*") if p.is_file())
+             if cfg.input_dir.is_dir() else [])
+    if files:
+        lines.append("Code files in the project: " + ", ".join(files[:200]))
+    return "<project_context>\n" + "\n".join(lines) + "\n</project_context>"

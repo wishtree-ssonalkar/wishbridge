@@ -22,16 +22,25 @@ def test_backend_prefers_the_api_key_then_claude_code(monkeypatch):
     assert ai.assist_backend()[0] == "api"
 
 
-def _claude_code(monkeypatch, answer: dict):
+def _claude_code(monkeypatch, answer: dict, signed_in: bool = True):
+    """Claude Code stand-in: the request (Popen) answers `answer`; `claude auth status` (run) says signed_in."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(ai.shutil, "which", lambda name: "/usr/local/bin/claude")
     seen = {}
 
-    def fake_run(cmd, **kw):
-        seen.update(cmd=cmd, **kw)
-        return subprocess.CompletedProcess(cmd, 0, json.dumps(answer) + "\n", "")
+    class FakePopen:
+        returncode = 0
 
-    monkeypatch.setattr(ai.subprocess, "run", fake_run)
+        def __init__(self, cmd, **kw):
+            seen.update(cmd=cmd, **kw)
+
+        def communicate(self, text=None, timeout=None):
+            seen["input"] = text
+            return json.dumps(answer) + "\n", ""
+
+    monkeypatch.setattr(ai.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(ai.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(
+        cmd, 0, json.dumps({"loggedIn": signed_in}), ""))
     return seen
 
 
@@ -48,9 +57,34 @@ def test_claude_code_runs_with_no_tools_in_an_empty_folder(monkeypatch, tmp_path
 
 
 def test_claude_code_not_signed_in_says_what_to_do(monkeypatch):
-    _claude_code(monkeypatch, {"is_error": True, "result": "Failed to authenticate: OAuth session expired"})
+    _claude_code(monkeypatch, {"is_error": True, "result": "Failed to authenticate: OAuth session expired"},
+                 signed_in=False)
     s = ai.ask_claude("SSIS", "notebook", "", "x = 1", [], "", "claude-opus-5-5")
     assert s.status == "failed" and "claude auth login" in s.notes
+
+
+def test_a_sign_in_hiccup_while_signed_in_is_not_called_signed_out(monkeypatch):
+    _claude_code(monkeypatch, {"is_error": True, "result": "OAuth session expired and could not be refreshed"},
+                 signed_in=True)
+    s = ai.ask_claude("SSIS", "notebook", "", "x = 1", [], "", "claude-opus-5-5")
+    assert s.status == "failed" and "still signed in" in s.notes and "could not be refreshed" in s.notes
+
+
+def test_project_background_goes_first(monkeypatch, tmp_path):
+    from wishbridge.warehouses.ssis.config import load_config
+
+    (tmp_path / "output" / "inventory").mkdir(parents=True)
+    (tmp_path / "output" / "inventory" / "inventory.csv").write_text(
+        "schema_name,table_name,column_name,data_type,is_nullable\ndw,FactDailySales,OrderDate,date,NO\n"
+        "dw,DimProduct,ProductKey,int,NO\n", encoding="utf-8")
+    (tmp_path / "project.yml").write_text("source: ssis\ndatabricks: {catalog: workspace, schema: salesdw}\n",
+                                          encoding="utf-8")
+    ctx = ai.project_context(load_config(tmp_path / "project.yml"), "INSERT INTO dw.FactDailySales ...")
+    assert "`workspace.salesdw`" in ctx and "dw.FactDailySales (OrderDate date NOT NULL)" in ctx
+    assert "DimProduct" not in ctx  # only the tables this file uses
+    seen = _claude_code(monkeypatch, {"is_error": False, "result": "NOTES:\n- nothing"})
+    ai.ask_claude("SSIS", "notebook", "", "x = 1", [], "", "m", context=ctx)
+    assert seen["input"].index("<project_context>") < seen["input"].index("<original>")
 
 
 def test_project_switch_is_off_until_turned_on(tmp_path):

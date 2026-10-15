@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import difflib
+import threading
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -15,6 +17,7 @@ from wishbridge.warehouses.datastage.ui import helpers as h
 from wishbridge.warehouses.datastage.ui.common import STATUS_ICON
 
 ss = st.session_state
+_JOBS: dict[str, dict] = {}  # Claude requests running in the background: "<project>|<file>" -> job
 
 
 def render(cfg, raw, packages) -> None:
@@ -176,19 +179,38 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
                            placeholder="e.g. The order database is the catalog oltp_fed. "
                                        "Remove the call to usp_SendLoadReport.")
     asked = ss.get(key)
-    if st.button("✨ Ask again" if asked else "✨ Ask Claude", disabled=backend is None, key=f"claude-ask:{pick}"):
+    job_key = f"{ss.project}|{pick}"
+    if st.button("✨ Ask again" if asked else "✨ Ask Claude", disabled=backend is None or job_key in _JOBS,
+                 key=f"claude-ask:{pick}"):
         original = (read_source(orig) if orig is not None and orig.is_file()
                     else "(no original file: made from the table definitions read from the database)")
         issues = [f"line {x['line']} [{x['severity']}]: {x['message']}" for x in todo]
-        with st.spinner("Claude is working on the file..."):
-            ss[key] = asked = ai.ask_claude(cfg.source.label, f["kind"], original, current, issues, details,
-                                            model, chosen, cfg.profile, endpoint, fast=speed == "fast")
+        context = ai.project_context(cfg, original, current)
+        job = {"started": time.time(), "proc": None, "result": None, "done": False}
+
+        def work(job=job):
+            try:
+                job["result"] = ai.ask_claude(cfg.source.label, f["kind"], original, current, issues, details, model,
+                                              chosen, cfg.profile, endpoint, fast=speed == "fast", context=context,
+                                              on_start=lambda p: job.__setitem__("proc", p))
+            except Exception as e:  # noqa: BLE001 - keep the page alive, show what happened
+                job["result"] = ai.Suggestion(None, f"Asking Claude failed: {e}", "failed")
+            job["done"] = True
+
+        _JOBS[job_key] = job
+        threading.Thread(target=work, daemon=True).start()
+        ss.pop(key, None)
+        asked = None
+    if job_key in _JOBS:
+        _wait_for_claude(job_key, key)
+        return
     if not asked:
         return
+    took = f" ({asked.seconds:.0f} s)" if asked.seconds else ""
     if asked.status != "ok":
-        st.error(asked.notes)
+        st.error(asked.notes + took)
         return
-    st.success("Claude's suggestion is below. Check it before using it: nothing is saved until you choose.")
+    st.success(f"Claude's suggestion{took} is below. Check it before using it: nothing is saved until you choose.")
     if asked.notes:
         st.markdown(asked.notes)
     diff = "".join(difflib.unified_diff(current.splitlines(keepends=True), asked.sql.splitlines(keepends=True),
@@ -243,3 +265,23 @@ def _setup_steps(via: str, why: str) -> None:
                 "2. Save it for your Windows user with the command below (put your key in place of the dots).\n"
                 "3. Close and restart WishBridge so it sees the key.")
             st.code("setx ANTHROPIC_API_KEY \"sk-ant-...\"", language="bash")
+
+
+@st.fragment(run_every=2)
+def _wait_for_claude(job_key: str, key: str) -> None:
+    """While Claude works: a live timer and Cancel; the page stays usable, and only one request runs per file."""
+    job = _JOBS.get(job_key)
+    if job is None:
+        return
+    if job["done"]:
+        ss[key] = job["result"]
+        _JOBS.pop(job_key, None)
+        st.rerun()
+    c1, c2 = st.columns([5, 1])
+    c1.info(f"⏳ Claude is working on the file... {time.time() - job['started']:.0f} s (usually 10-60 s).")
+    if c2.button("✖ Cancel", key=f"claude-cancel:{job_key}"):
+        proc = job.get("proc")
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+        _JOBS.pop(job_key, None)
+        st.rerun()
