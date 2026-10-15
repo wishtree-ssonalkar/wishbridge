@@ -304,6 +304,11 @@ def render(cfg, raw, packages) -> None:
                     dbt = sd.DB_TYPES[db_type]
                     host = d2.text_input("Server (host) :red[*]", value=sdb.get("host", ""), placeholder="sqlprod01.client.com", key="sdb_host")
                     port = d3.number_input("Port", value=int(sdb.get("port") or dbt.port), step=1, key="sdb_port")
+                    if h.is_local_host(host):
+                        st.warning(f"**`{host}` is this computer.** Databricks runs in the cloud and cannot reach a "
+                                   "database on this computer, and a federation connection needs a SQL user and "
+                                   "password. Use the server's network name (e.g. sqlprod01.client.com) or, for a "
+                                   "database on a laptop, choose **Exported files in a Unity Catalog volume** above.")
                     d1, d2, d3 = st.columns(3)
                     database = d1.text_input(dbt.catalog_label + (" :red[*]" if dbt.catalog_option else ""), value=sdb.get("database", ""), key="sdb_db",
                                              disabled=dbt.catalog_option is None,

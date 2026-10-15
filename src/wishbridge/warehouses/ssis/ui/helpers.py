@@ -268,3 +268,16 @@ def list_workspace(profile: str) -> dict[str, Any]:
                 for c in w.catalogs.list() if c.name]
     return {"profile": profile, "host": w.config.host.rstrip("/"), "user": user,
             "warehouses": warehouses, "catalogs": catalogs}
+
+
+def is_local_host(host: str) -> bool:
+    """True for a server name that means 'this computer' - unreachable from Databricks in the cloud."""
+    import socket
+
+    name = (host or "").strip().lower().split("\\")[0].split(",")[0].split(":")[0]
+    if (host or "").strip().startswith(".") or name in ("", ".", "(local)", "localhost", "127.0.0.1", "::1"):
+        return bool((host or "").strip())
+    try:
+        return name == socket.gethostname().lower()
+    except OSError:
+        return False
