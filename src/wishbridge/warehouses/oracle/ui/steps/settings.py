@@ -3,6 +3,8 @@ migration."""
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import streamlit as st
 
@@ -13,6 +15,7 @@ from wishbridge.warehouses.oracle.ui import helpers as h
 from wishbridge.warehouses.oracle.ui.common import required
 
 ss = st.session_state
+NEW_CATALOG = "➕ New catalog…"
 
 
 def settings_problems(offline: bool, v: dict) -> list[str]:
@@ -245,19 +248,41 @@ def render(cfg, raw, packages) -> None:
                 with c2:
                     cats = [c["name"] for c in ws["catalogs"]] if ws else []
                     cur_cat = dbx.get("catalog", "main")
+                    new_cat = False
                     if cats:
-                        catalog = st.selectbox("Catalog :red[*]", cats if cur_cat in cats else [cur_cat] + cats,
-                                               index=(cats if cur_cat in cats else [cur_cat] + cats).index(cur_cat))
+                        options = cats + [NEW_CATALOG]
+                        start = cur_cat if cur_cat in cats else NEW_CATALOG
+                        picked = st.selectbox("Catalog :red[*]", options, index=options.index(start), key="catalog_pick",
+                                              help="Pick an existing catalog, or choose New catalog to have WishBridge "
+                                                   "create one when you press Next.")
+                        if picked == NEW_CATALOG:
+                            catalog = st.text_input("New catalog name :red[*]", key="catalog_new",
+                                                    value="" if cur_cat in cats else cur_cat,
+                                                    placeholder="e.g. wishbridge_demo").strip()
+                            new_cat = True
+                        else:
+                            catalog = picked
                     else:
-                        catalog = st.text_input("Catalog :red[*]", value=cur_cat)
+                        catalog = st.text_input("Catalog :red[*]", value=cur_cat,
+                                                help="An existing catalog, or a new name - WishBridge creates it when "
+                                                     "you press Next.").strip()
+                        new_cat = True  # not checked yet: created on Next if it does not exist
+                    ss["create_catalog"] = new_cat
                     if not str(catalog or "").strip():
                         required("Required: the Databricks catalog.")
-                    elif cats and catalog not in cats:
-                        required(f"'{catalog}' does not exist in this workspace - pick one from the list.")
+                    elif not re.fullmatch(r"[A-Za-z0-9_]+", catalog):
+                        required("Catalog names use letters, digits and _ only.")
+                    elif new_cat and cats and catalog not in cats:
+                        st.caption(f"`{catalog}` is created in Databricks when you press **Next** (needs the CREATE "
+                                   "CATALOG permission).")
                 with c3:
-                    schema = st.text_input("Test schema :red[*]", value=dbx.get("schema", "wishbridge"))
+                    schema = st.text_input("Test schema :red[*]", value=dbx.get("schema", "wishbridge"),
+                                           help="An existing schema or a new name - WishBridge creates it when you "
+                                                "press Next.")
                     if not schema.strip():
                         required("Required: the test schema.")
+                    elif not re.fullmatch(r"[A-Za-z0-9_]+", schema.strip()):
+                        required("Schema names use letters, digits and _ only.")
                 scope_labels = {"all": "Everything", "recommended": "Only what belongs on Databricks (fit check)"}
                 scope = st.selectbox("What to deploy", list(scope_labels), format_func=scope_labels.get,
                                      index=list(scope_labels).index(scope) if scope in scope_labels else 0,
@@ -267,8 +292,9 @@ def render(cfg, raw, packages) -> None:
                 if looks_like_prod(f"{catalog}.{schema}"):
                     required("This looks like a production schema - use a test schema. WishBridge will not deploy there.")
 
-                target_done = (bool(str(catalog or "").strip()) and bool(str(schema or "").strip())
-                               and not looks_like_prod(f"{catalog}.{schema}") and not (cats and catalog not in cats))
+                target_done = (bool(re.fullmatch(r"[A-Za-z0-9_]+", str(catalog or "")))
+                               and bool(re.fullmatch(r"[A-Za-z0-9_]+", str(schema or "").strip()))
+                               and not looks_like_prod(f"{catalog}.{schema}"))
                 if not target_done:
                     next_part_hint()
                 else:
@@ -472,7 +498,9 @@ def render(cfg, raw, packages) -> None:
                            disabled=bool(problems)):
         if not offline:  # ask the workspace now, not at deploy time
             with st.spinner("Checking the workspace, catalog and SQL warehouse..."):
-                target_errors = h.check_target(profile, str(catalog).strip(), str(warehouse or "").strip())
+                target_errors = h.check_target(profile, str(catalog).strip(), str(warehouse or "").strip(),
+                                               schema=str(schema or "").strip(),
+                                               create_catalog=bool(ss.get("create_catalog")))
             if target_errors:
                 ss["settings_errors"] = target_errors
                 st.rerun()

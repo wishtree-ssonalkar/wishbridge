@@ -233,8 +233,10 @@ def sign_in(host: str, profile: str) -> tuple[bool, str]:
     return True, f"Signed in to {host} as profile '{profile}'"
 
 
-def check_target(profile: str, catalog: str, warehouse_id: str = "") -> list[str]:
-    """What is wrong with the Databricks target, asked from the workspace itself (empty: all fine)."""
+def check_target(profile: str, catalog: str, warehouse_id: str = "", schema: str = "",
+                 create_catalog: bool = False) -> list[str]:
+    """What is wrong with the Databricks target, asked from the workspace itself (empty: all fine).
+    A new catalog (when the person chose New catalog) and a new schema are created here."""
     from databricks.sdk import WorkspaceClient
 
     try:
@@ -243,9 +245,26 @@ def check_target(profile: str, catalog: str, warehouse_id: str = "") -> list[str
     except Exception as e:  # the SDK raises many types; the message says what is wrong
         return [f"Could not reach the workspace with this login: {str(e).splitlines()[0][:200]}"]
     problems = []
+    if catalog not in names and create_catalog:
+        try:
+            w.catalogs.create(name=catalog, comment="Created by WishBridge")
+            names.append(catalog)
+        except Exception as e:  # noqa: BLE001 - permission, storage location, ...
+            problems.append(f"Could not create catalog '{catalog}': {str(e).splitlines()[0][:300]}. Creating a "
+                            "catalog needs the CREATE CATALOG permission (and, in some workspaces, a storage "
+                            "location) - ask the workspace admin, or pick an existing catalog.")
+            return problems
     if catalog not in names:
         problems.append(f"Catalog '{catalog}' does not exist in this workspace. Choose one of: "
-                        + ", ".join(sorted(names)[:15]) + " (*Load warehouses and catalogs* lists them).")
+                        + ", ".join(sorted(names)[:15]) + " (*Load warehouses and catalogs* lists them), or "
+                        "choose *New catalog* to create it.")
+    elif schema:
+        try:
+            if schema.lower() not in {s.name.lower() for s in w.schemas.list(catalog_name=catalog) if s.name}:
+                w.schemas.create(name=schema, catalog_name=catalog, comment="Created by WishBridge")
+        except Exception as e:  # noqa: BLE001 - permission on the catalog
+            problems.append(f"Could not create schema '{catalog}.{schema}': {str(e).splitlines()[0][:300]}. It needs "
+                            "the CREATE SCHEMA permission on the catalog.")
     try:
         if warehouse_id:
             w.warehouses.get(warehouse_id)

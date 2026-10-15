@@ -54,7 +54,9 @@ def volume_of(files_root: str) -> str:
 
 
 def ensure_volume(cfg: ProjectConfig, wh) -> None:
-    wh.run(f"CREATE VOLUME IF NOT EXISTS {volume_of(cfg.files_root)}")
+    volume = volume_of(cfg.files_root)
+    wh.run(f"CREATE SCHEMA IF NOT EXISTS {volume.rsplit('.', 1)[0]}")
+    wh.run(f"CREATE VOLUME IF NOT EXISTS {volume}")
 
 
 def export_upload(cfg: ProjectConfig, wh, source: str, where: str = "") -> tuple[int, list[str]]:
