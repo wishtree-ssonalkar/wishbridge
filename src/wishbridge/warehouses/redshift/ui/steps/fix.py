@@ -318,6 +318,13 @@ def _start_job(job_key: str, req: dict) -> None:
 
     def work():
         try:
+            if req.get("problems"):
+                job["result"] = ai.ask_problem(req["page"], req["problems"], req["settings"], req["tables"],
+                                               req["details"], req["context"], req["model"], req["via"],
+                                               req["profile"], req["endpoint"], fast=req["fast"],
+                                               on_start=lambda p: job.__setitem__("proc", p))
+                job["done"] = True
+                return
             if req.get("question"):
                 job["result"] = ai.ask_question(req["question"], req["source"], req["kind"], req["original"],
                                                 req["current"], req["issues"], req["overview"], req["context"],

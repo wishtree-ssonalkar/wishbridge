@@ -295,6 +295,17 @@ def _data_migration_report(cfg, raw, state) -> None:
             "details": t.get("error") or ", ".join(f"{ch['check']}: {ch['source']} → {ch['target']}"
                                                    for ch in t.get("checks", []) if not ch["match"]) or "all checks equal",
         } for t in quick["tables"]]), width="stretch", hide_index=True)
+    problems = [f"Copy failed for {t['source']} -> {t['target']}: {t.get('error', '')}" for t in failed]
+    targets = [t["target"] for t in failed]
+    for t in (quick or {}).get("tables", []):
+        if t["status"] != "match":
+            problems.append(f"Source vs Databricks for {t['target']}: {t['status']} - " + (t.get("error") or ", ".join(
+                f"{ch['check']}: source {ch['source']}, Databricks {ch['target']}"
+                for ch in t.get("checks", []) if not ch["match"])))
+            targets.append(t["target"])
+    from wishbridge.warehouses.snowflake.ui.claude_panel import claude_problem_panel
+
+    claude_problem_panel(cfg, raw, "Data report", problems, targets)
     _full_report(cfg)
 
 

@@ -462,15 +462,21 @@ def render(cfg, raw, packages) -> None:
     after = order[order.index("settings") + 1] if "settings" in order[:-1] else ("data" if to_data else "code")
     names = {"code": "add the code", "data": "map the data"}
     next_label = f"Next: {names.get(after) or (ss.get('step_labels') or {}).get(after, after).lower()} →"
+    for err in ss.get("settings_errors") or []:
+        st.error(err)
+    if ss.get("settings_errors"):
+        from wishbridge.warehouses.sqlserver.ui.claude_panel import claude_problem_panel
+
+        claude_problem_panel(cfg, raw, "Settings", list(ss["settings_errors"]))
     if ready and st.button(next_label, type="primary", help="Checks and saves the settings and opens the next step.",
                            disabled=bool(problems)):
         if not offline:  # ask the workspace now, not at deploy time
             with st.spinner("Checking the workspace, catalog and SQL warehouse..."):
                 target_errors = h.check_target(profile, str(catalog).strip(), str(warehouse or "").strip())
             if target_errors:
-                for err in target_errors:
-                    st.error(err)
-                return
+                ss["settings_errors"] = target_errors
+                st.rerun()
+            ss.pop("settings_errors", None)
         new = dict(raw)
         new["source"] = source
         if transpiler == "auto":

@@ -187,6 +187,28 @@ def render(cfg, raw, packages) -> None:
                                         "rows": t.get("rows"), "error": t.get("error", "")} for t in ld["tables"]]),
                          hide_index=True, width="stretch")
             next_button("Next: see the updated report →", "results", "next-data")
+    _claude_data_problems(cfg, raw)
+
+
+def _claude_data_problems(cfg, raw) -> None:
+    """Problems of the check and of the last copy, for Claude to explain and fix."""
+    from wishbridge.warehouses.ssis.ui.claude_panel import claude_problem_panel
+
+    problems, targets = [], []
+    pf = ss.get("map_preflight")
+    if pf:
+        if not pf["source_ok"]:
+            problems.append(f"Check before copying - source: {pf['source_message'] or 'could not be reached'}")
+        for t in pf.get("missing_targets") or []:
+            problems.append(f"Check before copying - Databricks table does not exist: {t}")
+            targets.append(t)
+    ld = load_state(cfg).get("load") or {}
+    if ld.get("executed"):
+        for t in ld.get("tables", []):
+            if t["status"] == "failed":
+                problems.append(f"Copy failed for {t['source']} -> {t['target']}: {t.get('error', '')}")
+                targets.append(t["target"])
+    claude_problem_panel(cfg, raw, "Map the data", problems, targets)
 
 
 def _save_load_mode(raw) -> None:

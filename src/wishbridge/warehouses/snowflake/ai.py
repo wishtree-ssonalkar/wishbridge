@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .rules import Finding
@@ -38,6 +38,7 @@ class Suggestion:
     notes: str
     status: str  # "ok", "skipped", "failed"
     seconds: float = 0.0  # how long Claude took (Fix code shows it)
+    actions: list = field(default_factory=list)  # fixes the app can apply (Ask Claude about this problem)
 
 
 class AssistError(RuntimeError):
@@ -569,3 +570,87 @@ def test_claude_code(model: str, seconds: int = 60) -> tuple[bool, str]:
         return False, str(e)
     took = time.time() - started
     return True, f"Claude Code answered in {took:.0f} s{'' if 'OK' in text else ' (unexpected answer: ' + text[:60] + ')'}."
+
+
+# ---------------------------------------------------------------- settings and data problems
+
+SETTING_KEYS = ("databricks.profile", "databricks.catalog", "databricks.schema", "databricks.warehouse_id",
+                "data.method", "data.files_root", "data.file_format", "data.source_catalog", "data.mode",
+                "data.local.server", "data.local.database", "data.local.trust", "data.local.windows_login")
+
+PROBLEM_PROMPT = """You help a data engineer with the "{page}" step of a migration to Databricks (Unity Catalog, Delta
+Lake) in the WishBridge app. You get the problems shown on the screen, the project's current settings (passwords are
+never included), the table mapping, table definitions and the project background.
+First explain briefly, in plain language, what is wrong and why. Then say how to fix it.
+Base everything on what you were given. Never invent catalog, schema, table, column, server or volume names: if a name
+is not in what you were given, say what the engineer should check. You have no tools: answer with text only.
+Where the app can apply a fix, end with ONE json block (leave out anything you are not sure of):
+```json
+{{"actions": [
+  {{"type": "setting", "key": "<one of: {keys}>", "value": "<new value>", "why": "<short reason>"}},
+  {{"type": "column", "table": "<Databricks table>", "column": "<Databricks column>", "source": "<source column>", "why": "..."}},
+  {{"type": "filter", "table": "<Databricks table>", "where": "<SQL condition, or empty for all rows>", "why": "..."}},
+  {{"type": "sql", "sql": "<one Databricks SQL statement>", "why": "..."}}
+]}}
+```
+SQL may only be ALTER TABLE (never dropping anything), CREATE SCHEMA / CREATE VOLUME / CREATE TABLE ... IF NOT EXISTS,
+or COMMENT ON. Never DROP, DELETE, TRUNCATE, UPDATE, INSERT, MERGE, GRANT or REVOKE."""
+
+_FORBIDDEN_SQL = re.compile(r"\b(DROP|DELETE|TRUNCATE|UPDATE|INSERT|MERGE|GRANT|REVOKE|REPLACE|RENAME|OVERWRITE)\b",
+                            re.IGNORECASE)
+_ALLOWED_SQL = re.compile(r"^\s*(ALTER\s+TABLE|CREATE\s+(SCHEMA|VOLUME|TABLE)\s+IF\s+NOT\s+EXISTS|COMMENT\s+ON)\b",
+                          re.IGNORECASE)
+
+
+def safe_sql(sql: str) -> bool:
+    """Only additive changes, one statement."""
+    body = sql.strip().rstrip(";").strip()
+    return bool(body) and ";" not in body and bool(_ALLOWED_SQL.match(body)) and not _FORBIDDEN_SQL.search(body)
+
+
+def parse_actions(text: str) -> tuple[str, list[dict]]:
+    """Split Claude's answer into the explanation and the fixes the app may apply (anything else is dropped)."""
+    blocks = list(re.finditer(r"```json\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE))
+    if not blocks:
+        return text.strip(), []
+    answer = (text[:blocks[-1].start()] + text[blocks[-1].end():]).strip()
+    try:
+        raw = json.loads(blocks[-1].group(1)).get("actions") or []
+    except (ValueError, AttributeError):
+        return answer, []
+    actions = []
+    for a in raw if isinstance(raw, list) else []:
+        if not isinstance(a, dict):
+            continue
+        kind = a.get("type")
+        if kind == "setting" and a.get("key") in SETTING_KEYS and "value" in a:
+            actions.append(a)
+        elif kind == "column" and a.get("table") and a.get("column") and a.get("source"):
+            actions.append(a)
+        elif kind == "filter" and a.get("table") and "where" in a:
+            actions.append(a)
+        elif kind == "sql" and safe_sql(str(a.get("sql") or "")):
+            actions.append(a)
+    return answer, actions
+
+
+def ask_problem(page: str, problems: list[str], settings: str, tables: str, details: str, context: str, model: str,
+                via: str = "auto", profile: str = "", endpoint: str = "", fast: bool = True,
+                on_start=None) -> Suggestion:
+    """Explain the problems on a settings or data screen; actions = fixes the person can tick and apply."""
+    backend, why = assist_backend(via, profile, endpoint)
+    if backend is None:
+        return Suggestion(None, f"Claude is {why}.", "failed")
+    user = "\n\n".join(part for part in [
+        context.strip(),
+        "<problems_on_screen>\n" + "\n".join(f"- {p}" for p in problems) + "\n</problems_on_screen>",
+        f"<current_settings>\n{settings.strip()}\n</current_settings>",
+        f"<tables>\n{tables.strip()}\n</tables>" if tables.strip() else "",
+        f"<engineer_notes>\n{details.strip()}\n</engineer_notes>" if details.strip() else ""] if part)
+    started = time.time()
+    system = PROBLEM_PROMPT.format(page=page, keys=", ".join(SETTING_KEYS))
+    text, failed = _send(backend, system, user, model, profile, endpoint, fast, on_start)
+    if failed is not None:
+        return failed
+    answer, actions = parse_actions(text)
+    return Suggestion(None, answer or "(Claude gave no answer.)", "ok", time.time() - started, actions)
