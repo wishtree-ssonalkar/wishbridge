@@ -175,3 +175,15 @@ def test_a_hanging_claude_code_starts_the_sign_in_repair(monkeypatch):
     monkeypatch.setattr(ai, "test_claude_code", lambda model, seconds=60: (False, "Claude did not answer within 25 s"))
     s = ai.ask_claude("SSIS", "notebook", "", "x = 1", [], "", "claude-sonnet-5-5")
     assert s.status == "signin" and "quick check" in s.notes
+
+
+def test_claude_code_ignores_personal_gateway_settings(monkeypatch):
+    # seen on a real computer: ~/.claude/settings.json sent every request to a company gateway with a dead token
+    seen = _claude_code(monkeypatch, {"is_error": False, "result": "NOTES:\n- ok"})
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example.com")
+    monkeypatch.setenv("ANTHROPIC_CUSTOM_HEADERS", "X-Token: secret")
+    monkeypatch.setenv("CLAUDE_CODE_USE_GATEWAY", "1")
+    ai.ask_claude("SSIS", "notebook", "", "x = 1", [], "", "claude-sonnet-5-5")
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--setting-sources") + 1] == "project,local"
+    assert not {"ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_USE_GATEWAY"} & set(seen["env"])

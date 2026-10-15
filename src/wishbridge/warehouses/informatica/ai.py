@@ -163,6 +163,17 @@ VIA = {"databricks": "Databricks workspace (the project's login)", "claude-code"
        "api": "Claude API key (ANTHROPIC_API_KEY)"}
 
 
+# Settings that send Claude Code somewhere else (a company gateway, a fixed model or token). WishBridge uses the
+# person's own Claude sign-in, so they are left out: `--setting-sources project,local` skips ~/.claude/settings.json
+# (its "env" block), and these are removed from the environment.
+_ROUTING_ENV = ("ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_MODEL", "ANTHROPIC_AUTH_TOKEN",
+                "CLAUDE_CODE_USE_GATEWAY", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX")
+
+
+def _claude_code_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k.upper() not in _ROUTING_ENV}
+
+
 def assist_backend(via: str = "auto", profile: str = "", endpoint: str = "") -> tuple[str | None, str]:
     """Which Claude Fix code uses: ("databricks" | "api" | "claude-code" | None, what to tell the person).
     via: the project's choice; "auto" = the API key when set, else Claude Code."""
@@ -232,10 +243,10 @@ def _ask_claude_code(system: str, user: str, model: str, effort: str = "high", t
         raise AssistError("Claude Code is not installed on this computer.")
     with tempfile.TemporaryDirectory(prefix="wishbridge-claude-", ignore_cleanup_errors=True) as empty:  # no files to see
         proc = subprocess.Popen(
-            [exe, "-p", "--model", model, "--effort", effort, "--tools", "", "--strict-mcp-config",
-             "--no-session-persistence", "--output-format", "json"],
+            [exe, "-p", "--setting-sources", "project,local", "--model", model, "--effort", effort, "--tools", "",
+             "--strict-mcp-config", "--no-session-persistence", "--output-format", "json"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
-            errors="replace", cwd=empty, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            errors="replace", cwd=empty, env=_claude_code_env(), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if on_start is not None:
             on_start(proc)
         try:
@@ -372,7 +383,8 @@ def claude_code_status() -> tuple[bool, str]:
         return False, "Claude Code is not installed on this computer."
     try:
         proc = subprocess.run([exe, "auth", "status"], capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=60)
+                              errors="replace", timeout=60, env=_claude_code_env(),
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         info = json.loads(proc.stdout or "{}")
     except (OSError, subprocess.TimeoutExpired, ValueError) as e:
         return False, f"Could not ask Claude Code whether it is signed in: {e}"
