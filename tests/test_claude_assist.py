@@ -95,3 +95,14 @@ def test_databricks_lists_claude_models_and_asks_with_the_project_login(monkeypa
 def test_databricks_needs_a_chosen_model():
     assert ai.assist_backend("databricks", "DEFAULT", "")[0] is None
     assert ai.assist_backend("databricks", "", "x")[0] is None
+
+
+def test_claude_code_status_reads_auth_status(monkeypatch):
+    monkeypatch.setattr(ai.shutil, "which", lambda name: "/usr/local/bin/claude")
+    out = {"stdout": '{"loggedIn": false, "authMethod": "none"}'}
+    monkeypatch.setattr(ai.subprocess, "run",
+                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, out["stdout"], ""))
+    ok, msg = ai.claude_code_status()
+    assert not ok and "claude auth login" in msg
+    out["stdout"] = '{"loggedIn": true, "email": "dev@example.com"}'
+    assert ai.claude_code_status() == (True, "Claude Code is signed in (dev@example.com).")

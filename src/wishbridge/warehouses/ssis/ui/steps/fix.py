@@ -143,7 +143,20 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
             if pick_ep != endpoint:
                 _save_autofix(raw, endpoint=pick_ep)
                 st.rerun()
+    signed_in = True
+    if chosen == "claude-code":
+        if "claude_code_status" not in ss:
+            with st.spinner("Checking Claude Code..."):
+                ss.claude_code_status = ai.claude_code_status()
+        signed_in, msg = ss.claude_code_status
+        s1, s2 = st.columns([4, 1])
+        (s1.caption if signed_in else s1.warning)(msg)
+        if s2.button("↻ Check again", key="claude-recheck"):
+            ss.pop("claude_code_status", None)
+            st.rerun()
     backend, how = ai.assist_backend(chosen, cfg.profile, endpoint)
+    if not signed_in:
+        backend = None
     st.caption(f"Sends this file's original, the Databricks version above (with your unsaved edits) and the open "
                f"issues - never data. Uses {how}.")
     key = f"claude:{pick}"

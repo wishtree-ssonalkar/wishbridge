@@ -320,3 +320,23 @@ def _ask_databricks(system: str, user: str, profile: str, endpoint: str) -> str:
         raise AssistError(f"The Databricks model {endpoint} gave an empty answer.")
     cut = choice.finish_reason == "length"
     return ("WARNING: the answer was cut short.\n" if cut else "") + str(content)
+
+
+def claude_code_status() -> tuple[bool, str]:
+    """Is Claude Code signed in on this computer? (signed in, what to tell the person). Its sign-in is separate
+    from the Claude desktop app's."""
+    exe = _claude_code_exe()
+    if not exe:
+        return False, "Claude Code is not installed on this computer."
+    try:
+        proc = subprocess.run([exe, "auth", "status"], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60)
+        info = json.loads(proc.stdout or "{}")
+    except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+        return False, f"Could not ask Claude Code whether it is signed in: {e}"
+    if info.get("loggedIn"):
+        who = info.get("email") or info.get("account") or info.get("authMethod") or ""
+        return True, f"Claude Code is signed in{f' ({who})' if who else ''}."
+    return False, ("Claude Code is not signed in on this computer (its sign-in is separate from the Claude desktop "
+                   "app). In a terminal run `claude auth login`, finish the sign-in in the browser, then click "
+                   "Check again.")
