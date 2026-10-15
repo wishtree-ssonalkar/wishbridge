@@ -6,6 +6,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from wishbridge.warehouses.oracle.convert import original_file
 from wishbridge.warehouses.oracle.staging import read_source
 from wishbridge.warehouses.oracle.state import load_state
 from wishbridge.warehouses.oracle.ui import helpers as h
@@ -55,10 +56,16 @@ def render(cfg, raw, packages) -> None:
         left, right = st.columns(2)
         with left:
             st.markdown("**Original**")
-            orig = Path(f["input"])
-            st.code(read_source(orig) if f["input"] and orig.is_file() else
-                    ("(made from the database catalog - no original file)" if f.get("converter") == "database" else "(not found)"),
-                    language="sql")
+            orig = Path(f["input"]) if f["input"] else None
+            if f.get("converter") != "database" and (orig is None or not orig.is_file()):
+                orig = original_file(cfg, f["file"])  # older runs, or a project opened from a zip elsewhere
+            if f.get("converter") == "database":
+                st.info("Made from the table definitions read from the database: there is no original file.")
+            elif orig is None or not orig.is_file():
+                st.warning(f"The original of {f['file']} is not in this project's input folder.")
+            else:
+                st.caption(str(orig.relative_to(cfg.input_dir)) if orig.is_relative_to(cfg.input_dir) else str(orig))
+                st.code(read_source(orig), language="xml" if orig.suffix.lower() in (".dtsx", ".xml", ".dtproj") else "sql")
         with right:
             ovr = h.override_path(ss.project, f["file"], raw.get("overrides", "overrides"))
             final = Path(f["final"])
