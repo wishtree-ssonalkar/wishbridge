@@ -215,6 +215,7 @@ def _code_migration_report(cfg, raw, state) -> None:
     if failed:
         st.warning(f"**{len(failed)} file(s) failed on Databricks.** Fix them in *Fix code*, then run again (the run "
                    "keeps every manual fix).")
+        _claude_fix_deploy(cfg, raw, state, failed)
         next_button("Next: fix the failed files →", "fix", "next-code-report")
     else:
         st.success("Everything was created in Databricks.")
@@ -294,3 +295,74 @@ def _data_migration_report(cfg, raw, state) -> None:
                                                    for ch in t.get("checks", []) if not ch["match"]) or "all checks equal",
         } for t in quick["tables"]]), width="stretch", hide_index=True)
     _full_report(cfg)
+
+
+_SCHEMA_ONLY = ("SCHEMA_NOT_FOUND",)
+
+
+def _claude_fix_deploy(cfg, raw, state, failed) -> None:
+    """Send every failed file with its exact Databricks errors to Claude; save the chosen fixes in one go."""
+    from wishbridge.warehouses.datastage import ai
+    from wishbridge.warehouses.datastage.ui.steps import fix as fx
+
+    from wishbridge.warehouses.datastage.deploy import deploy_schema_map
+
+    ss = st.session_state
+    old_names = [s.lower() for s in deploy_schema_map(cfg)]
+
+    def schema_only_error(err: str) -> bool:
+        """Fixed by deploying again: a missing schema, or a table named with a source schema (`dw`.`X`)."""
+        low = err.lower()
+        return any(c in err for c in _SCHEMA_ONLY) or ("TABLE_OR_VIEW_NOT_FOUND" in err and any(
+            f"`{s}`." in low or f" {s}." in low for s in old_names))
+
+    schema_only = [d for d in failed if all(r["ok"] or schema_only_error(r.get("error") or "") for r in d["results"])]
+    to_fix = [d for d in failed if d not in schema_only and not d["file"].startswith("_database_schema/")]
+    with st.container(border=True):
+        st.markdown("#### ✨ Fix the failed files with Claude")
+        flash = ss.pop("claude_flash", None)
+        if flash:
+            st.success(flash + " Then open **Deploy** and deploy again.")
+        if schema_only:
+            st.info(f"{len(schema_only)} file(s) failed only because a schema was not found "
+                    f"({', '.join(d['file'] for d in schema_only[:4])}{' ...' if len(schema_only) > 4 else ''}). "
+                    "WishBridge now maps the warehouse's schemas to the target and rebuilds the table scripts on "
+                    "every deploy: **deploy again first** - these need no change.")
+        if not cfg.assist_enabled:
+            st.caption("Claude is off for this project: allow it in **Fix code > ✨ Ask Claude** once the client has "
+                       "agreed that their code may be sent to Claude.")
+            return
+        model = "claude-sonnet-5-5" if cfg.assist_speed == "fast" else cfg.ai_model
+        backend, how = ai.assist_backend(cfg.assist_via, cfg.profile, cfg.assist_endpoint)
+        bkey = f"{ss.project}|deploy"
+        batch = fx._BATCHES.get(bkey)
+        if batch is None:
+            if not to_fix:
+                st.caption("No file needs Claude: deploy again.")
+                return
+            st.caption(f"Claude gets each failed file with the exact Databricks errors, its original and the project "
+                       f"background, fixes {len(to_fix)} file(s) 3 at a time, and you save the fixes you want in one "
+                       f"go. Uses {how}.")
+            if st.button(f"✨ Fix {len(to_fix)} failed file(s) with Claude", type="primary", disabled=backend is None,
+                         key="claude-fix-deploy"):
+                conv = {f["file"]: f for f in (state.get("convert") or {}).get("files", [])}
+                reqs = []
+                for d in to_fix:
+                    cf = conv.get(d["file"])
+                    req = fx._file_request(cfg, raw, cf, "These errors came from deploying the file on Databricks: "
+                                           "fix them.", cfg.assist_via, model, cfg.assist_speed,
+                                           cfg.assist_endpoint) if cf else None
+                    if req is None:
+                        continue
+                    errors = [f"Databricks error in statement {r['n']}: {r.get('error', '')}"
+                              + (f" (statement starts: {r['statement'][:200]})" if r.get("statement") else "")
+                              for r in d["results"] if not r["ok"]]
+                    req["issues"] = errors + req["issues"]
+                    reqs.append(req)
+                fx._start_batch(bkey, reqs)
+                st.rerun()
+            return
+        if not batch["done"]:
+            fx._batch_progress(bkey)
+            return
+        fx._batch_results(raw, bkey)

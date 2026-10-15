@@ -468,3 +468,20 @@ def check_notebook(text: str, schema_map: dict[str, str] | None = None,
         if rule in counts:
             findings.append(Finding(rule, INFO, counts[rule][0], f"{msg} ({len(counts[rule])} step(s))", True))
     return "".join(out), _dedupe(sorted(findings, key=lambda f: (f.line, f.rule)))
+
+
+def map_schemas(sql: str, schema_map: dict[str, str]) -> str:
+    """Rename source schemas in SQL (`dw.Orders` -> `catalog.schema.Orders`); strings and comments are kept."""
+    return _fix_schema_map(sql, schema_map)[0] if schema_map else sql
+
+
+def map_schemas_in_notebook(text: str, schema_map: dict[str, str]) -> str:
+    """The same inside the Spark SQL strings of a converted notebook."""
+    if not schema_map:
+        return text
+
+    def one(m: re.Match) -> str:
+        whole, start = m.group(0), m.start(1) - m.start(0)
+        return whole[:start] + map_schemas(m.group(1), schema_map) + whole[start + len(m.group(1)):]
+
+    return _NB_SQL.sub(one, text)
