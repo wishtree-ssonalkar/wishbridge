@@ -600,3 +600,22 @@ def test_check_target_creates_a_new_catalog_and_schema(monkeypatch):
     problems = wh_helpers.check_target("DEFAULT", "nope", schema="sales")
     assert made == [] and "does not exist" in problems[0] and "New catalog" in problems[0]
     assert wh_helpers.check_target("DEFAULT", "workspace", schema="existing") == [] and made == []
+
+
+def test_default_storage_workspace_explains_how_to_make_the_catalog(monkeypatch):
+    from types import SimpleNamespace as N
+
+    import databricks.sdk
+    from wishbridge.warehouses.sqlserver.ui import helpers as wh_helpers
+
+    def refuse(name, comment=None):
+        raise RuntimeError("Metastore storage root URL does not exist. Default Storage is enabled in your account.")
+
+    class W:
+        def __init__(self, profile=None):
+            self.config = N(host="https://dbc-x.cloud.databricks.com")
+            self.catalogs = N(list=lambda: [N(name="workspace")], create=refuse)
+
+    monkeypatch.setattr(databricks.sdk, "WorkspaceClient", W)
+    (msg,) = wh_helpers.check_target("DEFAULT", "shubham", schema="s", create_catalog=True)
+    assert "https://dbc-x.cloud.databricks.com/explore/data" in msg and "Default Storage" in msg and "`shubham`" in msg

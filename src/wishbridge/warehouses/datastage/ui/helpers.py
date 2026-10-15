@@ -250,9 +250,20 @@ def check_target(profile: str, catalog: str, warehouse_id: str = "", schema: str
             w.catalogs.create(name=catalog, comment="Created by WishBridge")
             names.append(catalog)
         except Exception as e:  # noqa: BLE001 - permission, storage location, ...
-            problems.append(f"Could not create catalog '{catalog}': {str(e).splitlines()[0][:300]}. Creating a "
-                            "catalog needs the CREATE CATALOG permission (and, in some workspaces, a storage "
-                            "location) - ask the workspace admin, or pick an existing catalog.")
+            msg = str(e).splitlines()[0]
+            if "default storage" in msg.lower():
+                # Databricks Default Storage: a new catalog can be made only in the Databricks UI
+                host = (getattr(w.config, "host", "") or "").rstrip("/")
+                problems.append(
+                    f"This workspace keeps its data in Databricks Default Storage, where a new catalog can only be "
+                    f"created in Databricks itself: open {host}/explore/data → **+** → **Create a catalog** → name "
+                    f"`{catalog}`, storage **Default Storage** → **Create**. Then click *Load warehouses and "
+                    "catalogs* here and pick it from the list. Or keep an existing catalog (e.g. `workspace`) and "
+                    "type a new schema name - WishBridge creates the schema for you.")
+            else:
+                problems.append(f"Could not create catalog '{catalog}': {msg[:300]}. Creating a catalog needs the "
+                                "CREATE CATALOG permission (and, in some workspaces, a storage location) - ask the "
+                                "workspace admin, or pick an existing catalog.")
             return problems
     if catalog not in names:
         problems.append(f"Catalog '{catalog}' does not exist in this workspace. Choose one of: "
