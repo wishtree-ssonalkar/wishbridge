@@ -67,7 +67,8 @@ def render(cfg, raw, packages) -> None:
                 st.warning(f"The original of {f['file']} is not in this project's input folder.")
             else:
                 st.caption(str(orig.relative_to(cfg.input_dir)) if orig.is_relative_to(cfg.input_dir) else str(orig))
-                st.code(read_source(orig), language="xml" if orig.suffix.lower() in (".dtsx", ".xml", ".dtproj") else "sql")
+                st.code(read_source(orig), language="xml" if orig.suffix.lower() in (".dtsx", ".xml", ".dtproj") else "sql",
+                        height=420)  # same height as the editor on the right; both scroll
         with right:
             ovr = h.override_path(ss.project, f["file"], raw.get("overrides", "overrides"))
             final = Path(f["final"])
@@ -143,6 +144,15 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
             if pick_ep != endpoint:
                 _save_autofix(raw, endpoint=pick_ep)
                 st.rerun()
+    speeds = {"fast": "Fast - Claude Sonnet (usually under a minute)", "thorough": "Most thorough - Claude Opus (slower)"}
+    speed = cfg.assist_speed if cfg.assist_speed in speeds else "fast"
+    if chosen != "databricks":  # in Databricks the chosen served model decides
+        picked = st.radio("Speed", list(speeds), index=list(speeds).index(speed), format_func=speeds.get,
+                          horizontal=True, key="claude-speed")
+        if picked != speed:
+            _save_autofix(raw, speed=picked)
+            st.rerun()
+    model = "claude-sonnet-5-5" if speed == "fast" else cfg.ai_model
     signed_in = True
     if chosen == "claude-code":
         if "claude_code_status" not in ss:
@@ -170,9 +180,9 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
         original = (read_source(orig) if orig is not None and orig.is_file()
                     else "(no original file: made from the table definitions read from the database)")
         issues = [f"line {x['line']} [{x['severity']}]: {x['message']}" for x in todo]
-        with st.spinner("Claude is working on the file - this can take a few minutes..."):
+        with st.spinner("Claude is working on the file..."):
             ss[key] = asked = ai.ask_claude(cfg.source.label, f["kind"], original, current, issues, details,
-                                            cfg.ai_model, chosen, cfg.profile, endpoint)
+                                            model, chosen, cfg.profile, endpoint, fast=speed == "fast")
     if not asked:
         return
     if asked.status != "ok":

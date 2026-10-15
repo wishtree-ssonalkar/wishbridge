@@ -106,3 +106,17 @@ def test_claude_code_status_reads_auth_status(monkeypatch):
     assert not ok and "not signed in" in msg
     out["stdout"] = '{"loggedIn": true, "email": "dev@example.com"}'
     assert ai.claude_code_status() == (True, "Claude Code is signed in (dev@example.com).")
+
+
+def test_edits_are_applied_to_the_current_file():
+    current = "a = 1\nb = 2   \nc = 3\n"
+    answer = ("<<<<<<< SEARCH\nb = 2\n=======\nb = 20\n>>>>>>> REPLACE\n"
+              "<<<<<<< SEARCH\nc = 3\n=======\nc = 3\nd = 4\n>>>>>>> REPLACE\nNOTES:\n- b fixed\n- d added")
+    s = ai.apply_edits(current, answer)
+    assert s.status == "ok" and s.sql == "a = 1\nb = 20\nc = 3\nd = 4\n" and s.notes.startswith("- b fixed")
+
+
+def test_an_edit_that_does_not_match_fails_clearly():
+    s = ai.apply_edits("a = 1\n", "<<<<<<< SEARCH\nzzz\n=======\ny\n>>>>>>> REPLACE")
+    assert s.status == "failed" and "does not match" in s.notes
+    assert ai.apply_edits("a = 1\n", "NOTES:\n- nothing to change").sql == "a = 1\n"

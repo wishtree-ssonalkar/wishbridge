@@ -117,18 +117,23 @@ def suggest_fix(source_name: str, original: str, converted: str, findings: list[
 ASSIST_PROMPT = """You are a senior data engineer migrating {source} code to Databricks (Unity Catalog, Delta Lake).
 You receive the client's original {source} code, the current Databricks version ({target}), the open issues
 WishBridge found, and notes from the engineer doing the migration.
-Return the complete corrected Databricks version. Preserve the original behaviour exactly; where Databricks cannot
+Fix the open issues and anything the engineer asks. Preserve the original behaviour exactly; where Databricks cannot
 express something identically, choose the closest equivalent and add a REVIEW comment explaining the difference.
 Keep table and column names as in the Databricks version unless the engineer's notes say otherwise.
 Never invent tables, columns, connection details or credentials: where something is unknown, add a REVIEW comment.
-You have no tools: answer with text only.
+You have no tools: answer with text only, and be brief.
 
-Format your answer exactly as:
-```{fence}
-<the full corrected file>
-```
+Answer with ONLY the changes to the Databricks version, as edit blocks (never the whole file):
+<<<<<<< SEARCH
+exact lines copied from the Databricks version, just enough to be unique
+=======
+the new lines
+>>>>>>> REPLACE
+Use one block per change, in file order. SEARCH must match the Databricks version exactly, including indentation.
+To add lines, put a nearby unchanged line in SEARCH and repeat it in REPLACE with the new lines.
+After the blocks write:
 NOTES:
-- <one bullet per change you made>"""
+- <one bullet per change>"""
 
 MAX_CHARS = 200_000  # per file sent; very large SSIS packages are cut, with a note
 
@@ -182,14 +187,14 @@ def _cap(text: str) -> str:
     return text if len(text) <= MAX_CHARS else text[:MAX_CHARS] + f"\n... (cut: {len(text) - MAX_CHARS:,} more characters)"
 
 
-def _ask_api(system: str, user: str, model: str) -> str:
+def _ask_api(system: str, user: str, model: str, effort: str = "high") -> str:
     anthropic, client = _client()
     try:
         with client.beta.messages.stream(
             model=model,
             max_tokens=64000,
             thinking={"type": "adaptive"},
-            output_config={"effort": "high"},
+            output_config={"effort": effort},
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
             system=system,
@@ -210,7 +215,7 @@ def _ask_api(system: str, user: str, model: str) -> str:
     return ("WARNING: the answer was cut short.\n" if response.stop_reason == "max_tokens" else "") + text
 
 
-def _ask_claude_code(system: str, user: str, model: str) -> str:
+def _ask_claude_code(system: str, user: str, model: str, effort: str = "high") -> str:
     """Claude Code, headless, with every tool and MCP server switched off: it can only answer with text."""
     exe = _claude_code_exe()
     if not exe:
@@ -218,7 +223,8 @@ def _ask_claude_code(system: str, user: str, model: str) -> str:
     with tempfile.TemporaryDirectory(prefix="wishbridge-claude-") as empty:  # no project files for it to see
         try:
             proc = subprocess.run(
-                [exe, "-p", "--model", model, "--tools", "", "--strict-mcp-config", "--no-session-persistence",
+                [exe, "-p", "--model", model, "--effort", effort, "--tools", "", "--strict-mcp-config",
+                 "--no-session-persistence",
                  "--output-format", "json"],
                 input=system + "\n\n" + user, capture_output=True, text=True, encoding="utf-8", errors="replace",
                 cwd=empty, timeout=900)
@@ -250,7 +256,7 @@ def parse_answer(text: str) -> Suggestion:
 
 
 def ask_claude(source_name: str, kind: str, original: str, current: str, issues: list[str], details: str,
-               model: str, via: str = "auto", profile: str = "", endpoint: str = "") -> Suggestion:
+               model: str, via: str = "auto", profile: str = "", endpoint: str = "", fast: bool = True) -> Suggestion:
     """One corrected version of a file for a person to review in Fix code; never saved by itself."""
     backend, why = assist_backend(via, profile, endpoint)
     if backend is None:
@@ -267,12 +273,12 @@ def ask_claude(source_name: str, kind: str, original: str, current: str, issues:
         if backend == "databricks":
             text = _ask_databricks(system, user, profile, endpoint)
         elif backend == "api":
-            text = _ask_api(system, user, model)
+            text = _ask_api(system, user, model, "medium" if fast else "high")
         else:
-            text = _ask_claude_code(system, user, model)
+            text = _ask_claude_code(system, user, model, "medium" if fast else "high")
     except AssistError as e:
         return Suggestion(None, str(e), "failed")
-    return parse_answer(text)
+    return apply_edits(current, text)
 
 
 # ---------------------------------------------------------------- Claude served in the Databricks workspace
@@ -350,3 +356,42 @@ def open_claude_sign_in() -> str:
         return "Run `claude auth login` in a terminal."
     subprocess.Popen(["cmd", "/c", "start", "Claude Code sign-in", "cmd", "/k", exe, "auth", "login"])
     return ""
+
+
+_EDIT = re.compile(r"<<<<<<< SEARCH[ \t]*\r?\n(.*?)\r?\n?=======[ \t]*\r?\n(.*?)\r?\n?>>>>>>> REPLACE", re.DOTALL)
+
+
+def _replace_lines(text: str, search: str, replace: str) -> str | None:
+    """Replace `search` in `text`: whole lines first (ignoring trailing spaces, so `b = 2` never hits `b = 25`),
+    else the exact text. None: not found."""
+    want = [ln.rstrip() for ln in search.splitlines()]
+    lines = text.splitlines(keepends=True)
+    for i in range(len(lines) - len(want) + 1):
+        if want and [ln.rstrip() for ln in lines[i:i + len(want)]] == want:
+            tail = "\n" if lines[i + len(want) - 1].endswith("\n") else ""
+            return "".join(lines[:i]) + replace + tail + "".join(lines[i + len(want):])
+    if search and search in text:
+        return text.replace(search, replace, 1)
+    return None
+
+
+def apply_edits(current: str, text: str) -> Suggestion:
+    """Apply Claude's SEARCH/REPLACE blocks to the current Databricks version (a full file is accepted too)."""
+    blocks = _EDIT.findall(text)
+    tail = text[text.rfind(">>>>>>> REPLACE") + len(">>>>>>> REPLACE"):] if blocks else text
+    notes = re.sub(r"^\s*NOTES:\s*", "", tail.strip(), flags=re.IGNORECASE)
+    if text.startswith("WARNING:"):
+        notes = text.splitlines()[0] + "\n" + notes
+    if not blocks:
+        if "```" in text:
+            return parse_answer(text)  # an older-style answer with the whole file
+        return Suggestion(current, notes or "Claude suggests no changes.", "ok")
+    new = current
+    for n, (search, replace) in enumerate(blocks, 1):
+        done = _replace_lines(new, search, replace)
+        if done is None:
+            first = (search.strip().splitlines() or [""])[0][:80]
+            return Suggestion(None, f"Claude's change {n} of {len(blocks)} does not match the file (it starts with "
+                                    f"`{first}`). Click Ask again.", "failed")
+        new = done
+    return Suggestion(new, notes, "ok")
