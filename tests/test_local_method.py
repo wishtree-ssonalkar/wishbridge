@@ -43,3 +43,11 @@ def test_copy_casts_every_column_to_the_table_type(tmp_path):
 
 def test_volume_name_comes_from_the_folder():
     assert localdb.volume_of("/Volumes/workspace/sales/landing/sub") == "workspace.sales.landing"
+
+
+def test_mapping_lists_the_local_database_not_federation(tmp_path, monkeypatch):
+    from wishbridge.warehouses.ssis import mapping
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(localdb, "list_tables", lambda c: ["dw.DimCustomer", "dw.FactDailySales"])
+    assert mapping.source_tables(cfg) == ["dw.DimCustomer", "dw.FactDailySales"]

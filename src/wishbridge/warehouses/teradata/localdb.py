@@ -120,3 +120,31 @@ def compare(cfg: ProjectConfig, wh, t: TableMapping) -> dict[str, Any]:
                for i, c in enumerate(numeric)]
     return {"checks": checks, "status": "match" if all(c["match"] for c in checks) else "mismatch",
             "note": f"source counted in {cfg.local_db.get('database')} on this computer"}
+
+
+def list_tables(cfg: ProjectConfig) -> list[str]:
+    """`schema.table` of every user table in the database on this computer."""
+    conn = connect(cfg)
+    try:
+        rows = conn.cursor().execute(
+            "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' "
+            "AND TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA') ORDER BY TABLE_SCHEMA, TABLE_NAME").fetchall()
+    finally:
+        conn.close()
+    return [f"{s}.{t}" for s, t in rows]
+
+
+def columns(cfg: ProjectConfig, source: str) -> dict[str, str]:
+    """Column name (lower-case) -> source data type, in table order."""
+    schema, _, table = source.rpartition(".")
+    conn = connect(cfg)
+    try:
+        rows = conn.cursor().execute(
+            "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ? "
+            + ("AND TABLE_SCHEMA = ? " if schema else "") + "ORDER BY ORDINAL_POSITION",
+            *([table, schema] if schema else [table])).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        raise LookupError(f"{source} is not in {cfg.local_db.get('database')} on {cfg.local_db.get('server')}")
+    return {name.lower(): dtype.lower() for name, dtype in rows}
