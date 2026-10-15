@@ -143,6 +143,7 @@ NOTES:
 - <one bullet per change>"""
 
 MAX_CHARS = 200_000  # per file sent; very large SSIS packages are cut, with a note
+_CLAUDE_CODE_OK: dict[str, float] = {}  # model -> when Claude Code last answered (skips the quick check for 10 min)
 
 
 def _claude_code_exe() -> str | None:
@@ -242,7 +243,8 @@ def _ask_claude_code(system: str, user: str, model: str, effort: str = "high", t
         except subprocess.TimeoutExpired as e:
             proc.kill()
             proc.communicate()
-            raise AssistError(f"Claude did not answer within {timeout // 60} minutes - the Claude service may be busy "
+            limit = f"{timeout // 60} minutes" if timeout >= 120 else f"{timeout} s"
+            raise AssistError(f"Claude did not answer within {limit} - the Claude service may be busy "
                               "right now. Ask again in a moment, or choose Fast.") from e
     lines = [ln for ln in (stdout or "").splitlines() if ln.lstrip().startswith("{")]
     try:
@@ -290,6 +292,14 @@ def ask_claude(source_name: str, kind: str, original: str, current: str, issues:
     if context.strip():
         user = context.strip() + "\n\n" + user
     started = time.time()
+    if backend == "claude-code" and time.time() - _CLAUDE_CODE_OK.get(model, 0) > 600:
+        # A broken Claude Code sign-in does not fail: it hangs retrying for minutes. A tiny request answers in ~5 s
+        # when all is well, so check first and repair the sign-in at once instead of waiting.
+        ok, msg = test_claude_code(model, seconds=25)
+        if not ok:
+            return Suggestion(None, "Claude Code did not answer a quick check, so its sign-in on this computer most "
+                                    f"likely needs renewing. ({msg})", "signin", time.time() - started)
+        _CLAUDE_CODE_OK[model] = time.time()
     try:
         if backend == "databricks":
             text = _ask_databricks(system, user, profile, endpoint)

@@ -167,3 +167,11 @@ def test_connection_test_reports_quickly(monkeypatch):
     _claude_code(monkeypatch, {"is_error": False, "result": "OK"})
     ok, msg = ai.test_claude_code("claude-sonnet-5-5")
     assert ok and msg.startswith("Claude Code answered in")
+
+
+def test_a_hanging_claude_code_starts_the_sign_in_repair(monkeypatch):
+    _claude_code(monkeypatch, {"is_error": False, "result": "OK"})
+    monkeypatch.setattr(ai, "_CLAUDE_CODE_OK", {})
+    monkeypatch.setattr(ai, "test_claude_code", lambda model, seconds=60: (False, "Claude did not answer within 25 s"))
+    s = ai.ask_claude("SSIS", "notebook", "", "x = 1", [], "", "claude-sonnet-5-5")
+    assert s.status == "signin" and "quick check" in s.notes
