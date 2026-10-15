@@ -18,6 +18,8 @@ from wishbridge.warehouses.synapse.ui.common import STATUS_ICON
 
 ss = st.session_state
 _JOBS: dict[str, dict] = {}  # Claude requests running in the background: "<project>|<file>" -> job
+_BATCHES: dict[str, dict] = {}  # "fix all files" runs: project -> batch (kept until saved or discarded)
+_SCOPES = {"file": (), "fix": ("needs-fix",), "fix+review": ("needs-fix", "review")}
 
 
 def render(cfg, raw, packages) -> None:
@@ -192,6 +194,11 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
     details = st.text_area("Extra details for Claude (optional)", key=f"claude-notes:{pick}", height=90,
                            placeholder="e.g. The order database is the catalog oltp_fed. "
                                        "Remove the call to usp_SendLoadReport.")
+    scope = st.radio("What to fix", list(_SCOPES), format_func=lambda s: _scope_label(cfg, s, pick), horizontal=True,
+                     key="claude-scope")
+    if scope != "file":
+        _fix_all(cfg, raw, scope, details, backend, chosen, model, speed, endpoint)
+        return
     asked = ss.get(key)
     job_key = f"{ss.project}|{pick}"
     if st.button("✨ Ask again" if asked else "✨ Ask Claude", disabled=backend is None or job_key in _JOBS,
@@ -353,4 +360,170 @@ def _repair_sign_in(job_key: str, key: str, pick: str, model: str) -> None:
     if c2.button("Stop", key=f"claude-stop:{pick}"):
         for k in (key, "claude_signin_opened"):
             ss.pop(k, None)
+        st.rerun()
+
+
+# ---------------------------------------------------------------- fix all files at once
+
+def _batch_files(cfg, scope: str) -> list[dict]:
+    conv = load_state(cfg).get("convert") or {}
+    return [f for f in conv.get("files", []) if f.get("status") in _SCOPES[scope]]
+
+
+def _scope_label(cfg, scope: str, pick: str) -> str:
+    if scope == "file":
+        return f"This file ({Path(pick).name})"
+    n = len(_batch_files(cfg, scope))
+    return {"fix": f"All files that need a fix ({n})", "fix+review": f"All files that need a fix or a review ({n})"}[scope]
+
+
+def _file_request(cfg, raw, f: dict, details: str, chosen: str, model: str, speed: str, endpoint: str) -> dict | None:
+    """Everything Claude needs for one file: its original, the current Databricks version (a saved manual fix if
+    there is one), its open issues and the project background."""
+    ovr = h.override_path(ss.project, f["file"], raw.get("overrides", "overrides"))
+    cur = ovr if ovr.exists() else Path(f["final"])
+    if not cur.is_file():
+        return None
+    current = cur.read_text(encoding="utf-8-sig")
+    orig = None
+    if f.get("converter") != "database":
+        orig = Path(f["input"]) if f.get("input") else None
+        if orig is None or not orig.is_file():
+            orig = original_file(cfg, f["file"])
+    original = (read_source(orig) if orig is not None and orig.is_file()
+                else "(no original file: made from the table definitions read from the database)")
+    issues = [f"line {x['line']} [{x['severity']}]: {x['message']}" for x in f.get("findings", [])
+              if not x.get("fixed") and x.get("severity") != "info"]
+    return {"file": f["file"], "status": f.get("status", ""), "source": cfg.source.label, "kind": f.get("kind", "sql"),
+            "original": original, "current": current, "issues": issues, "details": details, "model": model,
+            "via": chosen, "profile": cfg.profile, "endpoint": endpoint, "fast": speed == "fast",
+            "context": ai.project_context(cfg, original, current)}
+
+
+def _start_batch(bkey: str, reqs: list[dict], workers: int = 3) -> None:
+    """Ask Claude about every file in the background, a few at a time; the first one also checks the connection."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    batch = {"started": time.time(), "finished": None, "total": len(reqs), "results": [], "done": False,
+             "cancel": False, "procs": [], "error": ""}
+
+    def one(req):
+        if batch["cancel"]:
+            return None
+        try:
+            s = ai.ask_claude(req["source"], req["kind"], req["original"], req["current"], req["issues"],
+                              req["details"], req["model"], req["via"], req["profile"], req["endpoint"],
+                              fast=req["fast"], context=req["context"], on_start=batch["procs"].append)
+        except Exception as e:  # noqa: BLE001 - one file failing must not stop the others
+            s = ai.Suggestion(None, f"Asking Claude failed: {e}", "failed")
+        batch["results"].append((req, s))
+        return s
+
+    def run():
+        try:
+            first = one(reqs[0]) if reqs else None
+            if first is not None and first.status == "signin":
+                batch["error"] = first.notes
+            elif len(reqs) > 1:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    list(pool.map(one, reqs[1:]))
+        finally:
+            batch["finished"] = time.time()
+            batch["done"] = True
+
+    _BATCHES[bkey] = batch
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _fix_all(cfg, raw, scope, details, backend, chosen, model, speed, endpoint) -> None:
+    bkey = ss.project
+    batch = _BATCHES.get(bkey)
+    if batch is None:
+        files = _batch_files(cfg, scope)
+        st.caption("Claude reviews and fixes every file in the list, 3 at a time. You then see one list with each "
+                   "file's changes, tick the ones to keep and save them in one go - nothing is saved before that.")
+        if st.button(f"✨ Review and fix {len(files)} files", type="primary", disabled=backend is None or not files,
+                     key="claude-fix-all"):
+            reqs = [r for r in (_file_request(cfg, raw, f, details, chosen, model, speed, endpoint) for f in files) if r]
+            _start_batch(bkey, reqs)
+            st.rerun()
+        return
+    if not batch["done"]:
+        _batch_progress(bkey)
+        return
+    _batch_results(raw, bkey)
+
+
+@st.fragment(run_every=2)
+def _batch_progress(bkey: str) -> None:
+    b = _BATCHES.get(bkey)
+    if b is None:
+        return
+    if b["done"]:
+        st.rerun()
+    n = len(b["results"])
+    st.progress(n / max(b["total"], 1), text=f"⏳ Claude is reviewing and fixing {b['total']} files, 3 at a time... "
+                                             f"{n} done ({time.time() - b['started']:.0f} s)")
+    if st.button("✖ Cancel", key="claude-batch-cancel"):
+        b["cancel"] = True
+        for proc in list(b["procs"]):
+            if proc.poll() is None:
+                proc.kill()
+        b["finished"], b["done"] = time.time(), True  # keep the files already done
+        st.rerun()
+
+
+def _batch_results(raw, bkey: str) -> None:
+    """One list: each file's changes and notes, a Save tick box each, and one Save button for all."""
+    b = _BATCHES[bkey]
+    if b["error"]:
+        st.error(b["error"])
+        st.info("Choose **This file** above and ask Claude about one file - it repairs the connection - then come "
+                "back and fix all files.")
+        if st.button("Close", key="claude-batch-close"):
+            _BATCHES.pop(bkey, None)
+            st.rerun()
+        return
+    order = {"needs-fix": 0, "review": 1}
+    rows = sorted(b["results"], key=lambda rs: (order.get(rs[0]["status"], 2), rs[0]["file"]))
+    changed = [(r, s) for r, s in rows if s.status == "ok" and s.sql and s.sql != r["current"]]
+    same = [r for r, s in rows if s.status == "ok" and (not s.sql or s.sql == r["current"])]
+    failed = [(r, s) for r, s in rows if s.status != "ok"]
+    secs = (b["finished"] or time.time()) - b["started"]
+    st.success(f"Claude reviewed {len(rows)} of {b['total']} files in {secs:.0f} s: **{len(changed)} with fixes**, "
+               f"{len(same)} need no change, {len(failed)} could not be done. Untick any fix you don't want, then "
+               "save them all at once.")
+    for r, s in changed:
+        with st.container(border=True):
+            c1, c2 = st.columns([1, 20])
+            c1.checkbox("Save", value=True, key=f"bsave:{r['file']}", label_visibility="collapsed")
+            c2.markdown(f"**{r['file']}** · {STATUS_ICON.get(r['status'], r['status'])} · {s.seconds:.0f} s")
+            if s.notes:
+                c2.markdown(s.notes)
+            with c2.expander("Show the changes"):
+                diff = "".join(difflib.unified_diff(r["current"].splitlines(keepends=True),
+                                                    s.sql.splitlines(keepends=True), "current", "Claude's fix"))
+                st.code(diff, language="diff")
+    if same:
+        st.caption("No change needed: " + ", ".join(r["file"] for r in same))
+    for r, s in failed:
+        st.warning(f"**{r['file']}**: {s.notes}")
+    picked = [(r, s) for r, s in changed if ss.get(f"bsave:{r['file']}", True)]
+    b1, b2 = st.columns(2)
+    if b1.button(f"💾 Save selected ({len(picked)})", type="primary", disabled=not picked, key="claude-batch-save"):
+        for r, s in picked:
+            ovr = h.override_path(ss.project, r["file"], raw.get("overrides", "overrides"))
+            ovr.parent.mkdir(parents=True, exist_ok=True)
+            ovr.write_text(s.sql, encoding="utf-8")
+            ss.pop(f"edit-{r['file']}", None)  # the editor shows the saved fix
+        for r, _ in changed:
+            ss.pop(f"bsave:{r['file']}", None)
+        _BATCHES.pop(bkey, None)
+        ss.claude_flash = (f"Saved {len(picked)} fixes as manual fixes ({', '.join(r['file'] for r, _ in picked)}). "
+                           "Run Convert (or Deploy) again to apply them.")
+        st.rerun()
+    if b2.button("🗑 Discard all", key="claude-batch-discard"):
+        for r, _ in changed:
+            ss.pop(f"bsave:{r['file']}", None)
+        _BATCHES.pop(bkey, None)
         st.rerun()
