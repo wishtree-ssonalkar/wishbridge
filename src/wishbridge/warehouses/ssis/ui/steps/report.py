@@ -235,10 +235,14 @@ def _code_migration_report(cfg, raw, state) -> None:
         st.warning(f"**{len(failed)} file(s) failed on Databricks.** Fix them in *Fix code*, then run again (the run "
                    "keeps every manual fix).")
         _claude_fix_deploy(cfg, raw, state, failed)
-        next_button("Next: fix the failed files →", "fix", "next-code-report")
-        st.button("Start the data migration anyway →", key="to-data-migration-anyway", on_click=_start_data_migration,
+        c1, c2 = st.columns(2)
+        c1.button("🚚 Start the data migration anyway →", type="primary", key="to-data-migration-anyway",
+                  on_click=_start_data_migration, width="stretch",
                   help="The tables that were created can be filled now; a table whose file failed is not in "
                        "Databricks yet, so its copy will fail until the file is fixed and deployed.")
+        if c2.button("Fix the failed files first →", key="next-code-report", width="stretch"):
+            ss.go_step = "fix"
+            st.rerun()
     else:
         st.success("Everything was created in Databricks.")
         st.button("Start the data migration →", type="primary", key="to-data-migration", on_click=_start_data_migration,
