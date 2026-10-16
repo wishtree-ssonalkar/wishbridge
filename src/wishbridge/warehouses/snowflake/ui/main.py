@@ -56,7 +56,8 @@ def run(raw: dict) -> None:
         "code": has_code,
         "run": has_results and not running,
         "data": bool((state_now.get("load") or {}).get("executed")) and not running,
-        "results": has_results and not running,
+        "results": (bool((state_now.get("load") or {}).get("executed")) if cfg.phase == "data-migration"
+                    else has_results) and not running,
         "fix": bool(ss.get(f"fix_done:{ss.project}")) or "deploy" in state_now,  # Next on Fix code, or deployed
         "send": bool(ss.get(f"sent:{ss.project}")),
     }
@@ -66,8 +67,8 @@ def run(raw: dict) -> None:
         if running:
             return key in ("run", "data")  # while a run (or the data copy) is going, stay there to follow it
         if key == "results":
-            if cfg.phase == "data-migration":
-                return done["settings"] and any(k in state_now for k in ("load", "reconcile", "deploy", "convert"))
+            if cfg.phase == "data-migration":  # the Data report opens once data was copied (or compared)
+                return done["settings"] and any(k in state_now for k in ("load", "reconcile"))
             return all(done[k] for k in ("settings", "code", "run"))  # copying the data is not required to look
         if key == "fix":
             if ORDER[0] == "fix":
@@ -78,9 +79,10 @@ def run(raw: dict) -> None:
         return all(done[k] for k in ORDER[:ORDER.index(key)])
 
 
-    if ss.get("step") not in ORDER or ss.get("step_project") != ss.project:
-        ss.step_project = ss.project
-        ss.step = ORDER[0]  # an opened project starts at the first tab
+    if ss.get("step") not in ORDER or ss.get("step_project") != ss.project or ss.get("step_phase") != cfg.phase:
+        # an opened project - or one that moved on to its next phase - starts at that phase's first tab
+        ss.step_project, ss.step_phase = ss.project, cfg.phase
+        ss.step = ORDER[0]
     if ss.get("go_step") is not None:
         _go = ss.pop("go_step")
         if _go in ORDER:
