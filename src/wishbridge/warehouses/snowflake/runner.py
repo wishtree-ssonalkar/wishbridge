@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
+from .state import load_state
 from .config import ProjectConfig
 
 STEP_LABELS = {
@@ -76,7 +77,17 @@ def _step(cfg: ProjectConfig, name: str, opts: dict[str, Any],
     if name == "report":
         from .report import build_report
 
-        return "report.html written", str(build_report(cfg))
+        report = build_report(cfg)
+        if cfg.phase == "data-migration" and (load_state(cfg).get("load") or {}).get("executed"):
+            # the data is copied: the everything-zip now carries the data migration report too
+            from .package import build_complete_package
+
+            try:
+                z = build_complete_package(cfg)
+                return f"report.html written; everything in one zip: {z.name}", str(report)
+            except (OSError, ValueError) as e:
+                return f"report.html written (the complete zip failed: {e})", str(report)
+        return "report.html written", str(report)
     if name == "package":
         from .package import build_package
 

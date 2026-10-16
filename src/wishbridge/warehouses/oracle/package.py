@@ -334,3 +334,11 @@ def build_complete_package(cfg: ProjectConfig) -> Path:
                 for t in rec.get("tables", [])], ["target", "status", "checks", "differences"]))
     base_zip.unlink(missing_ok=True)  # only a step on the way
     return out
+
+
+def latest_complete_package(cfg: ProjectConfig) -> Path | None:
+    """The newest everything-zip made in the project's current phase (None: not made yet)."""
+    folder = cfg.output_dir / "review_package"
+    zips = sorted(folder.glob(f"{cfg.name}-{cfg.phase}-complete-*.zip"), key=lambda p: p.stat().st_mtime) \
+        if folder.is_dir() else []
+    return zips[-1] if zips else None

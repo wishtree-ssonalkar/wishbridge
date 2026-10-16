@@ -63,3 +63,21 @@ def test_zip_names_say_what_they_are(tmp_path):
     (tmp_path / "project.yml").write_text("name: acme-dw\nsource: ssis\nphase: code-migration\n", encoding="utf-8")
     assert re.fullmatch(r"acme-dw-code-migration-complete-\d{4}-\d\d-\d\d_\d{4}\.zip",
                         build_complete_package(load_config(tmp_path / "project.yml")).name)
+
+
+def test_after_a_data_copy_the_complete_zip_is_made_by_itself(tmp_path):
+    import zipfile
+
+    from wishbridge.warehouses.ssis import runner
+    from wishbridge.warehouses.ssis.package import latest_complete_package
+
+    (tmp_path / "project.yml").write_text("name: acme\nsource: ssis\nphase: data-migration\n", encoding="utf-8")
+    cfg = load_config(tmp_path / "project.yml")
+    assert latest_complete_package(cfg) is None
+    save_step(cfg, "load", {"method": "local", "executed": True, "plan_file": "", "summary": {"tables": 1, "loaded": 1},
+                            "tables": [{"source": "dw.A", "target": "workspace.s.A", "status": "loaded", "rows": 5,
+                                        "statements": [], "compare_only": False}]})
+    summary, _ = runner._step(cfg, "report", {})
+    z = latest_complete_package(cfg)
+    assert z is not None and z.name in summary and z.name.startswith("acme-data-migration-complete-")
+    assert "reports/data-migration-report.html" in zipfile.ZipFile(z).namelist()
