@@ -60,6 +60,7 @@ def _assessment_report(cfg, raw, packages) -> None:
         report_overview(cfg, state)
         if cfg.phase == "assessment":
             next_button("Next: share the zip →", "send", "next-report")
+            next_phase_button(cfg, "to-code-migration-report")
         elif cfg.phase == "code-migration" and state.get("convert"):
             next_button("Next: fix code →", "fix", "next-report")
         if cfg.phase != "assessment" and state.get("convert"):
@@ -185,15 +186,33 @@ def _full_report(cfg) -> None:
             st.iframe(report.read_text(encoding="utf-8"), height=900)  # our own generated report, all values HTML-escaped
 
 
-def _start_data_migration() -> None:
+def _start_phase(phase: str) -> None:
+    """Move this project on to the next phase (same folder, every result kept); its first tab opens."""
     from wishbridge.warehouses.oracle.ui import helpers as h
 
     raw = h.read_raw(ss.project)
-    raw["phase"] = "data-migration"
+    raw["phase"] = phase
     h.save_raw(ss.project, raw)
-    ss.goal = "data-migration"
-    ss.goal_applied = (ss.project, "data-migration")
+    ss.goal = phase
+    ss.goal_applied = (ss.project, phase)
     ss.pop("step", None)
+
+
+def _start_data_migration() -> None:
+    _start_phase("data-migration")
+
+
+def next_phase_button(cfg, key: str) -> None:
+    """At the end of an assessment: go on to the code migration in this same project."""
+    if cfg.phase != "assessment" or not load_state(cfg).get("convert"):
+        return
+    with st.container(border=True):
+        st.markdown("#### Next: code migration")
+        st.caption("Continue in this same project: **Fix code** opens first, with the converted code and every "
+                   "finding from the assessment; then the Databricks settings and Deploy. Needs the client's "
+                   "Databricks workspace.")
+        st.button("🧩 Start the code migration →", type="primary", key=key, on_click=_start_phase,
+                  args=("code-migration",))
 
 
 def _code_migration_report(cfg, raw, state) -> None:
@@ -216,13 +235,21 @@ def _code_migration_report(cfg, raw, state) -> None:
         st.warning(f"**{len(failed)} file(s) failed on Databricks.** Fix them in *Fix code*, then run again (the run "
                    "keeps every manual fix).")
         _claude_fix_deploy(cfg, raw, state, failed)
-        next_button("Next: fix the failed files →", "fix", "next-code-report")
+        c1, c2 = st.columns(2)
+        c1.button("🚚 Start the data migration anyway →", type="primary", key="to-data-migration-anyway",
+                  on_click=_start_data_migration, width="stretch",
+                  help="The tables that were created can be filled now; a table whose file failed is not in "
+                       "Databricks yet, so its copy will fail until the file is fixed and deployed.")
+        if c2.button("Fix the failed files first →", key="next-code-report", width="stretch"):
+            ss.go_step = "fix"
+            st.rerun()
     else:
         st.success("Everything was created in Databricks.")
         st.button("Start the data migration →", type="primary", key="to-data-migration", on_click=_start_data_migration,
                   help="Switches this project to the data migration phase: map the tables and copy the data.")
 
     _auto_fixed(d)
+    _download_reports(cfg)
     st.markdown("#### What was created")
     st.dataframe(pd.DataFrame([{
         "file": f["file"],
@@ -264,13 +291,16 @@ def _data_migration_report(cfg, raw, state) -> None:
     if failed:
         st.error(f"**{len(failed)} table(s) were not copied** — see the errors below, fix the mapping and copy again.")
     elif quick and not differ:
-        st.success("**All copied tables match the source** (row counts, numeric totals and checksums).")
+        st.success("**✅ Migration complete.** The code is in Databricks and every copied table matches the source "
+                   "(row counts, numeric totals and checksums). Download the reports and everything in one zip below, "
+                   "then make the sign-off file for the client.")
     elif quick:
         st.warning(f"**{differ} table(s) differ from the source** — see *Source vs Databricks* below.")
     else:
         st.info("The comparison with the source has not run yet.")
     if failed or differ:
         next_button("Back to Map the data →", "data", "next-data-report")
+    _download_reports(cfg)
     if st.button("📦 Make the sign-off file for the client",
                  help="One zip with the report, every table's result and the comparison - no data in it."):
         from wishbridge.warehouses.oracle.package import build_signoff
@@ -400,3 +430,43 @@ def _auto_fixed(d) -> None:
             st.markdown(f"**Names renamed in {len(renamed)} file(s)** ({sum(renamed.values())} in total):")
             st.dataframe(pd.DataFrame([{"file": f, "names renamed": n} for f, n in renamed.items()]),
                          width="stretch", hide_index=True)
+
+
+def _download_reports(cfg) -> None:
+    """All of the project's reports - assessment, code migration and data migration - ready to download."""
+    from wishbridge.warehouses.oracle.report import phase_reports
+
+    try:
+        reports = phase_reports(cfg)
+    except (OSError, ValueError) as e:
+        st.error(f"Could not prepare the reports: {e}")
+        return
+    if not reports:
+        return
+    with st.container(border=True):
+        st.markdown("#### ⬇ Download the reports")
+        st.caption("Every report of this project, rebuilt from its saved results - for the client and the project file.")
+        cols = st.columns(len(reports))
+        for col, (phase, title, path) in zip(cols, reports):
+            col.download_button(f"⬇ {title}", path.read_bytes(), file_name=f"{cfg.name}-{phase}-report.html",
+                                mime="text/html", key=f"dl-{phase}", width="stretch")
+        from datetime import datetime
+
+        from wishbridge.warehouses.oracle.package import build_complete_package, latest_complete_package
+
+        z = latest_complete_package(cfg)
+        if st.button("📦 Make the zip again" if z else "📦 Everything in one zip", key="complete-zip",
+                     help="All reports, the code (as received, converted, fixed), the deployment results, the "
+                          "mapping and the comparison - one zip, no client data, no passwords. It also opens "
+                          "again in WishBridge. It is made by itself after every data copy."):
+            with st.spinner("Putting everything together..."):
+                try:
+                    z = build_complete_package(cfg)
+                except (OSError, ValueError) as e:
+                    st.error(f"Could not make the zip: {e}")
+        if z is not None and z.is_file():
+            made = datetime.fromtimestamp(z.stat().st_mtime).strftime("%d %b %Y %H:%M")
+            st.download_button(f"⬇ Everything in one zip ({z.stat().st_size / 1_048_576:.1f} MB, made {made})",
+                               z.read_bytes(), file_name=z.name, mime="application/zip", key="dl-complete",
+                               type="primary")
+            st.caption(f"`{z.name}` - with {', '.join(t.lower() for _, t, _ in reports)}. Also kept at `{z.parent}`.")

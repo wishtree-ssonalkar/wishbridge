@@ -79,28 +79,57 @@ def database_tables(cfg, raw) -> None:
         st.markdown(intro)
         how = st.radio("How to read them", ["Connect to the database", "Send a query to the client's DBA"],
                        horizontal=True, key="schema_how",
-                       help="Connecting works for SQL Server, Azure SQL and Synapse. The DBA query works for every "
-                            "database WishBridge supports.")
+                       help="Connecting works for SQL Server - on the client's network or in the cloud as Azure SQL "
+                            "Database or Azure Synapse. The DBA query works for every database WishBridge supports.")
         if how == "Connect to the database":
+            where = st.radio("Where is the database?", ["local", "cloud"], horizontal=True, key="live_where",
+                             format_func={"local": "On the client's network or this computer",
+                                          "cloud": "In the cloud: Azure SQL Database / Azure Synapse"}.get)
+            cloud = where == "cloud"
             c1, c2 = st.columns(2)
-            server = c1.text_input("Server :red[*]", key="live_server", placeholder="myserver\\SQLEXPRESS or myserver,1433")
-            database = c2.text_input("Database :red[*]", key="live_db")
+            server = c1.text_input("Server :red[*]", key="live_server",
+                                   placeholder="myserver.database.windows.net  or  myworkspace.sql.azuresynapse.net"
+                                   if cloud else "myserver\\SQLEXPRESS or myserver,1433")
+            database = c2.text_input("Database :red[*]", key="live_db",
+                                     placeholder="the warehouse database (Synapse: the dedicated SQL pool)" if cloud else "")
             kind = c1.selectbox("Database type", list(inv_mod.LIVE_DATABASES), key="live_type",
                                 format_func={"sqlserver": "SQL Server / Azure SQL", "synapse": "Azure Synapse"}.get)
-            login = c2.radio("Login", ["Windows login", "User and password"], horizontal=True, key="live_login")
+            logins = ({"entra": "Microsoft Entra ID (sign in in the browser)",
+                       "entra-password": "Microsoft Entra ID user and password",
+                       "sql": "SQL user and password"} if cloud else
+                      {"windows": "Windows login", "sql": "User and password"})
+            login = c2.radio("Login", list(logins), format_func=logins.get, horizontal=not cloud,
+                             key=f"live_login_{where}",
+                             help="Entra ID (Azure AD) opens Microsoft's sign-in window when you press Read - MFA "
+                                  "works. The client gives you a read-only account." if cloud else None)
             user = password = ""
-            if login == "User and password":
-                user = c1.text_input("User :red[*]", key="live_user")
+            if login in ("sql", "entra-password"):
+                user = c1.text_input("User :red[*]", key="live_user",
+                                     placeholder="name@client.com" if login == "entra-password" else "")
                 password = c2.text_input("Password :red[*]", type="password", key="live_pw",
                                          help="Used once to read the tables; never saved.")
-            trust = st.checkbox("Trust the server certificate", key="live_trust",
-                                help="Needed for servers with a self-signed certificate (common on local servers).")
+            elif login == "entra":
+                user = c1.text_input("Your Entra ID e-mail (optional)", key="live_user_entra",
+                                     placeholder="name@client.com",
+                                     help="Pre-fills the Microsoft sign-in window that opens when you press Read.")
+            if cloud:
+                trust = False  # Azure has a trusted certificate: it is checked as usual
+                st.caption("Azure's certificate is checked as usual. If the read is refused by the firewall, the client "
+                           "adds this computer's IP address in the Azure portal (SQL server > Networking).")
+                if server.strip() and not inv_mod.is_azure_host(server):
+                    st.caption(":orange[That does not look like an Azure server name (...database.windows.net or "
+                               "...sql.azuresynapse.net).]")
+            else:
+                trust = st.checkbox("Trust the server certificate", key="live_trust",
+                                    help="Needed for servers with a self-signed certificate (common on local servers).")
+                if inv_mod.is_azure_host(server):
+                    st.info("This is an Azure server: choose **In the cloud** above to sign in with Microsoft Entra ID.")
             with_code = st.checkbox("Also read the code (procedures, views, functions, triggers)",
                                     value=from_db or ui.READ_CODE_DEFAULT,
                                     key="live_code", help="Saved as one .sql file per object. Encrypted objects "
                                                           "cannot be read; they are listed so the client can send them.")
             missing = [n for n, v in [("server", server), ("database", database)] if not v.strip()]
-            if login == "User and password":
+            if login in ("sql", "entra-password"):
                 missing += [n for n, v in [("user", user), ("password", password)] if not v.strip()]
             if missing:
                 st.caption(f":red[Fill in the {' and '.join(missing) if len(missing) < 3 else ', '.join(missing)} to read the tables.]")
@@ -108,8 +137,8 @@ def database_tables(cfg, raw) -> None:
                          disabled=bool(missing), key="live_read"):
                 with st.spinner(f"Reading from {server} / {database}..."):
                     try:
-                        inv_mod.read_live(cfg, server, database, login == "Windows login", user, password, trust, kind,
-                                          with_code=with_code)
+                        inv_mod.read_live(cfg, server, database, login == "windows", user, password, trust, kind,
+                                          with_code=with_code, auth=login)
                     except (RuntimeError, ValueError) as e:
                         st.error(str(e))
                     else:

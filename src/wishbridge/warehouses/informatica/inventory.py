@@ -136,14 +136,34 @@ def odbc_driver() -> str:
                        "Microsoft (it comes with SQL Server Management Studio), or use the DBA query instead.")
 
 
+AZURE_SUFFIXES = (".database.windows.net", ".sql.azuresynapse.net", ".database.usgovcloudapi.net",
+                  ".database.chinacloudapi.cn")
+
+
+def is_azure_host(server: str) -> bool:
+    """An Azure SQL Database / Azure Synapse server name (myserver.database.windows.net, ws.sql.azuresynapse.net)."""
+    name = (server or "").strip().lower().removeprefix("tcp:").split(",")[0].split(":")[0]
+    return name.endswith(AZURE_SUFFIXES)
+
+
 def connection_string(server: str, database: str, windows_login: bool, user: str = "", password: str = "",
-                      trust_certificate: bool = False, driver: str | None = None) -> str:
+                      trust_certificate: bool = False, driver: str | None = None, auth: str | None = None) -> str:
+    """auth: windows | sql | entra (Microsoft Entra ID, sign-in window, MFA works) | entra-password.
+    Without auth: windows_login decides (windows or sql)."""
     driver = driver or odbc_driver()
+    auth = auth or ("windows" if windows_login else "sql")
     parts = [f"DRIVER={{{driver}}}", f"SERVER={server}", f"DATABASE={database}", "ApplicationIntent=ReadOnly"]
-    if windows_login:
+    pwd = "PWD={" + password.replace("}", "}}") + "}"
+    if auth == "windows":
         parts.append("Trusted_Connection=yes")
+    elif auth == "entra":
+        parts.append("Authentication=ActiveDirectoryInteractive")
+        if user:
+            parts.append(f"UID={user}")
+    elif auth == "entra-password":
+        parts += ["Authentication=ActiveDirectoryPassword", f"UID={user}", pwd]
     else:
-        parts += [f"UID={user}", "PWD={" + password.replace("}", "}}") + "}"]
+        parts += [f"UID={user}", pwd]
     if driver != "SQL Server":  # the old built-in driver does not know these options
         parts += ["Encrypt=yes", f"TrustServerCertificate={'yes' if trust_certificate else 'no'}"]
     return ";".join(parts)
@@ -151,25 +171,39 @@ def connection_string(server: str, database: str, windows_login: bool, user: str
 
 def read_live(cfg: ProjectConfig, server: str, database: str, windows_login: bool = True, user: str = "",
               password: str = "", trust_certificate: bool = False, db: str = "sqlserver",
-              timeout_s: int = 30, with_code: bool = False) -> dict[str, Any]:
+              timeout_s: int = 30, with_code: bool = False, auth: str | None = None) -> dict[str, Any]:
     """Run the read-only inventory query on the database and import the result (the password is not kept).
-    with_code: also save the procedures, views, functions and triggers as .sql files (dbcode.py)."""
+    with_code: also save the procedures, views, functions and triggers as .sql files (dbcode.py).
+    auth: windows | sql | entra | entra-password (connection_string); without it windows_login decides."""
     if db not in LIVE_DATABASES:
         raise ValueError(f"Reading directly works for SQL Server and Synapse; for {db} use the DBA query.")
     if not server.strip() or not database.strip():
         raise ValueError("Enter the server and the database")
-    if not windows_login and not (user.strip() and password):
+    auth = auth or ("windows" if windows_login else "sql")
+    if auth in ("sql", "entra-password") and not (user.strip() and password):
         raise ValueError("Enter the user and password, or use Windows login")
     import pyodbc
 
+    cloud = is_azure_host(server)
     try:
-        conn = pyodbc.connect(connection_string(server.strip(), database.strip(), windows_login, user.strip(), password,
-                                                trust_certificate), timeout=timeout_s, readonly=True)
+        conn = pyodbc.connect(connection_string(server.strip(), database.strip(), auth == "windows", user.strip(),
+                                                password, trust_certificate, auth=auth),
+                              timeout=max(timeout_s, 60) if cloud else timeout_s, readonly=True)
     except pyodbc.Error as e:
         raw = str(e.args[-1] if e.args else e)
         # "[08001] [Microsoft][ODBC Driver 18 for SQL Server]SSL Provider: ... (-2146893019) (SQLDriverConnect); ..."
         msg = re.sub(r"[\s.]+$", "", re.sub(r"\[[^\]]*\]|\(-?\d+\)|\(SQL\w+\)", "", raw.split(";")[0])).strip() + "."
-        if "certificate" in raw.lower():
+        low = raw.lower()
+        ip = re.search(r"ip address '([\d.:a-f]+)'", low)
+        if "not allowed to access the server" in low or ip:
+            msg += (" The client's Azure firewall does not let this computer in"
+                    + (f" (IP address {ip.group(1)})" if ip else "")
+                    + ": ask them to add it in the Azure portal > SQL server > Networking, then read again.")
+        elif "is not currently available" in low or "paused" in low:
+            msg += " A serverless or paused database may still be starting: wait a minute and read again."
+        elif "login failed" in low and auth.startswith("entra"):
+            msg += " The Entra ID account has no access to this database: the client adds it as a database user."
+        elif "certificate" in low and not cloud:
             msg += " Tick 'Trust the server certificate' if this is the client's own server."
         raise RuntimeError(f"Could not connect to {server} / {database}: {msg}") from e
     label = f"{server.strip()} / {database.strip()}"

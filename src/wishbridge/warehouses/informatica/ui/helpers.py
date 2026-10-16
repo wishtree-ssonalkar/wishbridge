@@ -311,3 +311,78 @@ def is_local_host(host: str) -> bool:
         return name == socket.gethostname().lower()
     except OSError:
         return False
+
+
+def test_local_db(local_db: dict, password: str = "") -> tuple[bool, str]:
+    """Connect to the database on this computer (read-only) and count its tables per schema."""
+    from types import SimpleNamespace
+
+    from wishbridge.warehouses.informatica import localdb
+
+    try:
+        conn = localdb.connect(SimpleNamespace(local_db=local_db), password)
+        try:
+            rows = conn.cursor().execute(
+                "SELECT TABLE_SCHEMA, COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' "
+                "AND TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA') GROUP BY TABLE_SCHEMA ORDER BY TABLE_SCHEMA").fetchall()
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001 - ODBC raises its own types
+        msg = str(e.args[-1] if getattr(e, "args", None) else e)
+        if "certificate" in msg.lower():
+            msg += " - tick 'Trust the server certificate'."
+        elif "login failed" in msg.lower():
+            msg = msg.split("(18456")[0].strip() + (" - check the database name (SQL Server says 'login failed' when it "
+                                                     "does not exist) and that this login may open it.")
+        return False, f"Could not connect to {local_db.get('database')} on {local_db.get('server')}: {msg[:400]}"
+    total = sum(n for _, n in rows)
+    per = ", ".join(f"{s}: {n}" for s, n in rows) or "no tables"
+    return True, (f"Connected to {local_db.get('database')} on {local_db.get('server')}: {total} tables ({per}). "
+                  "Only read - nothing is copied until you press Copy the data.")
+
+
+def check_volume(profile: str, files_root: str) -> tuple[bool, str]:
+    """Is the upload folder's volume there (or can WishBridge create it)? Asked from the workspace."""
+    from databricks.sdk import WorkspaceClient
+
+    parts = [p for p in files_root.split("/") if p]
+    if len(parts) < 4 or parts[0] != "Volumes":
+        return False, "The folder must be in a Unity Catalog volume: /Volumes/<catalog>/<schema>/<volume>/..."
+    catalog, schema, volume = parts[1:4]
+    try:
+        w = WorkspaceClient(profile=profile)
+    except Exception as e:  # noqa: BLE001
+        return False, f"Could not reach the workspace with the login '{profile}': {str(e).splitlines()[0][:200]}"
+    try:
+        w.volumes.read(f"{catalog}.{schema}.{volume}")
+        return True, f"The volume `{catalog}.{schema}.{volume}` exists - the tables are uploaded there when you copy."
+    except Exception:  # noqa: BLE001 - not there yet
+        pass
+    try:
+        w.schemas.get(f"{catalog}.{schema}")
+        where = f"schema `{catalog}.{schema}` exists"
+    except Exception:  # noqa: BLE001
+        try:
+            w.catalogs.get(catalog)
+        except Exception:  # noqa: BLE001
+            return False, f"Catalog `{catalog}` does not exist in this workspace - pick another upload folder."
+        where = f"schema `{catalog}.{schema}` is created too"
+    return True, f"The volume `{catalog}.{schema}.{volume}` is created when you copy ({where})."
+
+
+def check_files_folder(profile: str, files_root: str) -> tuple[bool, str]:
+    """What is in the exported-files folder: one sub-folder per table is expected."""
+    from databricks.sdk import WorkspaceClient
+
+    try:
+        w = WorkspaceClient(profile=profile)
+        entries = list(w.files.list_directory_contents(files_root.rstrip("/")))
+    except Exception as e:  # noqa: BLE001 - not found, no permission, ...
+        return False, f"Could not read {files_root}: {str(e).splitlines()[0][:250]}"
+    folders = sorted(e.name for e in entries if e.is_directory and e.name)
+    files = [e.name for e in entries if not e.is_directory and e.name]
+    if not folders:
+        return False, (f"{files_root} has no table folders" + (f" (only files: {', '.join(files[:5])})" if files else "")
+                       + ". Expected one folder per table, e.g. " + files_root.rstrip("/") + "/DimCustomer/.")
+    return True, f"Found {len(folders)} table folder(s) in {files_root}: {', '.join(folders[:12])}" + (
+        " ..." if len(folders) > 12 else "") + "."
