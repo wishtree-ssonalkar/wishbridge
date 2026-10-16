@@ -223,6 +223,7 @@ def _code_migration_report(cfg, raw, state) -> None:
                   help="Switches this project to the data migration phase: map the tables and copy the data.")
 
     _auto_fixed(d)
+    _download_reports(cfg)
     st.markdown("#### What was created")
     st.dataframe(pd.DataFrame([{
         "file": f["file"],
@@ -421,3 +422,20 @@ def _download_reports(cfg) -> None:
         for col, (phase, title, path) in zip(cols, reports):
             col.download_button(f"⬇ {title}", path.read_bytes(), file_name=f"{cfg.name}-{phase}-report.html",
                                 mime="text/html", key=f"dl-{phase}", width="stretch")
+        if st.button("📦 Everything in one zip", key="complete-zip",
+                     help="All reports, the code (as received, converted, fixed), the deployment results, the "
+                          "mapping and the comparison - one zip, no client data, no passwords. It also opens "
+                          "again in WishBridge."):
+            from wishbridge.warehouses.synapse.package import build_complete_package
+
+            with st.spinner("Putting everything together..."):
+                try:
+                    ss.complete_zip = str(build_complete_package(cfg))
+                except (OSError, ValueError) as e:
+                    st.error(f"Could not make the zip: {e}")
+        done = ss.get("complete_zip")
+        if done and Path(done).is_file() and Path(done).parent == cfg.output_dir / "review_package":
+            z = Path(done)
+            st.download_button(f"⬇ {z.name} ({z.stat().st_size / 1_048_576:.1f} MB)", z.read_bytes(), file_name=z.name,
+                               mime="application/zip", key="dl-complete")
+            st.caption(f"Also kept at `{z}`.")

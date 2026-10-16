@@ -238,3 +238,94 @@ def build_signoff(cfg: ProjectConfig) -> Path:
         if plan.is_file():
             z.write(plan, "load_plan.sql")
     return out
+
+
+COMPLETE_README = """WishBridge - everything for {name}
+Created {when}. No client data and no passwords are in this zip.
+
+Open in a browser (nothing to install):
+  reports/                 Every report of the project: {reports}
+  code_overview.html       How the system is built: structure, tables, procedures, data flows
+
+Assessment details:
+  files.csv, open_items.csv, fit_check.csv, inventory_tables.csv, analysis.xlsx
+
+Code:
+  baseline/                The code as received, for the before/after comparison
+  converted_code/          The code for Databricks (manual fixes included)
+  database_code/           Procedures, views, functions and triggers read from the warehouse database
+
+Code migration:
+  code_migration/deployment_results.csv   Every file and statement created in Databricks, and the errors
+  code_migration/table_scripts/           CREATE TABLE scripts for the Databricks tables
+  code_migration/manual_fixes/            Files fixed by hand or with Claude (they replace the converted ones)
+  code_migration/jobs/                    The Databricks job definition (the ETL run order), to schedule it
+
+Data migration:
+  data_migration/mapping.yml              Which source table went into which Databricks table (columns, filters)
+  data_migration/copied_tables.csv        Tables copied and their row counts
+  data_migration/comparison.csv           Source vs Databricks: row counts and totals per table
+  data_migration/load_plan.sql            The copy statements that were run
+
+  dummy_data/              MADE-UP sample rows (5 per table, from the column types only - not client data)
+  project/                 The complete project, to open again in WishBridge: sidebar > Open a package,
+                           or  wishbridge open-package <this zip> --dir C:\\WishBridge\\Migrations
+"""
+
+
+def build_complete_package(cfg: ProjectConfig) -> Path:
+    """Everything of the project in one zip: the assessment package (it opens again in WishBridge) plus every
+    report and the code-migration and data-migration results."""
+    from .report import phase_reports
+
+    state = load_state(cfg)
+    base_zip = build_package(cfg)
+    reports = phase_reports(cfg)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    out = cfg.out("review_package", f"{cfg.name}-complete-{stamp}.zip")
+    with zipfile.ZipFile(base_zip) as src, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for item in src.infolist():
+            if item.filename not in ("README.txt", "report.html"):  # replaced by this README and reports/
+                z.writestr(item, src.read(item.filename))
+        z.writestr("README.txt", COMPLETE_README.format(
+            name=cfg.name, when=datetime.now().strftime("%Y-%m-%d %H:%M"),
+            reports=", ".join(title.lower() for _, title, _ in reports) or "none yet"))
+        for phase, _title, path in reports:
+            z.write(path, f"reports/{phase}-report.html")
+
+        dep = state.get("deploy") or {}
+        if dep.get("files"):
+            z.writestr("code_migration/deployment_results.csv", _csv([
+                {"file": f["file"], "result": "created" if f["ok"] else "failed", "statement": r.get("n"),
+                 "kind": r.get("kind"), "action": r.get("action"), "ok": r.get("ok"),
+                 "error": r.get("error") or r.get("note") or ""}
+                for f in dep["files"] for r in f.get("results", [])],
+                ["file", "result", "statement", "kind", "action", "ok", "error"]))
+        for folder, arc in [(cfg.output_dir / "database_schema", "code_migration/table_scripts"),
+                            (cfg.output_dir / "jobs", "code_migration/jobs")]:
+            if folder.is_dir():
+                _add_tree(z, folder, arc)
+        if cfg.overrides_dir and cfg.overrides_dir.is_dir() and any(cfg.overrides_dir.rglob("*")):
+            _add_tree(z, cfg.overrides_dir, "code_migration/manual_fixes")
+
+        ld, rec = state.get("load") or {}, state.get("reconcile") or {}
+        raw = yaml.safe_load(cfg.path.read_text(encoding="utf-8-sig")) or {}
+        if (raw.get("data") or {}).get("tables"):
+            z.writestr("data_migration/mapping.yml", yaml.safe_dump({"tables": raw["data"]["tables"]}, sort_keys=False,
+                                                                    allow_unicode=True))
+        if ld.get("executed"):
+            z.writestr("data_migration/copied_tables.csv", _csv(
+                [t for t in ld.get("tables", []) if not t.get("compare_only")],
+                ["source", "target", "status", "rows", "error"]))
+            plan = Path(ld.get("plan_file") or "")
+            if plan.is_file():
+                z.write(plan, "data_migration/load_plan.sql")
+        if rec.get("mode") == "quick":
+            z.writestr("data_migration/comparison.csv", _csv([{
+                "target": t["target"], "status": t["status"],
+                "checks": "; ".join(f"{c['check']}: {c['source']} -> {c['target']}" for c in t.get("checks", [])),
+                "differences": t.get("error") or "; ".join(f"{c['check']}: {c['source']} -> {c['target']}"
+                                                           for c in t.get("checks", []) if not c["match"])}
+                for t in rec.get("tables", [])], ["target", "status", "checks", "differences"]))
+    base_zip.unlink(missing_ok=True)  # only a step on the way
+    return out
