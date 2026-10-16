@@ -96,8 +96,11 @@ def run_load(cfg: ProjectConfig, execute: bool = False, allow_prod: bool = False
                     t = by_target[entry["target"]]
                     n, cols = localdb.export_upload(cfg, wh, entry["source"], t.where)
                     entry["exported_rows"] = n
-                    entry["statements"] = [localdb.copy_into_sql(cfg, wh, t, cols) if s.startswith("COPY INTO") else s
-                                           for s in entry["statements"]]
+                    if n == 0:  # an empty table has no column types in Parquet: nothing to copy, only empty the target
+                        entry["statements"] = [s for s in entry["statements"] if not s.startswith("COPY INTO")]
+                    else:
+                        entry["statements"] = [localdb.copy_into_sql(cfg, wh, t, cols) if s.startswith("COPY INTO")
+                                               else s for s in entry["statements"]]
                 except Exception as e:  # noqa: BLE001 - ODBC, pandas and the SDK raise many types
                     entry.update(status="failed", error=f"Export from this computer failed: {str(e).splitlines()[0][:350]}")
                     continue
@@ -111,6 +114,8 @@ def run_load(cfg: ProjectConfig, execute: bool = False, allow_prod: bool = False
                 if entry["compare_only"]:
                     entry.update(status="reset" if entry["statements"] else "compare only")
                 else:
+                    if rows is None:
+                        rows = entry.get("exported_rows")
                     entry.update(status="loaded", rows=int(rows) if rows is not None else None)
             except SqlError as e:
                 entry.update(status="failed", error=str(e).splitlines()[0][:400])

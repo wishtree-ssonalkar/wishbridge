@@ -41,6 +41,24 @@ def test_copy_casts_every_column_to_the_table_type(tmp_path):
     assert "Extra" not in sql and sql.endswith("COPY_OPTIONS ('force' = 'true')")
 
 
+def test_an_empty_table_is_not_copied_from_typeless_parquet(tmp_path, monkeypatch):
+    from wishbridge.warehouses.ssis.data import run_load
+
+    cfg = _cfg(tmp_path)
+    ran = []
+
+    class Wh:
+        def run(self, sql, catalog=None, schema=None):
+            ran.append(sql)
+            return SqlResult([], [])
+
+    monkeypatch.setattr(localdb, "ensure_volume", lambda c, w: None)
+    monkeypatch.setattr(localdb, "export_upload", lambda c, w, source, where="": (0, []))
+    entry, = run_load(cfg, execute=True, wh=Wh())["tables"]
+    assert not [s for s in ran if s.startswith("COPY INTO")]
+    assert entry["status"] == "loaded" and entry["rows"] == 0
+
+
 def test_volume_name_comes_from_the_folder():
     assert localdb.volume_of("/Volumes/workspace/sales/landing/sub") == "workspace.sales.landing"
 

@@ -167,9 +167,15 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   them, and **Read from the database (optional) - tables and code** - for clients without a code repository (or
   with only part of it). This works in the assessment phase too: it needs a read-only login to the client's
   database (ask for a dev/test copy or a replica, with VIEW DEFINITION), not Databricks.
-  - *Connect to the database* (SQL Server, Azure SQL, Synapse): server, database, Windows login or user and
-    password (used once, never saved), and *Trust the server certificate* for servers with a self-signed
-    certificate. Only the catalog is read - table and column names, data types, row counts and sizes - never
+  - *Connect to the database* (SQL Server, Azure SQL, Synapse). **Where is the database?**
+    - *On the client's network or this computer*: server, database, Windows login or user and password (used once,
+      never saved), and *Trust the server certificate* for servers with a self-signed certificate.
+    - *In the cloud: Azure SQL Database / Azure Synapse*: server like `myserver.database.windows.net` or
+      `myworkspace.sql.azuresynapse.net`; sign in with **Microsoft Entra ID** (Microsoft's sign-in window, MFA
+      works), an Entra ID user and password, or a SQL user and password. The certificate is checked as usual. If the
+      Azure firewall refuses this computer, the message shows its IP address for the client to allow (Azure portal >
+      SQL server > Networking).
+     Only the catalog is read - table and column names, data types, row counts and sizes - never
     business data. With *Also read the code* (on by default) the **procedures, views, functions and triggers** are
     saved too, one `.sql` file per object in `database_code/<schema>/<kind>/`. Encrypted objects cannot be read and
     are listed so the client can send their scripts; objects the login may not see are listed too.
@@ -209,7 +215,9 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
   table) and `dummy_data.sql` to load them into the Databricks tables and try the converted code.
 - **5 · Map the data (migration):** *Propose the mapping* lists the source tables (from the database tables read in
   Code, or through the connection) and the Databricks tables, and pairs them by name; tables that do not exist in
-  Databricks yet are flagged. Untick what should not be copied, change a target if needed, then *Save and check
+  Databricks yet are flagged. Or **Map by hand**: both lists load without pairing - add rows with **+**, remove
+  them with the bin, pick the tables, or switch on **Type table names freely** (a short Databricks name gets the
+  target catalog.schema); **Start with an empty list** clears the screen list. Two sources into one table are flagged. Untick what should not be copied, change a target if needed, then *Save and check
   the columns*: WishBridge reads the columns on both sides. Columns with different names can be paired by hand
   (*Map the columns*; an empty source keeps the column NULL). *Copy the data* is locked while a table is missing on
   either side; it copies in the background (append or overwrite, from Settings), compares source and target, and
@@ -243,15 +251,22 @@ Everything in this guide can also be done in the WishBridge app, which opens in 
     3 Data report**.
     - *Settings* show the workspace and target from the code migration as one ticked line (*Change the workspace or
       target* to edit) and the project settings folded away; only the **source data** is new: the database
-      connection, or the files folder.
+      connection, a database on this computer, or the files folder. Each has a test: **Create / Test connection**,
+      **Test connection** + **Check the upload folder**, or **Check the folder**.
     - *Map the data*: pair the tables, check the columns, and per table **Copy now** (untick what waits) and **Only
       rows where** (e.g. `ModifiedDate >= '2026-10-01'` - a table with a condition is added to, never emptied).
       **When copying**: add to, or replace, what is in Databricks. **Check before copying** confirms the source is
       reachable and every Databricks table exists, and shows rows, sizes and a rough copy time. While copying, the
       progress shows per table. **Copy again: only the failed or different tables** repeats just those.
-    - *Data report*: tables and rows copied, failures, tables matching the source; **Make the sign-off file for the
-      client** - one zip with the report, every table's result, the comparison, the mapping and the copy
-      statements (no data in it).
+    - *Data report*: tables and rows copied, failures, tables matching the source (**✅ Migration complete** when all
+      match), and **⬇ Download the reports**: the assessment, code migration and data migration reports, and
+      **Everything in one zip** (made by itself after every data copy; **Make the zip again** after a change).
+      **Make the sign-off file for the client** - the approval pack: the reports, every table's result, the
+      comparison, the mapping and the copy statements, no code and no data.
+  - **Next phase, same project:** the assessment's Report and *Share the zip* have **🧩 Start the code migration**
+    (Fix code opens first); the Deployment report has **Start the data migration** (with failed files: **Start the
+    data migration anyway**, highlighted, or *Fix the failed files first*). A project that moves on opens on its
+    new phase's first tab.
   - Projects saved as `phase: migration` (before the split) open as a code migration.
   - **Run** and **Copy the data** work in the background: you can wait on the step and watch each step's progress;
     the other steps stay locked until it has finished, so nothing is interrupted.
@@ -453,6 +468,18 @@ start output\report.html
 `output\report.html` is a single file – email it or attach it to the project documentation.
 It contains the assessment, conversion results, open items, deployment results, data load and
 reconciliation.
+
+Every phase also keeps its own report (`output\report-assessment.html`, `report-code-migration.html`,
+`report-data-migration.html`), all downloadable from the Deployment and Data reports. The zips in
+`output\review_package\` say what they are:
+
+| Zip | For | What is in it |
+|---|---|---|
+| `<project>-assessment-<date>_<time>.zip` | Wishtree, after the visit | Report, code overview, the code as received and converted, database code, open items, dummy data - opens again in WishBridge |
+| `<project>-<phase>-complete-<date>_<time>.zip` (**Everything in one zip**) | Wishtree's archive and hand-over | All reports + everything above + deployment results, table scripts, job definition, manual fixes + mapping, copied tables, comparison, load plan - opens again in WishBridge |
+| `<project>-data-migration-signoff-<date>_<time>.zip` | The client, to approve | The reports, copied tables, comparison, mapping, load plan - no code |
+
+None of them contains client data (only made-up sample rows) or passwords.
 
 ---
 

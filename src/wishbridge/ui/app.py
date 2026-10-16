@@ -225,7 +225,7 @@ with st.sidebar:
                     st.error(str(e))
     if project_ok() and not locked:
         st.success(f"Open: {Path(ss.project).name}")
-        st.caption(ss.project)
+        st.caption(ss.project.replace("\\", "\\\\").replace("_", "\\_"))  # show the path as typed, not as Markdown
 
 
 st.title("Wishtree WishBridge")
