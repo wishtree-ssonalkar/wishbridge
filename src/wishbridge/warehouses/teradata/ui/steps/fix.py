@@ -463,7 +463,7 @@ def _fix_all(cfg, raw, scope, details, backend, chosen, model, speed, endpoint) 
         files = _batch_files(cfg, scope)
         st.caption("Claude reviews and fixes every file in the list, 3 at a time. You then see one list with each "
                    "file's changes, tick the ones to keep and save them in one go - nothing is saved before that.")
-        if st.button(f"✨ Review and fix {len(files)} files", type="primary", disabled=backend is None or not files,
+        if st.button(f"✨ Review and fix {len(files)} file{'' if len(files) == 1 else 's'}", type="primary", disabled=backend is None or not files,
                      key="claude-fix-all"):
             reqs = [r for r in (_file_request(cfg, raw, f, details, chosen, model, speed, endpoint) for f in files) if r]
             _start_batch(bkey, reqs)
