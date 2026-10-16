@@ -166,6 +166,16 @@ The manual way still works: `setup\export_for_databricks.py`, upload `C:\WishBri
 5. After a deploy with failures: Deployment report → **✨ Fix the failed files with Claude**.
 6. On a data-migration error: **✨ Ask Claude about this problem** → **Explain and fix** → **Apply selected**.
 
+## Moving through the demo
+
+- After the assessment Report: **🧩 Start the code migration** (same project; Fix code opens first).
+- After the Deployment report: **Start the data migration** (or **Start the data migration anyway** when a file
+  still fails) - Settings opens first; *A database on this computer* → **Test connection** and **Check the upload
+  folder**.
+- Map the data: **Propose the mapping** (or **Map by hand**) → **Check before copying** → **Replace** → **Copy the data**.
+- Data report: **✅ Migration complete**, then download the three reports, **Everything in one zip** (made by itself
+  after the copy - for Wishtree) and **Make the sign-off file for the client** (the approval pack, no code).
+
 ## Before the demo - checklist
 
 - [ ] SQL Server (SQLEXPRESS) service running; run `setup\03_verify_sqlserver.sql` and keep the output open
