@@ -288,7 +288,7 @@ def test_map_the_data_proposes_checks_and_copies(project, monkeypatch):
     assert any("do not exist yet" in c.value for c in at.caption)
     next(b for b in at.button if b.label.startswith("💾 Save and check the columns")).click().run()
     assert not at.exception
-    assert any(e.label.startswith("Map the columns") for e in at.expander)  # column mapping for the mismatch
+    assert any("Map the columns" in e.label for e in at.expander)  # column mapping for the mismatch
     copy = next(b for b in at.button if b.label == "▶ Copy the data")
     assert not copy.disabled  # 'check columns' does not block; missing tables would
     copy.click().run()
@@ -619,3 +619,32 @@ def test_default_storage_workspace_explains_how_to_make_the_catalog(monkeypatch)
     monkeypatch.setattr(databricks.sdk, "WorkspaceClient", W)
     (msg,) = wh_helpers.check_target("DEFAULT", "shubham", schema="s", create_catalog=True)
     assert "https://dbc-x.cloud.databricks.com/explore/data" in msg and "Default Storage" in msg and "`shubham`" in msg
+
+
+def test_map_by_hand_adds_rows_and_completes_short_names(project, monkeypatch):
+    """Map by hand: the lists load without pairing; a typed row with a short Databricks name is saved in full."""
+    from wishbridge.warehouses.sqlserver import dbx, mapping
+
+    _data_migration(project)
+    _after_deploy(project)
+    from wishbridge.warehouses.sqlserver.ui.steps import data as data_step
+
+    monkeypatch.setattr(dbx, "Warehouse", lambda cfg: object())
+    monkeypatch.setattr(data_step, "Warehouse", lambda cfg: object())
+    monkeypatch.setattr(mapping, "target_tables", lambda cfg, wh: ["workspace.wishbridge_demo.customers"])
+    monkeypatch.setattr(mapping, "source_tables", lambda cfg, wh: ["wishbridge_demo_src.Customers"])
+    monkeypatch.setattr(mapping, "check", lambda cfg, wh=None: [])
+
+    at = ready_app(project)
+    at.session_state["go_step"] = "data"
+    at.run()
+    next(b for b in at.button if b.label.startswith("✏️ Map by hand")).click().run()
+    assert not at.exception and at.session_state["map_sources"] == ["wishbridge_demo_src.Customers"]
+    next(b for b in at.button if b.label.startswith("🧹 Start with an empty list")).click().run()
+    at.toggle(key="map_free").set_value(True).run()
+    at.session_state["map_rows"] = [{"copy": True, "source": "wishbridge_demo_src.Orders", "target": "orders"}]
+    at.run()
+    next(b for b in at.button if b.label.startswith("💾 Save and check the columns")).click().run()
+    assert not at.exception
+    saved = (project / "project.yml").read_text(encoding="utf-8")
+    assert "wishbridge_demo_src.Orders" in saved and "workspace.wishbridge_demo.orders" in saved

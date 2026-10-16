@@ -31,45 +31,97 @@ def render(cfg, raw, packages) -> None:
         st.stop()
 
     saved = h.table_rows(raw)
-    if st.button("🔄 Propose the mapping", help="Lists the source tables and the Databricks tables and pairs them by name."):
+
+    def load_lists(propose: bool) -> None:
         with st.spinner("Reading the table lists..."):
             try:
                 wh = Warehouse(cfg)
                 targets = mapping.target_tables(cfg, wh)
-                ss.map_rows = mapping.propose(cfg, mapping.source_tables(cfg, wh), targets)
-                ss.map_targets = targets
+                sources = mapping.source_tables(cfg, wh)
+                ss.map_targets, ss.map_sources = targets, sources
+                if propose:
+                    ss.map_rows = mapping.propose(cfg, sources, targets)
+                ss.map_manual = True
                 ss.pop("map_check", None)
             except (SqlError, ValueError) as e:
                 st.error(f"Could not read the tables: {e}")
+
+    b1, b2, b3 = st.columns(3)
+    if b1.button("🔄 Propose the mapping", width="stretch",
+                 help="Lists the source tables and the Databricks tables and pairs them by name."):
+        load_lists(propose=True)
+    if b2.button("✏️ Map by hand", width="stretch",
+                 help="Loads both table lists without pairing anything: add rows with + below and pick the tables "
+                      "yourself. Your saved mapping is kept."):
+        ss.pop("map_rows", None)
+        load_lists(propose=False)
+    if b3.button("🧹 Start with an empty list", width="stretch",
+                 help="Clears the list on screen (the saved mapping changes only when you press Save)."):
+        ss.map_rows, ss.map_manual = [], True
+        ss.pop("map_check", None)
     wheres = {t["source"]: t.get("where", "") for t in (raw.get("data") or {}).get("tables") or [] if isinstance(t, dict)}
-    rows = ss.get("map_rows") or [{"copy": True, "source": r["source"], "target": r["target"] or cfg.map_table(r["source"]),
-                                   "filter": wheres.get(r["source"], "")} for r in saved]
-    if not rows:
-        st.info("Press **Propose the mapping** to list the source tables and pair them with the Databricks tables.")
+    rows = ss.get("map_rows")
+    if rows is None:
+        rows = [{"copy": True, "source": r["source"], "target": r["target"] or cfg.map_table(r["source"]),
+                 "filter": wheres.get(r["source"], "")} for r in saved]
+    if not rows and not ss.get("map_manual"):
+        st.info("Press **Propose the mapping** to pair the source tables with the Databricks tables by name, or "
+                "**Map by hand** to choose them yourself.")
     else:
-        targets = sorted(set(ss.get("map_targets") or []) | {r["target"] for r in rows if r["target"]})
-        df = pd.DataFrame([{"copy": r["copy"], "source": r["source"], "target": r["target"],
-                            "filter": r.get("filter") or wheres.get(r["source"], "")} for r in rows])
+        free = st.toggle("Type table names freely", key="map_free",
+                         help="Type any source or Databricks table, e.g. one not in the lists yet. A short Databricks "
+                              f"name like FactDailySales becomes {cfg.target_schema}.FactDailySales.")
+        sources = sorted(set(ss.get("map_sources") or []) | {r["source"] for r in rows if r.get("source")})
+        targets = sorted(set(ss.get("map_targets") or []) | {r["target"] for r in rows if r.get("target")})
+        df = pd.DataFrame([{"copy": bool(r.get("copy", True)), "source": r.get("source") or "",
+                            "target": r.get("target") or "", "filter": r.get("filter") or wheres.get(r.get("source"), "")}
+                           for r in rows], columns=["copy", "source", "target", "filter"])
         if not federation and cfg.data_method != "local":
             df = df.drop(columns=["filter"])  # exported files are copied whole
+        if free or not sources:
+            source_col = st.column_config.TextColumn("Source table", required=True,
+                                                     help="schema.table in the source, e.g. dw.FactDailySales")
+        else:
+            source_col = st.column_config.SelectboxColumn("Source table", options=sources, required=True)
+        if free or not targets:
+            target_col = st.column_config.TextColumn("Databricks table", required=True,
+                                                     help="catalog.schema.table; a short name gets the target schema")
+        else:
+            target_col = st.column_config.SelectboxColumn("Databricks table", options=targets, required=True)
         edited = st.data_editor(
-            df, hide_index=True, width="stretch", key="map_editor", num_rows="fixed",
+            df, hide_index=True, width="stretch", key="map_editor", num_rows="dynamic",
             column_config={
-                "copy": st.column_config.CheckboxColumn("Copy now", width="small",
+                "copy": st.column_config.CheckboxColumn("Copy now", width="small", default=True,
                                                         help="Untick the tables that should wait for a later copy."),
-                "source": st.column_config.TextColumn("Source table", disabled=True),
-                "target": st.column_config.SelectboxColumn("Databricks table", options=targets, required=True),
+                "source": source_col,
+                "target": target_col,
                 "filter": st.column_config.TextColumn(
                     "Only rows where (optional)",
                     help="A condition on the source table, e.g. ModifiedDate >= '2026-10-01'. Empty: all rows. "
                          "A table with a condition is added to, never emptied - use it for new or changed rows."),
             })
+        st.caption("Add a row with **+** at the bottom of the list, remove one by ticking its row and pressing the "
+                   "bin. Rows without both tables are not saved.")
         if ss.get("map_rows"):
             missing = [r["target"] for r in ss.map_rows if not r.get("exists")]
             if missing:
                 st.caption(f":red[{len(missing)} Databricks table(s) do not exist yet] (e.g. `{missing[0]}`): run "
                            "*Create the tables* in Run, or pick another table.")
-        picked = [r for r in edited.to_dict("records") if r["copy"] and r["target"]]
+        picked = []
+        for r in edited.to_dict("records"):
+            src, tgt = str(r.get("source") or "").strip(), str(r.get("target") or "").strip()
+            if not (src and tgt) or r.get("copy") is False:
+                continue
+            parts = tgt.split(".")
+            if len(parts) == 1:
+                tgt = f"{cfg.target_schema}.{tgt}"
+            elif len(parts) == 2:
+                tgt = f"{cfg.catalog}.{tgt}"
+            picked.append({**r, "copy": True, "source": src, "target": tgt})
+        doubled = sorted({p["target"] for p in picked if [q["target"].lower() for q in picked].count(p["target"].lower()) > 1})
+        if doubled:
+            st.warning(f"More than one source goes into {', '.join(f'`{d}`' for d in doubled)} - check that is wanted "
+                       "(with *Replace*, the last copy wins).")
         if st.button(f"💾 Save and check the columns ({len(picked)} table(s))", type="primary", disabled=not picked):
             new = dict(raw)
             tables = h.rows_to_tables(picked, (raw.get("data") or {}).get("tables"))
@@ -103,9 +155,11 @@ def render(cfg, raw, packages) -> None:
                                         + ", ".join(f"{x} not copied" for x in c.get("source_not_copied", [])))}
             for c in check]), hide_index=True, width="stretch")
         for c in check:
-            if c["status"] not in ("check columns", "no matching columns"):
-                continue
-            with st.expander(f"Map the columns: {c['source']} → {c['target']}"):
+            if not c.get("target_columns") or "pairs" not in c:
+                continue  # no table to map yet, or a compare-only table
+            problem = c["status"] in ("check columns", "no matching columns")
+            with st.expander(f"{'⚠️ ' if problem else ''}Map the columns: {c['source']} → {c['target']}",
+                             expanded=c["status"] == "no matching columns"):
                 cdf = pd.DataFrame([{"Databricks column": t, "source column": c["pairs"].get(t, "")}
                                     for t in c["target_columns"]])
                 key = f"cols:{c['target']}"
