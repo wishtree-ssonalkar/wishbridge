@@ -60,6 +60,7 @@ def _assessment_report(cfg, raw, packages) -> None:
         report_overview(cfg, state)
         if cfg.phase == "assessment":
             next_button("Next: share the zip →", "send", "next-report")
+            next_phase_button(cfg, "to-code-migration-report")
         elif cfg.phase == "code-migration" and state.get("convert"):
             next_button("Next: fix code →", "fix", "next-report")
         if cfg.phase != "assessment" and state.get("convert"):
@@ -185,15 +186,33 @@ def _full_report(cfg) -> None:
             st.iframe(report.read_text(encoding="utf-8"), height=900)  # our own generated report, all values HTML-escaped
 
 
-def _start_data_migration() -> None:
+def _start_phase(phase: str) -> None:
+    """Move this project on to the next phase (same folder, every result kept); its first tab opens."""
     from wishbridge.warehouses.teradata.ui import helpers as h
 
     raw = h.read_raw(ss.project)
-    raw["phase"] = "data-migration"
+    raw["phase"] = phase
     h.save_raw(ss.project, raw)
-    ss.goal = "data-migration"
-    ss.goal_applied = (ss.project, "data-migration")
+    ss.goal = phase
+    ss.goal_applied = (ss.project, phase)
     ss.pop("step", None)
+
+
+def _start_data_migration() -> None:
+    _start_phase("data-migration")
+
+
+def next_phase_button(cfg, key: str) -> None:
+    """At the end of an assessment: go on to the code migration in this same project."""
+    if cfg.phase != "assessment" or not load_state(cfg).get("convert"):
+        return
+    with st.container(border=True):
+        st.markdown("#### Next: code migration")
+        st.caption("Continue in this same project: **Fix code** opens first, with the converted code and every "
+                   "finding from the assessment; then the Databricks settings and Deploy. Needs the client's "
+                   "Databricks workspace.")
+        st.button("🧩 Start the code migration →", type="primary", key=key, on_click=_start_phase,
+                  args=("code-migration",))
 
 
 def _code_migration_report(cfg, raw, state) -> None:
@@ -217,6 +236,9 @@ def _code_migration_report(cfg, raw, state) -> None:
                    "keeps every manual fix).")
         _claude_fix_deploy(cfg, raw, state, failed)
         next_button("Next: fix the failed files →", "fix", "next-code-report")
+        st.button("Start the data migration anyway →", key="to-data-migration-anyway", on_click=_start_data_migration,
+                  help="The tables that were created can be filled now; a table whose file failed is not in "
+                       "Databricks yet, so its copy will fail until the file is fixed and deployed.")
     else:
         st.success("Everything was created in Databricks.")
         st.button("Start the data migration →", type="primary", key="to-data-migration", on_click=_start_data_migration,
@@ -265,7 +287,9 @@ def _data_migration_report(cfg, raw, state) -> None:
     if failed:
         st.error(f"**{len(failed)} table(s) were not copied** — see the errors below, fix the mapping and copy again.")
     elif quick and not differ:
-        st.success("**All copied tables match the source** (row counts, numeric totals and checksums).")
+        st.success("**✅ Migration complete.** The code is in Databricks and every copied table matches the source "
+                   "(row counts, numeric totals and checksums). Download the reports and everything in one zip below, "
+                   "then make the sign-off file for the client.")
     elif quick:
         st.warning(f"**{differ} table(s) differ from the source** — see *Source vs Databricks* below.")
     else:

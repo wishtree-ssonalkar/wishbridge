@@ -16,6 +16,13 @@ ss = st.session_state
 
 
 def render(cfg, raw, packages) -> None:
+    _render(cfg, raw, packages)
+    from wishbridge.warehouses.redshift.ui.steps.report import next_phase_button
+
+    next_phase_button(cfg, "to-code-migration-share")
+
+
+def _render(cfg, raw, packages) -> None:
     from wishbridge.warehouses.redshift import mailer
 
     st.subheader("Share the zip")
