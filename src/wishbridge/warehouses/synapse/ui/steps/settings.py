@@ -448,12 +448,35 @@ def render(cfg, raw, packages) -> None:
                             "windows_login": llogin == "Windows login", "user": luser.strip(), "trust": ltrust}
                 if not (lserver.strip() and ldatabase.strip()):
                     required("Required: the server and the database on this computer.")
+                test_pw = ""
+                if llogin == "User and password":
+                    test_pw = st.text_input("Password (for the test)", type="password", key="local_test_pw",
+                                            help="Used for this test only; never saved. Copying asks again.")
+                t1, t2 = st.columns(2)
+                if t1.button("🔎 Test connection", key="local_test", width="stretch",
+                             disabled=not (lserver.strip() and ldatabase.strip())):
+                    with st.spinner(f"Connecting to {ldatabase} on {lserver}..."):
+                        ss.local_test_msg = h.test_local_db(local_db, test_pw)
+                if t2.button("📁 Check the upload folder", key="local_volume", width="stretch",
+                             disabled=not files_root.strip()):
+                    with st.spinner("Asking the workspace..."):
+                        ss.local_test_msg = h.check_volume(dbx.get("profile") or cfg.profile, files_root.strip())
+                if ss.get("local_test_msg"):
+                    ok, msg = ss.local_test_msg
+                    (st.success if ok else st.error)(msg)
                 src_done = bool(lserver.strip() and ldatabase.strip() and files_root.strip())
             else:
                 files_root = st.text_input("Files root (volume path) :red[*]", value=data.get("files_root", ""),
                                            placeholder="/Volumes/main/landing/acme")
                 if not files_root.strip():
                     required("Required: the volume folder the exported tables are in.")
+                if st.button("🔎 Check the folder", key="files_check", disabled=not files_root.strip(),
+                             help="Lists the table folders Databricks finds there (one folder per table)."):
+                    with st.spinner("Asking the workspace..."):
+                        ss.files_check_msg = h.check_files_folder(dbx.get("profile") or cfg.profile, files_root.strip())
+                if ss.get("files_check_msg"):
+                    ok, msg = ss.files_check_msg
+                    (st.success if ok else st.error)(msg)
                 file_format = st.selectbox("File format", ["PARQUET", "CSV", "JSON", "AVRO", "ORC"],
                                            index=["PARQUET", "CSV", "JSON", "AVRO", "ORC"].index(str(data.get("file_format", "PARQUET")).upper()))
                 src_done = bool(files_root.strip())

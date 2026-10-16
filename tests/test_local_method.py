@@ -51,3 +51,15 @@ def test_mapping_lists_the_local_database_not_federation(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     monkeypatch.setattr(localdb, "list_tables", lambda c: ["dw.DimCustomer", "dw.FactDailySales"])
     assert mapping.source_tables(cfg) == ["dw.DimCustomer", "dw.FactDailySales"]
+
+
+def test_settings_test_buttons_report_clearly(monkeypatch):
+    from wishbridge.warehouses.ssis.ui import helpers as h
+
+    def refuse(cfg, password=None):
+        raise RuntimeError("[28000] Login failed for user 'PC\\me'. (18456) (SQLDriverConnect)")
+
+    monkeypatch.setattr(localdb, "connect", refuse)
+    ok, msg = h.test_local_db({"server": "srv", "database": "NoSuchDb"})
+    assert not ok and "check the database name" in msg
+    assert not h.check_volume("DEFAULT", "/tmp/export")[0]  # must be a Unity Catalog volume
