@@ -22,6 +22,14 @@ the client.
 SQL Server and Oracle are general database products, so the same software can hold a warehouse or an
 application's data. Analyze runs a **fit check** that confirms the code is a warehouse and warns when it is not.
 
+> **Testing status (15 October 2026).** WishBridge has been tested end to end with **one sample project: SSIS
+> packages loading a SQL Server warehouse** (`examples/ssis-local-demo`) - assessment, code migration with
+> deploy, Claude fixes, and the data copy from a database on this computer. **That project is ready for the
+> demo.** Every other source (SQL Server alone, Synapse, Snowflake, Oracle, Teradata, Redshift, BigQuery,
+> Netezza, Informatica, DataStage) is built and covered by automated tests, but has **not** been run on a real
+> project yet: each needs a realistic sample project with data, an end-to-end test, and the changes that test
+> and the client's requirements bring up.
+
 ---
 
 ## Part A – One-time setup (about 20 minutes)
@@ -274,6 +282,31 @@ wishbridge convert --ai
 Suggestions appear in `output\ai_suggestions\`. Review them, then copy what you accept into `overrides\`.
 This sends the code to the Claude API – only use it where the client allows that.
 
+**In the app – ✨ Ask Claude (Fix code tab).** Off for each project until you tick *the client agreed* and
+press **Allow Claude for this project**. Then choose:
+
+| Connect with | Needs (once per computer) |
+|---|---|
+| Databricks workspace (the project's login) | A Claude model served in the workspace (**🔎 Find Claude models**) |
+| Claude Code on this computer | `claude auth login` - the tab has **Sign in again** and **🔌 Test connection** |
+| Claude API key | `setx ANTHROPIC_API_KEY "sk-ant-..."`, then restart WishBridge |
+
+*Speed*: **Fast (Claude Sonnet)** for most files, **Most thorough (Claude Opus)** for hard ones.
+*What do you want Claude to do?*
+
+- **Fix this file** – Claude gets the original, the Databricks version (with your unsaved edits), the open
+  issues, your extra details and the project background (target catalog and schema, the definitions of the tables
+  the file uses, the other objects). It returns only the changes, shown as a diff; **Use this fix** saves it as a
+  manual fix in `overrides\`.
+- **Fix all files that need a fix (or a review)** – Claude works on 3 files at a time; you get one list with each
+  file's notes and changes, untick what you don't want and **💾 Save selected** saves them all at once.
+- **💬 Ask a question** – any question about the project or the open file ("which files load FactDailySales?",
+  "what should we check before deploying this?"); follow-up questions remember the last answers; if you ask for a
+  change, **Use these changes** saves it.
+
+Claude only ever gets code, names and settings – never data or passwords – and nothing is saved until you choose.
+A request runs in the background with a timer and **Cancel**; a fix usually takes 10-40 seconds.
+
 ### C6. Deploy to the test schema
 
 ```powershell
@@ -284,10 +317,46 @@ Tables, views and procedures are created in your test schema. Queries and update
 (EXPLAIN), not run, so no data changes. Any statement that fails is listed – fix it in `overrides\` and
 deploy again. Re-running is safe; add `--recreate` to rebuild objects that already exist.
 
+**Fixed automatically on every deploy.** The warehouse's own schemas (e.g. `dw`, `stg`, read from its database)
+are mapped to your target `catalog.schema` (unless Settings maps them elsewhere), and the table scripts are rebuilt
+for today's catalog and schema - so changing the catalog after the assessment just works. The Deployment report
+shows this under **🛠 Fixed automatically by WishBridge** (schemas mapped, scripts rebuilt, names renamed per file);
+your files keep the original names and nothing needs saving.
+
+**✨ Fix the failed files with Claude** (Deployment report). Files that failed only because a schema was not found
+are listed as "deploy again". The others go to Claude with the exact Databricks error, 3 at a time; save the fixes
+you want in one go, then deploy again.
+
+**A new catalog or schema.** In Settings pick **➕ New catalog…** and type a name, or type a new schema name:
+WishBridge creates them when you press **Next**. On a workspace that uses Databricks *Default Storage* a catalog can
+only be created in Databricks itself (Catalog → + → Create a catalog → Default Storage); WishBridge says so and
+links to the page. A new schema in an existing catalog always works.
+
 ### C7. Copy the data
 
 Code alone can't copy data: WishBridge needs to know **where the old database is and how to log in**.
 Copying data is optional — skip this step and WishBridge still converts and deploys the code.
+
+**Three ways to copy** (Settings → *Source data* → *How to copy the data*):
+
+| Option | When |
+|---|---|
+| **Client's database, read directly by Databricks (Lakehouse Federation)** | At a client: Databricks reaches their database over the network with a read-only SQL user |
+| **A database on this computer (WishBridge exports and uploads it)** | A demo, or a database Databricks cannot reach: WishBridge reads the mapped tables read-only (Windows login or a SQL login whose password is never saved), saves Parquet (exact decimals), uploads it to a Unity Catalog volume it creates, and copies with every column cast to the table's type; the comparison counts and sums the source in the database itself |
+| **Exported files already in a Unity Catalog volume** | The client sends exports (Parquet, CSV, ...) |
+
+A server name that means "this computer" (`.\SQLEXPRESS`, `localhost`, ...) under Lakehouse Federation gets a
+warning: Databricks in the cloud cannot reach it - use the second option.
+
+**When copying** (Map the data): **Add to what is in Databricks** adds the rows (copying twice doubles them);
+**Replace what is in Databricks** empties the table first, then copies - safe to repeat (a table with an *Only rows
+where* condition is only added to, so its other rows are kept). Press **🔎 Check before copying** first: it tests
+the source, that every Databricks table exists and how many rows there are.
+
+**✨ Ask Claude about this problem** appears under errors on Settings, Map the data and the Data report. Claude gets
+the problems, the settings (no passwords), the mapping and the table definitions, explains what is wrong and lists
+fixes WishBridge can apply after you tick them: a setting, a column mapping, a filter, or one additive Databricks SQL
+statement (never DROP, DELETE or TRUNCATE; SQL is unticked by default). **✅ Apply selected**, then check or copy again.
 
 **Connect the source database (recommended).** In the app (migration phase): *Settings → Source database*. Choose the database
 type, enter the server, port, database (or Oracle service name) and a read-only user and password, then press

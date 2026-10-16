@@ -50,7 +50,7 @@ def render(cfg, raw, packages) -> None:
         targets = sorted(set(ss.get("map_targets") or []) | {r["target"] for r in rows if r["target"]})
         df = pd.DataFrame([{"copy": r["copy"], "source": r["source"], "target": r["target"],
                             "filter": r.get("filter") or wheres.get(r["source"], "")} for r in rows])
-        if not federation:
+        if not federation and cfg.data_method != "local":
             df = df.drop(columns=["filter"])  # exported files are copied whole
         edited = st.data_editor(
             df, hide_index=True, width="stretch", key="map_editor", num_rows="fixed",
@@ -137,6 +137,15 @@ def render(cfg, raw, packages) -> None:
         st.radio("When copying", list(modes), format_func=modes.get, key="load_mode", horizontal=True,
                  index=list(modes).index(cfg.load_mode), on_change=_save_load_mode, args=(raw,))
 
+        if cfg.data_method == "local" and not cfg.local_db.get("windows_login", True):
+            import os
+
+            from wishbridge.warehouses.datastage.localdb import PASSWORD_ENV
+
+            pw = st.text_input(f"Password for {cfg.local_db.get('user')} on {cfg.local_db.get('server')}",
+                               type="password", key="local_pw", help="Used for the check and the copy only; never saved.")
+            if pw:
+                os.environ[PASSWORD_ENV] = pw  # passed to the copy running in the background, never written anywhere
         if st.button("🔎 Check before copying",
                      help="The source is reachable, every Databricks table exists, and how many rows there are."):
             with st.spinner("Checking the source and the Databricks tables..."):
@@ -178,6 +187,28 @@ def render(cfg, raw, packages) -> None:
                                         "rows": t.get("rows"), "error": t.get("error", "")} for t in ld["tables"]]),
                          hide_index=True, width="stretch")
             next_button("Next: see the updated report →", "results", "next-data")
+    _claude_data_problems(cfg, raw)
+
+
+def _claude_data_problems(cfg, raw) -> None:
+    """Problems of the check and of the last copy, for Claude to explain and fix."""
+    from wishbridge.warehouses.datastage.ui.claude_panel import claude_problem_panel
+
+    problems, targets = [], []
+    pf = ss.get("map_preflight")
+    if pf:
+        if not pf["source_ok"]:
+            problems.append(f"Check before copying - source: {pf['source_message'] or 'could not be reached'}")
+        for t in pf.get("missing_targets") or []:
+            problems.append(f"Check before copying - Databricks table does not exist: {t}")
+            targets.append(t)
+    ld = load_state(cfg).get("load") or {}
+    if ld.get("executed"):
+        for t in ld.get("tables", []):
+            if t["status"] == "failed":
+                problems.append(f"Copy failed for {t['source']} -> {t['target']}: {t.get('error', '')}")
+                targets.append(t["target"])
+    claude_problem_panel(cfg, raw, "Map the data", problems, targets)
 
 
 def _save_load_mode(raw) -> None:

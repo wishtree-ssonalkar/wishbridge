@@ -215,12 +215,14 @@ def _code_migration_report(cfg, raw, state) -> None:
     if failed:
         st.warning(f"**{len(failed)} file(s) failed on Databricks.** Fix them in *Fix code*, then run again (the run "
                    "keeps every manual fix).")
+        _claude_fix_deploy(cfg, raw, state, failed)
         next_button("Next: fix the failed files →", "fix", "next-code-report")
     else:
         st.success("Everything was created in Databricks.")
         st.button("Start the data migration →", type="primary", key="to-data-migration", on_click=_start_data_migration,
                   help="Switches this project to the data migration phase: map the tables and copy the data.")
 
+    _auto_fixed(d)
     st.markdown("#### What was created")
     st.dataframe(pd.DataFrame([{
         "file": f["file"],
@@ -293,4 +295,108 @@ def _data_migration_report(cfg, raw, state) -> None:
             "details": t.get("error") or ", ".join(f"{ch['check']}: {ch['source']} → {ch['target']}"
                                                    for ch in t.get("checks", []) if not ch["match"]) or "all checks equal",
         } for t in quick["tables"]]), width="stretch", hide_index=True)
+    problems = [f"Copy failed for {t['source']} -> {t['target']}: {t.get('error', '')}" for t in failed]
+    targets = [t["target"] for t in failed]
+    for t in (quick or {}).get("tables", []):
+        if t["status"] != "match":
+            problems.append(f"Source vs Databricks for {t['target']}: {t['status']} - " + (t.get("error") or ", ".join(
+                f"{ch['check']}: source {ch['source']}, Databricks {ch['target']}"
+                for ch in t.get("checks", []) if not ch["match"])))
+            targets.append(t["target"])
+    from wishbridge.warehouses.ssis.ui.claude_panel import claude_problem_panel
+
+    claude_problem_panel(cfg, raw, "Data report", problems, targets)
     _full_report(cfg)
+
+
+_SCHEMA_ONLY = ("SCHEMA_NOT_FOUND",)
+
+
+def _claude_fix_deploy(cfg, raw, state, failed) -> None:
+    """Send every failed file with its exact Databricks errors to Claude; save the chosen fixes in one go."""
+    from wishbridge.warehouses.ssis import ai
+    from wishbridge.warehouses.ssis.ui.steps import fix as fx
+
+    from wishbridge.warehouses.ssis.deploy import deploy_schema_map
+
+    ss = st.session_state
+    old_names = [s.lower() for s in deploy_schema_map(cfg)]
+
+    def schema_only_error(err: str) -> bool:
+        """Fixed by deploying again: a missing schema, or a table named with a source schema (`dw`.`X`)."""
+        low = err.lower()
+        return any(c in err for c in _SCHEMA_ONLY) or ("TABLE_OR_VIEW_NOT_FOUND" in err and any(
+            f"`{s}`." in low or f" {s}." in low for s in old_names))
+
+    schema_only = [d for d in failed if all(r["ok"] or schema_only_error(r.get("error") or "") for r in d["results"])]
+    to_fix = [d for d in failed if d not in schema_only and not d["file"].startswith("_database_schema/")]
+    with st.container(border=True):
+        st.markdown("#### ✨ Fix the failed files with Claude")
+        flash = ss.pop("claude_flash", None)
+        if flash:
+            st.success(flash + " Then open **Deploy** and deploy again.")
+        if schema_only:
+            st.info(f"{len(schema_only)} file(s) failed only because a schema was not found "
+                    f"({', '.join(d['file'] for d in schema_only[:4])}{' ...' if len(schema_only) > 4 else ''}). "
+                    "WishBridge now maps the warehouse's schemas to the target and rebuilds the table scripts on "
+                    "every deploy: **deploy again first** - these need no change.")
+        if not cfg.assist_enabled:
+            st.caption("Claude is off for this project: allow it in **Fix code > ✨ Ask Claude** once the client has "
+                       "agreed that their code may be sent to Claude.")
+            return
+        model = "claude-sonnet-5-5" if cfg.assist_speed == "fast" else cfg.ai_model
+        backend, how = ai.assist_backend(cfg.assist_via, cfg.profile, cfg.assist_endpoint)
+        bkey = f"{ss.project}|deploy"
+        batch = fx._BATCHES.get(bkey)
+        if batch is None:
+            if not to_fix:
+                st.caption("No file needs Claude: deploy again.")
+                return
+            st.caption(f"Claude gets each failed file with the exact Databricks errors, its original and the project "
+                       f"background, fixes {len(to_fix)} file(s) 3 at a time, and you save the fixes you want in one "
+                       f"go. Uses {how}.")
+            if st.button(f"✨ Fix {len(to_fix)} failed file(s) with Claude", type="primary", disabled=backend is None,
+                         key="claude-fix-deploy"):
+                conv = {f["file"]: f for f in (state.get("convert") or {}).get("files", [])}
+                reqs = []
+                for d in to_fix:
+                    cf = conv.get(d["file"])
+                    req = fx._file_request(cfg, raw, cf, "These errors came from deploying the file on Databricks: "
+                                           "fix them.", cfg.assist_via, model, cfg.assist_speed,
+                                           cfg.assist_endpoint) if cf else None
+                    if req is None:
+                        continue
+                    errors = [f"Databricks error in statement {r['n']}: {r.get('error', '')}"
+                              + (f" (statement starts: {r['statement'][:200]})" if r.get("statement") else "")
+                              for r in d["results"] if not r["ok"]]
+                    req["issues"] = errors + req["issues"]
+                    reqs.append(req)
+                fx._start_batch(bkey, reqs)
+                st.rerun()
+            return
+        if not batch["done"]:
+            fx._batch_progress(bkey)
+            return
+        fx._batch_results(raw, bkey)
+
+
+def _auto_fixed(d) -> None:
+    """What WishBridge fixed by itself during this deploy (no file was changed for it)."""
+    a = d.get("auto_fixed")
+    if not a or not (a.get("schema_map") or a.get("scripts_rebuilt")):
+        return
+    with st.container(border=True):
+        st.markdown("#### 🛠 Fixed automatically by WishBridge")
+        st.caption("Applied while deploying - your files keep the original names, so a later change of catalog or "
+                   "schema in Settings just works. Nothing to save.")
+        if a.get("schema_map"):
+            st.markdown("**Source schemas mapped to Databricks:** " + ", ".join(
+                f"`{s}` → `{t}`" for s, t in a["schema_map"].items()))
+        if a.get("scripts_rebuilt"):
+            st.markdown(f"**Table scripts rebuilt for `{a['target']}`:** " + ", ".join(
+                f"{f} ({n} table{'s' if n != 1 else ''})" for f, n in a["scripts_rebuilt"].items()))
+        renamed = a.get("renamed") or {}
+        if renamed:
+            st.markdown(f"**Names renamed in {len(renamed)} file(s)** ({sum(renamed.values())} in total):")
+            st.dataframe(pd.DataFrame([{"file": f, "names renamed": n} for f, n in renamed.items()]),
+                         width="stretch", hide_index=True)

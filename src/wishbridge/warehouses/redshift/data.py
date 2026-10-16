@@ -32,7 +32,7 @@ def build_plan(cfg: ProjectConfig) -> list[tuple[TableMapping, list[str]]]:
             plan.append((t, [f"TRUNCATE TABLE {t.target}"] if cfg.load_mode == "overwrite" else []))
             continue
         stmts = []
-        filtered = cfg.data_method == "federation" and bool(t.where)
+        filtered = cfg.data_method in ("federation", "local") and bool(t.where)
         if cfg.load_mode == "overwrite" and not filtered:  # a filtered copy adds rows; it never empties the table
             stmts.append(f"TRUNCATE TABLE {t.target}")
         if cfg.data_method == "federation":
@@ -47,10 +47,13 @@ def build_plan(cfg: ProjectConfig) -> list[tuple[TableMapping, list[str]]]:
             if not cfg.files_root:
                 raise SqlError("data.files_root is required for the files method")
             table = t.source.split(".")[-1]
-            opts = "FORMAT_OPTIONS ('header' = 'true', 'inferSchema' = 'true') " if cfg.file_format == "CSV" else ""
+            local = cfg.data_method == "local"  # exported and uploaded by WishBridge just before the copy
+            fmt = "PARQUET" if local else cfg.file_format
+            opts = "FORMAT_OPTIONS ('header' = 'true', 'inferSchema' = 'true') " if fmt == "CSV" else ""
+            force = ", 'force' = 'true'" if local else ""
             stmts.append(
                 f"COPY INTO {t.target} FROM '{cfg.files_root}/{table}/' "
-                f"FILEFORMAT = {cfg.file_format} {opts}COPY_OPTIONS ('mergeSchema' = 'false')"
+                f"FILEFORMAT = {fmt} {opts}COPY_OPTIONS ('mergeSchema' = 'false'{force})"
             )
         plan.append((t, stmts))
     return plan
@@ -79,8 +82,25 @@ def run_load(cfg: ProjectConfig, execute: bool = False, allow_prod: bool = False
         if bad and not allow_prod:
             raise SqlError(f"Targets look like production: {', '.join(bad)}. Pass --allow-prod to load them.")
         wh = wh or Warehouse(cfg)
+        local = cfg.data_method == "local"
+        by_target = {t.target: t for t, _ in plan}
+        if local:
+            from . import localdb
+
+            localdb.ensure_volume(cfg, wh)
         for i, entry in enumerate(tables):
             progress(i, len(tables), entry["target"])
+            if local and not entry["compare_only"]:
+                # read the table on this computer, upload it, then copy it with every column cast to the table's type
+                try:
+                    t = by_target[entry["target"]]
+                    n, cols = localdb.export_upload(cfg, wh, entry["source"], t.where)
+                    entry["exported_rows"] = n
+                    entry["statements"] = [localdb.copy_into_sql(cfg, wh, t, cols) if s.startswith("COPY INTO") else s
+                                           for s in entry["statements"]]
+                except Exception as e:  # noqa: BLE001 - ODBC, pandas and the SDK raise many types
+                    entry.update(status="failed", error=f"Export from this computer failed: {str(e).splitlines()[0][:350]}")
+                    continue
             try:
                 rows = None
                 for stmt in entry["statements"]:

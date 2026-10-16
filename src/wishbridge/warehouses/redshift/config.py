@@ -94,7 +94,12 @@ class ProjectConfig:
     schema_map: dict[str, str] = field(default_factory=dict)
     ai_enabled: bool = False
     ai_model: str = "claude-opus-5-5"
+    assist_enabled: bool = False  # Fix code may ask Claude (the client agreed their code may be sent)
+    assist_via: str = "auto"      # databricks | claude-code | api | auto
+    assist_endpoint: str = ""     # the Claude model served in the Databricks workspace
+    assist_speed: str = "fast"    # fast (Claude Sonnet) | thorough (the Claude model above, Opus by default)
     data_method: str = "federation"
+    local_db: dict = field(default_factory=dict)  # data.local: a database on this computer (server, database, login)
     source_catalog: str = ""
     files_root: str = ""
     file_format: str = "PARQUET"
@@ -186,7 +191,12 @@ def load_config(path: str | Path) -> ProjectConfig:
         schema_map={str(k): str(v) for k, v in (raw.get("schema_map") or {}).items()},
         ai_enabled=bool(ai.get("ai", False)),
         ai_model=ai.get("model", "claude-opus-5-5"),
+        assist_enabled=bool(ai.get("assist", False)),
+        assist_via=str(ai.get("via") or "auto"),
+        assist_endpoint=str(ai.get("endpoint") or ""),
+        assist_speed=str(ai.get("speed") or "fast"),
         data_method=data.get("method", "federation"),
+        local_db=dict(data.get("local") or {}),
         source_catalog=data.get("source_catalog", ""),
         files_root=str(data.get("files_root", "")).rstrip("/"),
         file_format=str(data.get("file_format", "PARQUET")).upper(),
@@ -200,8 +210,8 @@ def load_config(path: str | Path) -> ProjectConfig:
         raise ConfigError(f"phase must be one of: {', '.join(PHASES)}")
     if cfg.scope not in ("all", "recommended"):
         raise ConfigError("scope must be 'all' or 'recommended'")
-    if cfg.data_method not in ("federation", "files"):
-        raise ConfigError("data.method must be 'federation' or 'files'")
+    if cfg.data_method not in ("federation", "files", "local"):
+        raise ConfigError("data.method must be 'federation', 'files' or 'local'")
     if cfg.load_mode not in ("append", "overwrite"):
         raise ConfigError("data.mode must be 'append' or 'overwrite'")
     for t in data.get("tables") or []:
@@ -239,6 +249,7 @@ schema_map:{schema_map}
 
 autofix:
   ai: false                 # true = ask Claude for fix suggestions (needs ANTHROPIC_API_KEY)
+  assist: false             # true = the client agreed: Fix code may send a file's code to Claude (never data)
   model: claude-opus-5-5
 
 data:

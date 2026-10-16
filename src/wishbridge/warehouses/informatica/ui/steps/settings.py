@@ -3,6 +3,8 @@ migration."""
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import streamlit as st
 
@@ -13,6 +15,7 @@ from wishbridge.warehouses.informatica.ui import helpers as h
 from wishbridge.warehouses.informatica.ui.common import required
 
 ss = st.session_state
+NEW_CATALOG = "➕ New catalog…"
 
 
 def settings_problems(offline: bool, v: dict) -> list[str]:
@@ -39,7 +42,11 @@ def settings_problems(offline: bool, v: dict) -> list[str]:
         problems.append("Test schema: it looks like production - use a test schema")
     if v.get("phase") != "data-migration":
         return problems  # the source data is needed only to copy the data
-    if v.get("method") == "files":
+    if v.get("method") == "local":
+        db = v.get("local_db") or {}
+        if not (db.get("server") and db.get("database")):
+            problems.append("Data to copy: the server and the database on this computer")
+    elif v.get("method") == "files":
         if not str(v.get("files_root") or "").strip():
             problems.append("Data to copy: the files folder (volume path) the exported tables are in")
     elif not str(v.get("source_catalog") or "").strip():
@@ -108,6 +115,7 @@ def render(cfg, raw, packages) -> None:
     scope = str(raw.get("scope") or "all").lower()
     method, source_catalog = data.get("method", "federation"), data.get("source_catalog", "")
     files_root, file_format, load_mode = data.get("files_root", ""), data.get("file_format", "PARQUET"), data.get("mode", "append")
+    local_db = dict(data.get("local") or {})
     ws, chosen_host, project_host = None, "", str(dbx.get("host") or "")
     src_done = False
 
@@ -240,19 +248,41 @@ def render(cfg, raw, packages) -> None:
                 with c2:
                     cats = [c["name"] for c in ws["catalogs"]] if ws else []
                     cur_cat = dbx.get("catalog", "main")
+                    new_cat = False
                     if cats:
-                        catalog = st.selectbox("Catalog :red[*]", cats if cur_cat in cats else [cur_cat] + cats,
-                                               index=(cats if cur_cat in cats else [cur_cat] + cats).index(cur_cat))
+                        options = cats + [NEW_CATALOG]
+                        start = cur_cat if cur_cat in cats else NEW_CATALOG
+                        picked = st.selectbox("Catalog :red[*]", options, index=options.index(start), key="catalog_pick",
+                                              help="Pick an existing catalog, or choose New catalog to have WishBridge "
+                                                   "create one when you press Next.")
+                        if picked == NEW_CATALOG:
+                            catalog = st.text_input("New catalog name :red[*]", key="catalog_new",
+                                                    value="" if cur_cat in cats else cur_cat,
+                                                    placeholder="e.g. wishbridge_demo").strip()
+                            new_cat = True
+                        else:
+                            catalog = picked
                     else:
-                        catalog = st.text_input("Catalog :red[*]", value=cur_cat)
+                        catalog = st.text_input("Catalog :red[*]", value=cur_cat,
+                                                help="An existing catalog, or a new name - WishBridge creates it when "
+                                                     "you press Next.").strip()
+                        new_cat = True  # not checked yet: created on Next if it does not exist
+                    ss["create_catalog"] = new_cat
                     if not str(catalog or "").strip():
                         required("Required: the Databricks catalog.")
-                    elif cats and catalog not in cats:
-                        required(f"'{catalog}' does not exist in this workspace - pick one from the list.")
+                    elif not re.fullmatch(r"[A-Za-z0-9_]+", catalog):
+                        required("Catalog names use letters, digits and _ only.")
+                    elif new_cat and cats and catalog not in cats:
+                        st.caption(f"`{catalog}` is created in Databricks when you press **Next** (needs the CREATE "
+                                   "CATALOG permission).")
                 with c3:
-                    schema = st.text_input("Test schema :red[*]", value=dbx.get("schema", "wishbridge"))
+                    schema = st.text_input("Test schema :red[*]", value=dbx.get("schema", "wishbridge"),
+                                           help="An existing schema or a new name - WishBridge creates it when you "
+                                                "press Next.")
                     if not schema.strip():
                         required("Required: the test schema.")
+                    elif not re.fullmatch(r"[A-Za-z0-9_]+", schema.strip()):
+                        required("Schema names use letters, digits and _ only.")
                 scope_labels = {"all": "Everything", "recommended": "Only what belongs on Databricks (fit check)"}
                 scope = st.selectbox("What to deploy", list(scope_labels), format_func=scope_labels.get,
                                      index=list(scope_labels).index(scope) if scope in scope_labels else 0,
@@ -262,8 +292,9 @@ def render(cfg, raw, packages) -> None:
                 if looks_like_prod(f"{catalog}.{schema}"):
                     required("This looks like a production schema - use a test schema. WishBridge will not deploy there.")
 
-                target_done = (bool(str(catalog or "").strip()) and bool(str(schema or "").strip())
-                               and not looks_like_prod(f"{catalog}.{schema}") and not (cats and catalog not in cats))
+                target_done = (bool(re.fullmatch(r"[A-Za-z0-9_]+", str(catalog or "")))
+                               and bool(re.fullmatch(r"[A-Za-z0-9_]+", str(schema or "").strip()))
+                               and not looks_like_prod(f"{catalog}.{schema}"))
                 if not target_done:
                     next_part_hint()
                 else:
@@ -280,8 +311,9 @@ def render(cfg, raw, packages) -> None:
         if target_done and phase == "data-migration":  # the code migration needs no source data
             # --- 3. Source data: where the data is copied from
             tick_src = part(3, "Source data", "Where the data is copied from.")
-            method_labels = {"federation": "Read the source database directly (Lakehouse Federation)",
-                             "files": "Exported files in a Unity Catalog volume"}
+            method_labels = {"federation": "Client's database, read directly by Databricks (Lakehouse Federation)",
+                             "local": "A database on this computer (WishBridge exports and uploads it)",
+                             "files": "Exported files already in a Unity Catalog volume"}
             method = st.radio("How to copy the data :red[*]", list(method_labels), format_func=method_labels.get,
                               horizontal=True, key="data_method",
                               index=list(method_labels).index(data.get("method", "federation")))
@@ -304,6 +336,11 @@ def render(cfg, raw, packages) -> None:
                     dbt = sd.DB_TYPES[db_type]
                     host = d2.text_input("Server (host) :red[*]", value=sdb.get("host", ""), placeholder="sqlprod01.client.com", key="sdb_host")
                     port = d3.number_input("Port", value=int(sdb.get("port") or dbt.port), step=1, key="sdb_port")
+                    if h.is_local_host(host):
+                        st.warning(f"**`{host}` is this computer.** Databricks runs in the cloud and cannot reach a "
+                                   "database on this computer, and a federation connection needs a SQL user and "
+                                   "password. Use the server's network name (e.g. sqlprod01.client.com) or, for a "
+                                   "database on a laptop, choose **Exported files in a Unity Catalog volume** above.")
                     d1, d2, d3 = st.columns(3)
                     database = d1.text_input(dbt.catalog_label + (" :red[*]" if dbt.catalog_option else ""), value=sdb.get("database", ""), key="sdb_db",
                                              disabled=dbt.catalog_option is None,
@@ -380,6 +417,38 @@ def render(cfg, raw, packages) -> None:
                 if not str(source_catalog or "").strip():
                     required("Required: create the connection above (or use an existing federation catalog).")
                 src_done = bool(str(source_catalog or "").strip())
+            elif method == "local":
+                st.markdown("**Database on this computer** :red[*] - for a demo, or a database Databricks cannot reach. "
+                            "When you copy, WishBridge reads the mapped tables (read-only), saves them as Parquet, "
+                            "uploads them to a Databricks volume and copies them into the tables; the comparison counts "
+                            "the source right here. At a client, choose the first option: Databricks reads their "
+                            "database directly.")
+                with st.container(border=True):
+                    l1, l2 = st.columns(2)
+                    lserver = l1.text_input("Server :red[*]", value=local_db.get("server", ""),
+                                            placeholder=".\\SQLEXPRESS", key="local_server")
+                    ldatabase = l2.text_input("Database :red[*]", value=local_db.get("database", ""), key="local_database")
+                    llogin = l1.radio("Login", ["Windows login", "User and password"], horizontal=True, key="local_login",
+                                      index=0 if local_db.get("windows_login", True) else 1)
+                    luser = (l2.text_input("User", value=local_db.get("user", ""), key="local_user")
+                             if llogin == "User and password" else "")
+                    ltrust = st.checkbox("Trust the server certificate", value=bool(local_db.get("trust", True)),
+                                         key="local_trust", help="Needed for local servers with a self-signed certificate.")
+                    if llogin == "User and password":
+                        st.caption("The password is asked in *Map the data* when you copy - used for that copy only, "
+                                   "never saved.")
+                    default_root = (f"/Volumes/{dbx.get('catalog') or cfg.catalog}/{dbx.get('schema') or cfg.schema}"
+                                    "/wishbridge_landing")
+                    files_root = st.text_input("Upload to (Unity Catalog volume folder)", key="local_root",
+                                               value=data.get("files_root") if data.get("method") == "local" and
+                                               data.get("files_root") else default_root,
+                                               help="WishBridge creates the volume when needed.")
+                file_format = "PARQUET"
+                local_db = {"server": lserver.strip(), "database": ldatabase.strip(),
+                            "windows_login": llogin == "Windows login", "user": luser.strip(), "trust": ltrust}
+                if not (lserver.strip() and ldatabase.strip()):
+                    required("Required: the server and the database on this computer.")
+                src_done = bool(lserver.strip() and ldatabase.strip() and files_root.strip())
             else:
                 files_root = st.text_input("Files root (volume path) :red[*]", value=data.get("files_root", ""),
                                            placeholder="/Volumes/main/landing/acme")
@@ -397,11 +466,16 @@ def render(cfg, raw, packages) -> None:
 
     est = raw.get("estimate") or {}
     ai_on, model = bool(ai.get("ai", False)), ai.get("model", "claude-opus-5-5")
+    assist_on = bool(ai.get("assist", False))
     hpi = float(est.get("hours_per_issue", 0.5))
     if phase != "data-migration":  # about converting the code: not part of the data migration
         with st.expander("AI suggestions and estimates"):
             ai_on = st.checkbox("Ask Claude for fix suggestions during convert (needs ANTHROPIC_API_KEY; sends code, "
                                 "not data)", value=ai_on)
+            assist_on = st.checkbox("Fix code may ask Claude to fix a file (only when the client agreed that their code "
+                                    "may be sent to Claude; never data)", value=assist_on,
+                                    help="Uses ANTHROPIC_API_KEY when it is set, otherwise Claude Code on this computer. "
+                                         "Every suggestion is shown first and saved only when you choose Use this fix.")
             model = st.text_input("Claude model", value=model)
             hpi = st.number_input("Hours per open item", value=hpi, step=0.25)
 
@@ -414,15 +488,23 @@ def render(cfg, raw, packages) -> None:
     after = order[order.index("settings") + 1] if "settings" in order[:-1] else ("data" if to_data else "code")
     names = {"code": "add the code", "data": "map the data"}
     next_label = f"Next: {names.get(after) or (ss.get('step_labels') or {}).get(after, after).lower()} →"
+    for err in ss.get("settings_errors") or []:
+        st.error(err)
+    if ss.get("settings_errors"):
+        from wishbridge.warehouses.informatica.ui.claude_panel import claude_problem_panel
+
+        claude_problem_panel(cfg, raw, "Settings", list(ss["settings_errors"]))
     if ready and st.button(next_label, type="primary", help="Checks and saves the settings and opens the next step.",
                            disabled=bool(problems)):
         if not offline:  # ask the workspace now, not at deploy time
             with st.spinner("Checking the workspace, catalog and SQL warehouse..."):
-                target_errors = h.check_target(profile, str(catalog).strip(), str(warehouse or "").strip())
+                target_errors = h.check_target(profile, str(catalog).strip(), str(warehouse or "").strip(),
+                                               schema=str(schema or "").strip(),
+                                               create_catalog=bool(ss.get("create_catalog")))
             if target_errors:
-                for err in target_errors:
-                    st.error(err)
-                return
+                ss["settings_errors"] = target_errors
+                st.rerun()
+            ss.pop("settings_errors", None)
         new = dict(raw)
         new["source"] = source
         if transpiler == "auto":
@@ -436,8 +518,9 @@ def render(cfg, raw, packages) -> None:
                              "catalog": catalog, "schema": schema}
         new["schema_map"] = h.rows_to_schema_map(map_df.to_dict("records"))
         new["data"] = {**data, "method": method, "source_catalog": source_catalog, "files_root": files_root,
+                       "local": local_db,
                        "file_format": file_format, "mode": load_mode}
-        new["autofix"] = {"ai": ai_on, "model": model}
+        new["autofix"] = {**ai, "ai": ai_on, "assist": assist_on, "model": model}
         new["estimate"] = {**est, "hours_per_issue": hpi}
         try:
             h.save_raw(ss.project, new)

@@ -23,6 +23,14 @@ def source_tables(cfg: ProjectConfig, wh: Warehouse | None = None) -> list[str]:
     """`schema.table` names in the source: from the inventory if there is one, otherwise through the connection."""
     from .state import load_state
 
+    if cfg.data_method == "local":  # read the database on this computer itself
+        from . import localdb
+
+        try:
+            return localdb.list_tables(cfg)
+        except Exception as e:  # noqa: BLE001 - ODBC raises its own types
+            raise SqlError(f"Could not read the tables of {cfg.local_db.get('database')} on "
+                           f"{cfg.local_db.get('server')}: {str(e).splitlines()[0][:250]}") from e
     inv = load_state(cfg).get("inventory")
     if inv and inv.get("tables"):
         from .inventory import table_list
@@ -102,15 +110,22 @@ def check(cfg: ProjectConfig, wh: Warehouse | None = None) -> list[dict[str, Any
             out.append(row)
             continue
         try:
-            scols = _columns(wh, f"{cfg.source_catalog}.{t.source}") if cfg.data_method == "federation" else {}
-        except SqlError as e:
-            row.update(status="no source table", detail=f"{t.source} not found through the connection "
+            if cfg.data_method == "federation":
+                scols = _columns(wh, f"{cfg.source_catalog}.{t.source}")
+            elif cfg.data_method == "local":
+                from . import localdb
+
+                scols = localdb.columns(cfg, t.source)
+            else:
+                scols = {}
+        except Exception as e:  # noqa: BLE001 - Databricks or the local database (ODBC)
+            row.update(status="no source table", detail=f"{t.source} not found in the source "
                                                         f"({str(e).splitlines()[0][:150]})")
             out.append(row)
             continue
         cmp = compare_columns(scols, tcols, t.columns)
         row.update(source_columns=list(scols), target_columns=list(tcols), **cmp)
-        if cfg.data_method != "federation":
+        if cfg.data_method == "files":  # exported files: columns are known only when copying
             row["status"] = "ready"
         elif not cmp["pairs"]:
             row["status"] = "no matching columns"
@@ -138,11 +153,19 @@ def preflight(cfg: ProjectConfig, wh: Warehouse | None = None) -> dict[str, Any]
 
             schemas = test_connection(cfg.source_catalog, wh)
             out.update(source_ok=True, source_message=f"Databricks reached the source database ({len(schemas)} schema(s)).")
+        elif cfg.data_method == "local":
+            from . import localdb
+
+            msg = localdb.test(cfg)
+            localdb.ensure_volume(cfg, wh)
+            out.update(source_ok=True, source_message=f"{msg} The tables are uploaded to {cfg.files_root} when you copy.")
         else:
             wh.run(f"LIST '{cfg.files_root}'")
             out.update(source_ok=True, source_message=f"Databricks can read the files in {cfg.files_root}.")
     except SqlError as e:
         out["source_message"] = str(e).splitlines()[0][:300]
+    except Exception as e:  # noqa: BLE001 - the local database (ODBC) raises its own types
+        out["source_message"] = f"Could not read the database on this computer: {str(e).splitlines()[0][:300]}"
     inventory = {f"{t['schema']}.{t['table']}".lower(): t for t in (load_state(cfg).get("inventory") or {}).get("tables", [])}
     for t in cfg.tables:
         if not t.load:

@@ -19,6 +19,29 @@ _TRANSPILE_NOTE = re.compile(
     r"TranspileError\(.*?kind=(\w+), severity=(\w+), path='([^']+)', message='(.*?)'\)\s*(?=TranspileError\(|\Z)", re.DOTALL)
 
 
+def original_file(cfg: ProjectConfig, rel: str | Path) -> Path | None:
+    """The client's original for a converted file. Converters often change the name - an SSIS package
+    LoadFactSales.dtsx becomes the notebook LoadFactSales.py, and may lose its project folder - so look for
+    the same name with any extension: in the same folder first, then anywhere in the input."""
+    rel = Path(rel)
+    same = cfg.input_dir / rel
+    if same.is_file():
+        return same
+    if rel.parts and rel.parts[0] == "_database_code":  # code read from the database: <project>/database_code/
+        saved = cfg.path.parent / "database_code" / Path(*rel.parts[1:])
+        return saved if saved.is_file() else None
+    if not cfg.input_dir.is_dir():
+        return None
+    stem = rel.stem.lower()
+    near = cfg.input_dir / rel.parent
+    for folder, pattern in ((near, "*"), (cfg.input_dir, "**/*")):
+        if folder.is_dir():
+            found = sorted(p for p in folder.glob(pattern) if p.is_file() and p.stem.lower() == stem)
+            if found:
+                return found[0]
+    return None
+
+
 def _transpile_notes(error_log: Path) -> dict[str, list[str]]:
     """File name -> non-INFO messages from LakeBridge's error log (parse errors summarised into one message)."""
     notes: dict[str, list[str]] = {}
@@ -291,7 +314,7 @@ def run_convert(cfg: ProjectConfig, use_ai: bool | None = None) -> dict[str, Any
             "file": rel.as_posix(),
             "kind": kind,
             "converter": "manual" if not src.exists() else converters.get(rel.as_posix(), cfg.transpiler),
-            "input": str(cfg.input_dir / rel),
+            "input": str(original_file(cfg, rel) or cfg.input_dir / rel),
             "converted": str(src) if src.exists() else "",
             "final": str(dest),
             "manual_override": manual,

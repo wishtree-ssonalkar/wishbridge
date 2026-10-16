@@ -468,3 +468,36 @@ def check_notebook(text: str, schema_map: dict[str, str] | None = None,
         if rule in counts:
             findings.append(Finding(rule, INFO, counts[rule][0], f"{msg} ({len(counts[rule])} step(s))", True))
     return "".join(out), _dedupe(sorted(findings, key=lambda f: (f.line, f.rule)))
+
+
+def map_schemas_counted(sql: str, schema_map: dict[str, str]) -> tuple[str, int]:
+    """Rename source schemas in SQL (`dw.Orders` -> `catalog.schema.Orders`); strings and comments are kept.
+    Also returns how many names were renamed."""
+    if not schema_map:
+        return sql, 0
+    new, findings = _fix_schema_map(sql, schema_map)
+    return new, sum(int(m.group(1)) for f in findings if (m := re.search(r"\((\d+)x\)", f.message)))
+
+
+def map_schemas(sql: str, schema_map: dict[str, str]) -> str:
+    return map_schemas_counted(sql, schema_map)[0]
+
+
+def map_schemas_in_notebook_counted(text: str, schema_map: dict[str, str]) -> tuple[str, int]:
+    """The same inside the Spark SQL strings of a converted notebook."""
+    if not schema_map:
+        return text, 0
+    total = 0
+
+    def one(m: re.Match) -> str:
+        nonlocal total
+        whole, start = m.group(0), m.start(1) - m.start(0)
+        new, n = map_schemas_counted(m.group(1), schema_map)
+        total += n
+        return whole[:start] + new + whole[start + len(m.group(1)):]
+
+    return _NB_SQL.sub(one, text), total
+
+
+def map_schemas_in_notebook(text: str, schema_map: dict[str, str]) -> str:
+    return map_schemas_in_notebook_counted(text, schema_map)[0]

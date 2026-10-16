@@ -11,6 +11,19 @@ APP = str(Path(__file__).parents[1] / "src" / "wishbridge" / "ui" / "app.py")
 DEMO = Path(__file__).parents[1] / "examples" / "mssql-demo"
 
 
+@pytest.fixture(autouse=True)
+def _signed_in_login(monkeypatch):
+    """A saved, working Databricks login, whatever is (or isn't) in this computer's ~/.databrickscfg."""
+    import importlib
+
+    from wishbridge.warehouses import WAREHOUSE_OF
+
+    login = [{"name": "DEFAULT", "host": "https://test.cloud.databricks.com", "valid": True}]
+    for w in set(WAREHOUSE_OF.values()):
+        helpers = importlib.import_module(f"wishbridge.warehouses.{w}.ui.helpers")
+        monkeypatch.setattr(helpers, "list_profiles", lambda check_validity=True: login)
+
+
 @pytest.fixture
 def project(tmp_path):
     dest = tmp_path / "mssql-demo"
@@ -100,7 +113,7 @@ def _no_workspace_calls(monkeypatch, problems=()):
     """Settings' Next asks the workspace about the target; the tests answer for it."""
     from wishbridge.warehouses.sqlserver.ui import helpers as wh_helpers
 
-    monkeypatch.setattr(wh_helpers, "check_target", lambda profile, catalog, warehouse_id="": list(problems))
+    monkeypatch.setattr(wh_helpers, "check_target", lambda profile, catalog, warehouse_id="", **kw: list(problems))
 
 
 def test_next_saves_settings_and_opens_code(project, monkeypatch):
@@ -560,3 +573,49 @@ def test_next_after_settings_opens_deploy_and_checks_the_catalog_first(project, 
     _no_workspace_calls(monkeypatch)
     next(b for b in at.button if b.label == "Next: deploy →").click().run()
     assert at.session_state["step"] == "run"
+
+
+def test_check_target_creates_a_new_catalog_and_schema(monkeypatch):
+    """New catalog chosen in Settings: created on Next, then the schema; an existing one is only checked."""
+    from types import SimpleNamespace as N
+
+    import databricks.sdk
+    from wishbridge.warehouses.sqlserver.ui import helpers as wh_helpers
+
+    made = []
+
+    class W:
+        def __init__(self, profile=None):
+            cats = [N(name="workspace")]
+            self.catalogs = N(list=lambda: list(cats),
+                              create=lambda name, comment=None: (made.append(("catalog", name)), cats.append(N(name=name))))
+            self.schemas = N(list=lambda catalog_name: [N(name="existing")],
+                             create=lambda name, catalog_name, comment=None: made.append(("schema", f"{catalog_name}.{name}")))
+            self.warehouses = N(list=lambda: [N(id="w1")], get=lambda i: None)
+
+    monkeypatch.setattr(databricks.sdk, "WorkspaceClient", W)
+    assert wh_helpers.check_target("DEFAULT", "wb_demo", schema="sales", create_catalog=True) == []
+    assert made == [("catalog", "wb_demo"), ("schema", "wb_demo.sales")]
+    made.clear()
+    problems = wh_helpers.check_target("DEFAULT", "nope", schema="sales")
+    assert made == [] and "does not exist" in problems[0] and "New catalog" in problems[0]
+    assert wh_helpers.check_target("DEFAULT", "workspace", schema="existing") == [] and made == []
+
+
+def test_default_storage_workspace_explains_how_to_make_the_catalog(monkeypatch):
+    from types import SimpleNamespace as N
+
+    import databricks.sdk
+    from wishbridge.warehouses.sqlserver.ui import helpers as wh_helpers
+
+    def refuse(name, comment=None):
+        raise RuntimeError("Metastore storage root URL does not exist. Default Storage is enabled in your account.")
+
+    class W:
+        def __init__(self, profile=None):
+            self.config = N(host="https://dbc-x.cloud.databricks.com")
+            self.catalogs = N(list=lambda: [N(name="workspace")], create=refuse)
+
+    monkeypatch.setattr(databricks.sdk, "WorkspaceClient", W)
+    (msg,) = wh_helpers.check_target("DEFAULT", "shubham", schema="s", create_catalog=True)
+    assert "https://dbc-x.cloud.databricks.com/explore/data" in msg and "Default Storage" in msg and "`shubham`" in msg

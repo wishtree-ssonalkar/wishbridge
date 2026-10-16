@@ -233,8 +233,10 @@ def sign_in(host: str, profile: str) -> tuple[bool, str]:
     return True, f"Signed in to {host} as profile '{profile}'"
 
 
-def check_target(profile: str, catalog: str, warehouse_id: str = "") -> list[str]:
-    """What is wrong with the Databricks target, asked from the workspace itself (empty: all fine)."""
+def check_target(profile: str, catalog: str, warehouse_id: str = "", schema: str = "",
+                 create_catalog: bool = False) -> list[str]:
+    """What is wrong with the Databricks target, asked from the workspace itself (empty: all fine).
+    A new catalog (when the person chose New catalog) and a new schema are created here."""
     from databricks.sdk import WorkspaceClient
 
     try:
@@ -243,9 +245,37 @@ def check_target(profile: str, catalog: str, warehouse_id: str = "") -> list[str
     except Exception as e:  # the SDK raises many types; the message says what is wrong
         return [f"Could not reach the workspace with this login: {str(e).splitlines()[0][:200]}"]
     problems = []
+    if catalog not in names and create_catalog:
+        try:
+            w.catalogs.create(name=catalog, comment="Created by WishBridge")
+            names.append(catalog)
+        except Exception as e:  # noqa: BLE001 - permission, storage location, ...
+            msg = str(e).splitlines()[0]
+            if "default storage" in msg.lower():
+                # Databricks Default Storage: a new catalog can be made only in the Databricks UI
+                host = (getattr(w.config, "host", "") or "").rstrip("/")
+                problems.append(
+                    f"This workspace keeps its data in Databricks Default Storage, where a new catalog can only be "
+                    f"created in Databricks itself: open {host}/explore/data → **+** → **Create a catalog** → name "
+                    f"`{catalog}`, storage **Default Storage** → **Create**. Then click *Load warehouses and "
+                    "catalogs* here and pick it from the list. Or keep an existing catalog (e.g. `workspace`) and "
+                    "type a new schema name - WishBridge creates the schema for you.")
+            else:
+                problems.append(f"Could not create catalog '{catalog}': {msg[:300]}. Creating a catalog needs the "
+                                "CREATE CATALOG permission (and, in some workspaces, a storage location) - ask the "
+                                "workspace admin, or pick an existing catalog.")
+            return problems
     if catalog not in names:
         problems.append(f"Catalog '{catalog}' does not exist in this workspace. Choose one of: "
-                        + ", ".join(sorted(names)[:15]) + " (*Load warehouses and catalogs* lists them).")
+                        + ", ".join(sorted(names)[:15]) + " (*Load warehouses and catalogs* lists them), or "
+                        "choose *New catalog* to create it.")
+    elif schema:
+        try:
+            if schema.lower() not in {s.name.lower() for s in w.schemas.list(catalog_name=catalog) if s.name}:
+                w.schemas.create(name=schema, catalog_name=catalog, comment="Created by WishBridge")
+        except Exception as e:  # noqa: BLE001 - permission on the catalog
+            problems.append(f"Could not create schema '{catalog}.{schema}': {str(e).splitlines()[0][:300]}. It needs "
+                            "the CREATE SCHEMA permission on the catalog.")
     try:
         if warehouse_id:
             w.warehouses.get(warehouse_id)
@@ -268,3 +298,16 @@ def list_workspace(profile: str) -> dict[str, Any]:
                 for c in w.catalogs.list() if c.name]
     return {"profile": profile, "host": w.config.host.rstrip("/"), "user": user,
             "warehouses": warehouses, "catalogs": catalogs}
+
+
+def is_local_host(host: str) -> bool:
+    """True for a server name that means 'this computer' - unreachable from Databricks in the cloud."""
+    import socket
+
+    name = (host or "").strip().lower().split("\\")[0].split(",")[0].split(":")[0]
+    if (host or "").strip().startswith(".") or name in ("", ".", "(local)", "localhost", "127.0.0.1", "::1"):
+        return bool((host or "").strip())
+    try:
+        return name == socket.gethostname().lower()
+    except OSError:
+        return False
