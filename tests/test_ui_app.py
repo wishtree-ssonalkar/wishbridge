@@ -546,7 +546,7 @@ def test_copy_again_only_the_failed_tables_and_make_the_sign_off(project, monkey
     at.run()
     next(b for b in at.button if b.label.startswith("📦 Make the sign-off file")).click().run()
     assert not at.exception
-    assert any(b.label.startswith("⬇ ") and "data-signoff" in b.label for b in at.get("download_button"))
+    assert any(b.label.startswith("⬇ ") and "data-migration-signoff" in b.label for b in at.get("download_button"))
 
 
 

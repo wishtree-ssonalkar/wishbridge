@@ -49,3 +49,17 @@ def test_everything_goes_into_one_zip(tmp_path):
                  "code_migration/manual_fixes/Load.py", "data_migration/mapping.yml", "data_migration/copied_tables.csv"]:
         assert want in names, want
     assert not [p for p in (cfg.output_dir / "review_package").glob("*.zip") if "complete" not in p.name]
+
+
+def test_zip_names_say_what_they_are(tmp_path):
+    import re
+
+    from wishbridge.warehouses.ssis.package import build_complete_package, build_package
+
+    (tmp_path / "input").mkdir()
+    (tmp_path / "input" / "Load.dtsx").write_text("<DTS:Executable/>", encoding="utf-8")
+    (tmp_path / "project.yml").write_text("name: acme-dw\nsource: ssis\nphase: assessment\n", encoding="utf-8")
+    assert re.fullmatch(r"acme-dw-assessment-\d{4}-\d\d-\d\d_\d{4}\.zip", build_package(load_config(tmp_path / "project.yml")).name)
+    (tmp_path / "project.yml").write_text("name: acme-dw\nsource: ssis\nphase: code-migration\n", encoding="utf-8")
+    assert re.fullmatch(r"acme-dw-code-migration-complete-\d{4}-\d\d-\d\d_\d{4}\.zip",
+                        build_complete_package(load_config(tmp_path / "project.yml")).name)

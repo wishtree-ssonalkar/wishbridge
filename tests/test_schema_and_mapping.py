@@ -138,3 +138,16 @@ def test_saving_the_table_list_keeps_column_mappings():
     prev = [{"source": "dbo.A", "target": "x.y.a", "columns": {"c": "d"}}, "dbo.B"]
     out = rows_to_tables([{"source": "dbo.A", "target": "x.y.a2"}, {"source": "dbo.B", "target": ""}], prev)
     assert out == [{"source": "dbo.A", "target": "x.y.a2", "columns": {"c": "d"}}, "dbo.B"]
+
+
+def test_cloud_connections_azure_sql_and_synapse():
+    from wishbridge.warehouses.sqlserver.inventory import is_azure_host
+
+    assert is_azure_host("acme.database.windows.net") and is_azure_host("tcp:ws.sql.azuresynapse.net,1433")
+    assert not is_azure_host(r".\SQLEXPRESS") and not is_azure_host("sqlprod01.client.com")
+    d = "ODBC Driver 18 for SQL Server"
+    s = connection_string("acme.database.windows.net", "dw", False, "me@client.com", driver=d, auth="entra")
+    assert "Authentication=ActiveDirectoryInteractive" in s and "UID=me@client.com" in s and "PWD" not in s
+    assert "TrustServerCertificate=no" in s and "Encrypt=yes" in s
+    s = connection_string("acme.database.windows.net", "dw", False, "me@client.com", "p", driver=d, auth="entra-password")
+    assert "Authentication=ActiveDirectoryPassword" in s and "PWD={p}" in s

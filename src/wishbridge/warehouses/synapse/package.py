@@ -56,6 +56,11 @@ Nothing in this package was sent to Databricks or to the client's database.
 """
 
 
+def _stamp() -> str:
+    """A readable date and time for file names: 2026-10-16_0901."""
+    return datetime.now().strftime("%Y-%m-%d_%H%M")
+
+
 def _csv(rows: list[dict[str, Any]], columns: list[str]) -> str:
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
@@ -83,8 +88,8 @@ def build_package(cfg: ProjectConfig, include_original: bool = True) -> Path:
     report = build_report(cfg)
     root = cfg.path.parent
     rec = receipt(root)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M")
-    out = cfg.out("review_package", f"{cfg.name}-{stamp}.zip")
+    stamp = _stamp()
+    out = cfg.out("review_package", f"{cfg.name}-{cfg.phase}-{stamp}.zip")
     c, fit, inv, a = state.get("convert") or {"files": [], "final_dir": ""}, state.get("fit"), state.get("inventory"), state.get("analyze")
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         import platform
@@ -214,8 +219,8 @@ def build_signoff(cfg: ProjectConfig) -> Path:
     if not ld.get("executed"):
         raise ValueError("No data has been copied yet.")
     report = build_report(cfg)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M")
-    out = cfg.out("review_package", f"{cfg.name}-data-signoff-{stamp}.zip")
+    stamp = _stamp()
+    out = cfg.out("review_package", f"{cfg.name}-data-migration-signoff-{stamp}.zip")
     raw = yaml.safe_load(cfg.path.read_text(encoding="utf-8-sig")) or {}
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("README.txt", SIGNOFF_README.format(name=cfg.name, when=datetime.now().strftime("%Y-%m-%d %H:%M")))
@@ -281,8 +286,8 @@ def build_complete_package(cfg: ProjectConfig) -> Path:
     state = load_state(cfg)
     base_zip = build_package(cfg)
     reports = phase_reports(cfg)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M")
-    out = cfg.out("review_package", f"{cfg.name}-complete-{stamp}.zip")
+    stamp = _stamp()
+    out = cfg.out("review_package", f"{cfg.name}-{cfg.phase}-complete-{stamp}.zip")
     with zipfile.ZipFile(base_zip) as src, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for item in src.infolist():
             if item.filename not in ("README.txt", "report.html"):  # replaced by this README and reports/
