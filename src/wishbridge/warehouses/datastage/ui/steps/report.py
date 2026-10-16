@@ -271,6 +271,7 @@ def _data_migration_report(cfg, raw, state) -> None:
         st.info("The comparison with the source has not run yet.")
     if failed or differ:
         next_button("Back to Map the data →", "data", "next-data-report")
+    _download_reports(cfg)
     if st.button("📦 Make the sign-off file for the client",
                  help="One zip with the report, every table's result and the comparison - no data in it."):
         from wishbridge.warehouses.datastage.package import build_signoff
@@ -400,3 +401,23 @@ def _auto_fixed(d) -> None:
             st.markdown(f"**Names renamed in {len(renamed)} file(s)** ({sum(renamed.values())} in total):")
             st.dataframe(pd.DataFrame([{"file": f, "names renamed": n} for f, n in renamed.items()]),
                          width="stretch", hide_index=True)
+
+
+def _download_reports(cfg) -> None:
+    """All of the project's reports - assessment, code migration and data migration - ready to download."""
+    from wishbridge.warehouses.datastage.report import phase_reports
+
+    try:
+        reports = phase_reports(cfg)
+    except (OSError, ValueError) as e:
+        st.error(f"Could not prepare the reports: {e}")
+        return
+    if not reports:
+        return
+    with st.container(border=True):
+        st.markdown("#### ⬇ Download the reports")
+        st.caption("Every report of this project, rebuilt from its saved results - for the client and the project file.")
+        cols = st.columns(len(reports))
+        for col, (phase, title, path) in zip(cols, reports):
+            col.download_button(f"⬇ {title}", path.read_bytes(), file_name=f"{cfg.name}-{phase}-report.html",
+                                mime="text/html", key=f"dl-{phase}", width="stretch")

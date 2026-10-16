@@ -66,7 +66,9 @@ def effort(cfg: ProjectConfig, state: dict[str, Any]) -> dict[str, float] | None
     return {"baseline": baseline, "remaining": remaining, "saved_pct": round(100 * max(0.0, 1 - remaining / baseline)) if baseline else 0}
 
 
-def build_report(cfg: ProjectConfig) -> Path:
+def build_report(cfg: ProjectConfig, name: str | None = None) -> Path:
+    """The report of the project's phase: output/report.html (and output/report-<phase>.html, kept when the project
+    moves on). name: write only that file (phase_reports)."""
     state = load_state(cfg)
     base = cfg.output_dir
     parts: list[str] = []
@@ -282,6 +284,25 @@ def build_report(cfg: ProjectConfig) -> Path:
 <footer>Effort figures are estimates based on the configured hours per file and per open item.
 Prepared with Wishtree WishBridge by Wishtree Technologies. Conversion uses the Databricks Labs migration toolkit; WishBridge adds rule-based fixes, validation, data loading and reconciliation.</footer>
 </main></body></html>"""
-    out = cfg.out("report.html")
+    out = cfg.out(name or "report.html")
     out.write_text(html, encoding="utf-8")
+    if name is None:
+        cfg.out(f"report-{cfg.phase}.html").write_text(html, encoding="utf-8")
     return out
+
+
+PHASE_TITLES = {"assessment": "Assessment report", "code-migration": "Code migration report",
+                "data-migration": "Data migration report"}
+
+
+def phase_reports(cfg: ProjectConfig) -> list[tuple[str, str, Path]]:
+    """Every phase report the project has results for, rebuilt from the saved results now:
+    [(phase, title, path)] in phase order - so a data migration still offers the code migration report."""
+    from dataclasses import replace
+
+    state = load_state(cfg)
+    has = {"assessment": bool(state.get("analyze") or state.get("convert")),
+           "code-migration": bool(state.get("deploy")),
+           "data-migration": bool((state.get("load") or {}).get("executed"))}
+    return [(phase, PHASE_TITLES[phase], build_report(replace(cfg, phase=phase), name=f"report-{phase}.html"))
+            for phase, ok in has.items() if ok]

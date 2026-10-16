@@ -220,6 +220,10 @@ def build_signoff(cfg: ProjectConfig) -> Path:
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("README.txt", SIGNOFF_README.format(name=cfg.name, when=datetime.now().strftime("%Y-%m-%d %H:%M")))
         z.write(report, "report.html")
+        from .report import phase_reports
+
+        for phase, _title, path in phase_reports(cfg):  # the code migration report too, not only the data one
+            z.write(path, f"reports/{phase}-report.html")
         z.writestr("copied_tables.csv", _csv([t for t in ld.get("tables", []) if not t.get("compare_only")],
                                              ["source", "target", "status", "rows", "error"]))
         if rec.get("mode") == "quick":
