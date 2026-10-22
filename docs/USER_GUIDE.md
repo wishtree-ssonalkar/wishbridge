@@ -120,6 +120,10 @@ Check it works:
 
 Everything in this guide can also be done in the WishBridge app, which opens in your browser.
 
+WishBridge runs in two places: on the **laptop** (everything, and the only place for the assessment) and as a
+**Databricks App** inside a workspace (code and data migration, opened from the assessment zip, with Databricks
+single sign-on). How to deploy and use the Databricks App: [DATABRICKS_APP.md](DATABRICKS_APP.md).
+
 - **Start it:** double-click `Start WishBridge.cmd` in the WishBridge folder (right-click → *Send to → Desktop*
   to make a desktop shortcut), or run `wishbridge ui`. It opens at http://localhost:8501 and runs only on
   your computer; close the black window to stop it.

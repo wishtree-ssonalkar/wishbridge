@@ -24,7 +24,9 @@ $ErrorActionPreference = "Stop"
 $repo = $PSScriptRoot
 
 function Dbx([string[]]$CliArgs, [switch]$AllowFail) {
-    $out = & databricks @CliArgs --profile $DbProfile 2>&1
+    # Windows PowerShell treats anything the CLI writes to stderr as an error: judge by the exit code only
+    $ErrorActionPreference = "Continue"
+    $out = & databricks @CliArgs --profile $DbProfile 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) {
         if ($AllowFail) { return $null }
         throw "databricks $($CliArgs -join ' ') failed:`n$($out -join "`n")"
@@ -78,17 +80,26 @@ Grant "volume" "$cat.$sch.$vol" @("READ_VOLUME", "WRITE_VOLUME")
 foreach ($c in $TargetCatalogs) { Grant "catalog" $c @("USE_CATALOG", "CREATE_SCHEMA") }
 
 Write-Host "5/6 Upload WishBridge"
-$stage = Join-Path ([System.IO.Path]::GetTempPath()) "wishbridge-app-$([guid]::NewGuid().ToString('N').Substring(0,8))"
-New-Item -ItemType Directory -Path $stage | Out-Null
+# a fixed build folder: `databricks sync` remembers what it sent, so a new version only uploads the changes
+# outside the repo: sync skips what git ignores
+$stage = Join-Path $env:LOCALAPPDATA "WishBridge\app-build\$AppName"
+if (Test-Path $stage) { Get-ChildItem $stage -Force | Where-Object Name -ne ".databricks" | Remove-Item -Recurse -Force }
+else { New-Item -ItemType Directory -Path $stage -Force | Out-Null }
 Copy-Item (Join-Path $repo "databricks_app\*") $stage -Recurse
 Copy-Item (Join-Path $repo "src\wishbridge") (Join-Path $stage "wishbridge") -Recurse
 Get-ChildItem $stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 $yaml = Join-Path $stage "app.yaml"
 [System.IO.File]::WriteAllText($yaml, (Get-Content $yaml -Raw).Replace("__PROJECTS_VOLUME__", $ProjectsVolume))
+# never upload code that does not compile
+$py = (Get-Command python -ErrorAction SilentlyContinue).Source
+if ($py) {
+    & $py -m compileall -q (Join-Path $stage "wishbridge") | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "WishBridge does not compile - fix it before deploying (python -m compileall src)." }
+    Get-ChildItem $stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
+}
 $remote = "/Workspace/Users/$me/apps/$AppName"
 Dbx @("workspace", "mkdirs", $remote) | Out-Null
-Dbx @("workspace", "import-dir", $stage, $remote, "--overwrite") | Out-Null
-Remove-Item $stage -Recurse -Force
+Dbx @("sync", "--full", $stage, $remote) | Out-Null
 Write-Host "    $remote"
 
 Write-Host "6/6 Deploy and start (a few minutes)..."

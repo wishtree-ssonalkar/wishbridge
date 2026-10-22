@@ -80,6 +80,10 @@ def render(cfg, raw, packages) -> None:
         st.markdown("#### Last run")
         if status["state"] == "interrupted":
             st.warning("The last run stopped before it finished (the app or computer was closed). Start it again.")
+            tail = runner.log_tail(cfg)
+            if tail:
+                with st.expander("What the run said last"):
+                    st.code(tail, language="text")
         show_run_status(status)
         pkg = Path(status.get("package") or "")
         if status.get("package") and pkg.is_file():

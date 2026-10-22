@@ -7,6 +7,7 @@ main screen needs no pipeline code.
 from __future__ import annotations
 
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -47,9 +48,18 @@ def open_package(zip_path: str | Path, parent: str | Path, name: str | None = No
             if old:  # paths appear with backslashes (Windows) and with forward slashes (LakeBridge's analyzer)
                 moves[json.dumps(str(old))[1:-1]] = json.dumps(str(new))[1:-1]
                 moves[str(old).replace("\\", "/")] = str(new).replace("\\", "/")
-        # One pass, longest paths first, so a new path is never rewritten again.
-        pattern = re.compile("|".join(re.escape(k) for k in sorted(moves, key=len, reverse=True)))
-        text = pattern.sub(lambda m: moves[m.group(0)], state.read_text(encoding="utf-8"))
+        # One pass, longest paths first, so a new path is never rewritten again. The rest of each path (up to the
+        # end of its JSON string) gets this computer's separator: a zip made on Windows opens on Linux (the
+        # Databricks App) with paths that work there.
+        pattern = re.compile("(" + "|".join(re.escape(k) for k in sorted(moves, key=len, reverse=True)) + r')([^"]*)')
+
+        def move(m: re.Match) -> str:
+            rest = m.group(2)
+            if os.sep == "/":
+                rest = rest.replace("\\\\", "/")
+            return moves[m.group(1)] + rest
+
+        text = pattern.sub(move, state.read_text(encoding="utf-8"))
         state.write_text(text, encoding="utf-8")
     from .config import load_config
 

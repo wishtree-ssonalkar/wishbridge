@@ -200,3 +200,35 @@ def test_the_app_opens_a_saved_project_and_saves_changes(app_ready):
 
     saved = zipfile.ZipFile(io.BytesIO(app_ready.files.store["/Volumes/main/wishbridge/projects/salesdw.zip"]))
     assert "notes.txt" in saved.namelist()  # the change reached the volume
+
+
+def test_a_windows_zip_opens_with_working_paths_in_the_app(tmp_path, monkeypatch):
+    """Paths saved on the Windows laptop work after opening the zip in the Linux app."""
+    import json
+    import zipfile
+
+    from wishbridge import open_package as op
+
+    b = chr(92)  # a backslash, as in the paths a Windows laptop saves
+    old = b.join(["C:", "WishBridge", "Assessments", "salesdw"])
+    state = {"convert": {"files": [{"file": "sub/a.py", "final": b.join([old, "output", "final", "sub", "a.py"]),
+                                    "input": b.join([old, "input", "a.dtsx"])}],
+                         "staged": "C:/WishBridge/Assessments/salesdw/output/staged_input/a.dtsx"}}
+    pkg = tmp_path / "salesdw-assessment.zip"
+    with zipfile.ZipFile(pkg, "w") as z:
+        z.writestr(op.MANIFEST, json.dumps({"name": "salesdw", "project_root": old, "input_dir": old + b + "input",
+                                            "output_dir": old + b + "output", "overrides_dir": old + b + "overrides"}))
+        z.writestr("project/project.yml", (DEMO / "project.yml").read_text(encoding="utf-8"))
+        z.writestr("project/output/state.json", json.dumps(state))
+        z.writestr("converted_code/sub/a.py", "# Databricks notebook source")
+    monkeypatch.setattr(op.os, "sep", "/")  # as on the app's Linux server
+    dest = op.open_package(pkg, tmp_path / "app")
+    moved = json.loads((dest / "output" / "state.json").read_text(encoding="utf-8"))["convert"]
+    assert moved["files"][0]["final"] == str(dest / "output") + "/final/sub/a.py"  # no backslash after the folder
+    assert moved["staged"] == str(dest).replace(b, "/") + "/output/staged_input/a.dtsx"
+
+
+def test_the_same_zip_opened_again_gets_a_new_name(in_app):
+    _project(hosting.local_root())  # salesdw is open in the app already
+    assert hosting.free_name("salesdw") == "salesdw-2"
+    assert hosting.free_name("other") == "other"

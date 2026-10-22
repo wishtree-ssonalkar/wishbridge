@@ -1,6 +1,5 @@
 streamlit==1.65.0
 pandas>=2.2
-pyarrow>=17
 databricks-sdk>=0.148.0
 pyyaml>=6.0
 click>=8.1

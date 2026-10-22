@@ -143,6 +143,16 @@ def saved_projects(w=None) -> list[SavedProject]:
     return sorted(out, key=lambda p: p.modified, reverse=True)
 
 
+def free_name(base: str, w=None) -> str:
+    """A project name not used yet in the app (on the volume or in the working folder): base, base-2, base-3..."""
+    taken = {p.name for p in saved_projects(w)} | {p.name for p in local_root().iterdir()}
+    name, n = base, 1
+    while name in taken:
+        n += 1
+        name = f"{base}-{n}"
+    return name
+
+
 def pull(name: str, w=None) -> Path:
     """Open a saved project: download its zip from the volume into the app's working folder."""
     name = _check_name(name)

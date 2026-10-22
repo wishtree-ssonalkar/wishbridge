@@ -295,7 +295,9 @@ def list_workspace(profile: str) -> dict[str, Any]:
     from wishbridge.hosting import workspace_client
 
     w = workspace_client(profile=profile)
-    user = w.current_user.me().user_name
+    me = w.current_user.me()
+    # a person signs in with an e-mail; the Databricks App's identity is shown by its name, not its ID
+    user = me.user_name if "@" in (me.user_name or "") else (me.display_name or me.user_name)
     warehouses = [{"id": wh.id, "name": wh.name, "state": str(wh.state.value if wh.state else "")}
                   for wh in w.warehouses.list()]
     catalogs = [{"name": c.name, "type": str(c.catalog_type.value if c.catalog_type else "")}

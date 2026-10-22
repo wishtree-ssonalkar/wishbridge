@@ -200,7 +200,10 @@ def open_saved(locked: bool) -> None:
 
 with st.sidebar:
     st.markdown(f"### 🌉 Wishtree WishBridge\nData warehouse migration to Databricks · v{__version__}")
-    app_check() if APP else system_check()
+    if APP:
+        app_check()
+    else:
+        system_check()
     goal = ss.get("goal")
     st.radio("I want to do", list(GOALS), format_func=GOALS.get, key="goal", index=None, horizontal=True,
              help="Assessment: at the client, offline - read and assess the code, share one zip. Migration: deploy to "
@@ -254,7 +257,20 @@ with st.sidebar:
                 try:
                     tmp.parent.mkdir(parents=True, exist_ok=True)
                     tmp.write_bytes(pkg_up.getvalue())
-                    dest = open_package(tmp, pkg_parent)
+                    new_name = None
+                    if APP:  # no folder to choose in the app: the same zip opened again becomes name-2, name-3...
+                        import json as _json
+                        import zipfile as _zip
+
+                        from wishbridge.open_package import MANIFEST
+
+                        with _zip.ZipFile(tmp) as _z:
+                            base = _json.loads(_z.read(MANIFEST))["name"] if MANIFEST in _z.namelist() else ""
+                        new_name = hosting.free_name(base) if base else None
+                        if new_name and new_name != base:
+                            st.toast(f"{base} is already open in this workspace (Open a saved project): this copy is "
+                                     f"{new_name}.")
+                    dest = open_package(tmp, pkg_parent, new_name)
                     tmp.unlink(missing_ok=True)
                     if APP:
                         hosting.push(dest, force=True)  # kept on the volume from the start
