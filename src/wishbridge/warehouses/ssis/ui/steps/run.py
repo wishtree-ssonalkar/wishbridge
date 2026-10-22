@@ -11,6 +11,12 @@ from wishbridge.warehouses.ssis.state import load_state
 from wishbridge.warehouses.ssis.ui.common import next_button, run_progress, show_run_status
 
 
+def _app() -> bool:
+    from wishbridge import hosting
+
+    return hosting.is_app()
+
+
 def render(cfg, raw, packages) -> None:
     offline = cfg.phase == "assessment"
     status = runner.read_status(cfg)
@@ -22,7 +28,8 @@ def render(cfg, raw, packages) -> None:
     elif offline:
         st.subheader("First run: assess the code and save everything")
         st.markdown(
-            "One button does it all, on this computer only (nothing goes to Databricks or the client's database):\n"
+            "One button does it all" + (" here in the workspace" if _app() else ", on this computer only")
+            + " (nothing goes to the client's database):\n"
             "1. **Describe** the code: what is there and whether it really is a data warehouse.\n"
             "2. **Analyze** it: size, complexity and effort.\n"
             "3. **Convert** it to Databricks.\n"
@@ -93,7 +100,8 @@ def render(cfg, raw, packages) -> None:
         show_run_status(status)
         pkg = Path(status.get("package") or "")
         if status.get("package") and pkg.is_file():
-            st.success(f"Everything is saved in **{pkg.name}** ({pkg.stat().st_size // 1024:,} KB), also kept at `{pkg}`.")
+            kept = "saved with the project in the workspace" if _app() else f"also kept at `{pkg}`"
+            st.success(f"Everything is saved in **{pkg.name}** ({pkg.stat().st_size // 1024:,} KB), {kept}.")
             st.download_button("⬇ Download the zip", pkg.read_bytes(), file_name=pkg.name, mime="application/zip")
         if load_state(cfg):
             if cfg.phase == "assessment":

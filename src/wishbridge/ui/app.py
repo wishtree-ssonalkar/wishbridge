@@ -405,7 +405,8 @@ if info and not project_ok():
     # A folder of client code (no project.yml): offer to create WishBridge project(s) that read it in place.
     det = info.detection
     st.subheader("Create a project for this code")
-    st.markdown(f"`{info.path}` is client code, not a WishBridge project yet: **{info.files} code files** "
+    shown = info.path.name if APP else info.path  # the app's own folders mean nothing to the person
+    st.markdown(f"`{shown}` is client code, not a WishBridge project yet: **{info.files} code files** "
                 f"({info.sql_files} SQL). WishBridge only **reads** this folder; the project and everything it produces "
                 f"go in a separate folder.")
     (st.success if det.confidence == "high" else st.info if det.confidence == "medium" else st.warning)(
