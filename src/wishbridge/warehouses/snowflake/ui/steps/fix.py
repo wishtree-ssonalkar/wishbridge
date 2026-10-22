@@ -121,7 +121,7 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
 
     from wishbridge import hosting
 
-    vias = [v for v in ai.VIA if not (hosting.is_app() and v == "claude-code")]  # no Claude Code inside the app
+    vias = list(ai.VIA)  # the same choices everywhere; Claude Code says when it is not available here
     via = cfg.assist_via if cfg.assist_via in vias else "databricks"
     c1, c2 = st.columns([3, 2])
     chosen = c1.radio("Connect with", vias, index=vias.index(via), format_func=ai.VIA.get, horizontal=True,
@@ -162,7 +162,11 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
             st.rerun()
     model = "claude-sonnet-5-5" if speed == "fast" else cfg.ai_model
     signed_in = True
-    if chosen == "claude-code":
+    if chosen == "claude-code" and hosting.is_app():
+        st.info(f"**{hosting.LAPTOP_ONLY}:** Claude Code is signed in on a person's computer. In the Databricks app "
+                "use the **Databricks workspace**'s Claude model (or an API key).")
+        signed_in = False
+    elif chosen == "claude-code":
         if "claude_code_status" not in ss:
             with st.spinner("Checking Claude Code..."):
                 ss.claude_code_status = ai.claude_code_status()

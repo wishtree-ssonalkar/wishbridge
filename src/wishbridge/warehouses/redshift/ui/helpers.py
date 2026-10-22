@@ -277,6 +277,10 @@ def check_target(profile: str, catalog: str, warehouse_id: str = "", schema: str
         try:
             if schema.lower() not in {s.name.lower() for s in w.schemas.list(catalog_name=catalog) if s.name}:
                 w.schemas.create(name=schema, catalog_name=catalog, comment="Created by WishBridge")
+            from wishbridge.hosting import is_app, share_schema
+
+            if is_app():  # what the app creates belongs to the app: let the people using it see and use it
+                problems.extend(f"Could not share {catalog}.{schema} with {p}" for p in share_schema(w, f"{catalog}.{schema}"))
         except Exception as e:  # noqa: BLE001 - permission on the catalog
             problems.append(f"Could not create schema '{catalog}.{schema}': {str(e).splitlines()[0][:300]}. It needs "
                             "the CREATE SCHEMA permission on the catalog.")

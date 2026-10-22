@@ -8,6 +8,8 @@ Deploy WishBridge as a Databricks App (option 3) into a workspace - Wishtree's f
   -WarehouseId     the SQL warehouse the app uses (SQL > SQL Warehouses > the warehouse > its ID)
   -ProjectsVolume  /Volumes/<catalog>/<schema>/<volume>: where the app keeps the projects (created if missing)
   -TargetCatalogs  catalogs the app may create its test schemas in (it gets USE CATALOG + CREATE SCHEMA there)
+  -ShareWith       group(s) that also get the test schemas the app creates, e.g. "wishtree-migration-team"
+                   (the person using the app always gets them)
   -AppName         default "wishbridge" (lower-case letters, digits and -)
 
 Run it again to deploy a new version of WishBridge: the app, its volume and its projects are kept.
@@ -18,6 +20,7 @@ param(
     [Parameter(Mandatory = $true)][string]$WarehouseId,
     [string]$ProjectsVolume = "/Volumes/workspace/wishbridge/projects",
     [string[]]$TargetCatalogs = @(),
+    [string]$ShareWith = "",
     [string]$AppName = "wishbridge"
 )
 $ErrorActionPreference = "Stop"
@@ -89,7 +92,7 @@ Copy-Item (Join-Path $repo "databricks_app\*") $stage -Recurse
 Copy-Item (Join-Path $repo "src\wishbridge") (Join-Path $stage "wishbridge") -Recurse
 Get-ChildItem $stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 $yaml = Join-Path $stage "app.yaml"
-[System.IO.File]::WriteAllText($yaml, (Get-Content $yaml -Raw).Replace("__PROJECTS_VOLUME__", $ProjectsVolume))
+[System.IO.File]::WriteAllText($yaml, (Get-Content $yaml -Raw).Replace("__PROJECTS_VOLUME__", $ProjectsVolume).Replace("__SHARE_WITH__", $ShareWith))
 # never upload code that does not compile
 $py = (Get-Command python -ErrorAction SilentlyContinue).Source
 if ($py) {

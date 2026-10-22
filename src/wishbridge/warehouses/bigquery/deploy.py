@@ -65,6 +65,10 @@ def deploy_schema_map(cfg: ProjectConfig) -> dict[str, str]:
 
 
 def workspace_folder(wh: Warehouse, cfg: ProjectConfig) -> str:
+    from wishbridge.hosting import is_app
+
+    if is_app():  # the app's own folder is hidden from people: deploy where the team can open the notebooks
+        return f"/Workspace/Shared/wishbridge/{cfg.name}"
     user = wh.w.current_user.me().user_name
     return f"/Workspace/Users/{user}/wishbridge/{cfg.name}"
 

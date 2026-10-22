@@ -26,7 +26,8 @@ _NUMERIC = ("tinyint", "smallint", "int", "bigint", "decimal", "double", "float"
 def _columns(wh: Warehouse, table: str) -> dict[str, str]:
     """Column name (lower-case) -> data type, in table order."""
     cols: dict[str, str] = {}
-    for row in wh.run(f"DESCRIBE TABLE {table}").rows:
+    describe = f"DESCRIBE QUERY SELECT * FROM {table}" if table.startswith("(") else f"DESCRIBE TABLE {table}"
+    for row in wh.run(describe).rows:
         name, dtype = (row[0] or "").strip(), (row[1] or "").lower()
         if not name or name.startswith("#"):
             break
@@ -93,6 +94,24 @@ def run_reconcile(cfg: ProjectConfig, full: bool = False, wh: Warehouse | None =
             try:
                 entry.update(localdb.compare(cfg, wh, t))
             except Exception as e:  # noqa: BLE001 - SQL errors from either side
+                entry.update(status="error", error=str(e).splitlines()[0][:400])
+            tables.append(entry)
+        result = {"mode": "quick", "tables": tables, "summary": {
+            "tables": len(tables), "matched": sum(t["status"] == "match" for t in tables),
+            "mismatched": sum(t["status"] == "mismatch" for t in tables),
+            "errors": sum(t["status"] == "error" for t in tables)}}
+        save_step(cfg, "reconcile", result)
+        return result
+    if cfg.data_method == "files":  # compare with the client's exported files themselves
+        from .exported_files import source_query
+
+        wh = wh or Warehouse(cfg)
+        tables = []
+        for t in cfg.tables:
+            entry = {"source": t.source, "target": t.target}
+            try:
+                entry.update(compare_table(wh, source_query(cfg, wh, t), t.target))
+            except SqlError as e:
                 entry.update(status="error", error=str(e).splitlines()[0][:400])
             tables.append(entry)
         result = {"mode": "quick", "tables": tables, "summary": {

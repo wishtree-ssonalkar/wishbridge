@@ -64,8 +64,6 @@ def render(cfg, raw, packages) -> None:
     phase_labels = {"assessment": "Assessment - offline: analyze and convert the code",
                     "code-migration": "Code migration - create the tables and code in Databricks",
                     "data-migration": "Data migration - copy the data and check it matches"}
-    if hosting.is_app():  # the assessment runs on the laptop; the app takes over from its zip
-        phase_labels.pop("assessment")
 
     def _save_phase() -> None:
         new_ = dict(raw)
@@ -215,7 +213,10 @@ def render(cfg, raw, packages) -> None:
             if by_name.get(profile, {}).get("valid") is False:
                 st.warning("This login has expired. Sign in again below with the same profile name.")
 
-            if not hosting.is_app():
+            if hosting.is_app():
+                st.caption("The Databricks app works in its own workspace, with its own identity. Signing in to "
+                           f"another workspace: {hosting.LAPTOP_ONLY.lower()}.")
+            else:
                 with st.expander("Connect to another workspace (sign in)"):
                     st.caption("Opens a browser on this computer to sign in. The login is saved in this user's ~/.databrickscfg; "
                                "WishBridge never sees the password.")
@@ -324,8 +325,8 @@ def render(cfg, raw, packages) -> None:
             method_labels = {"federation": "Client's database, read directly by Databricks (Lakehouse Federation)",
                              "local": "A database on this computer (WishBridge exports and uploads it)",
                              "files": "Exported files already in a Unity Catalog volume"}
-            if hosting.is_app():  # the app cannot reach a database on someone's computer
-                method_labels.pop("local")
+            if hosting.is_app():
+                method_labels["local"] += f" - {hosting.LAPTOP_ONLY.lower()}"
             method = st.radio("How to copy the data :red[*]", list(method_labels), format_func=method_labels.get,
                               horizontal=True, key="data_method",
                               index=list(method_labels).index(data.get("method", "federation"))
@@ -430,6 +431,11 @@ def render(cfg, raw, packages) -> None:
                 if not str(source_catalog or "").strip():
                     required("Required: create the connection above (or use an existing federation catalog).")
                 src_done = bool(str(source_catalog or "").strip())
+            elif method == "local" and hosting.is_app():
+                st.info(f"**{hosting.LAPTOP_ONLY}:** WishBridge reads the database on the computer it runs on, and "
+                        "the Databricks app runs in Databricks. Here choose the **client's database** (Databricks reads "
+                        "it directly) or **exported files** in a volume - or copy this way from WishBridge on the laptop.")
+                src_done = False
             elif method == "local":
                 st.markdown("**Database on this computer** :red[*] - for a demo, or a database Databricks cannot reach. "
                             "When you copy, WishBridge reads the mapped tables (read-only), saves them as Parquet, "

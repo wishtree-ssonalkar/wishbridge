@@ -52,7 +52,7 @@ The script grants the first three; the rest depends on what the project does and
 | READ VOLUME on the client's export volume | Data copy from exported files |
 | CAN QUERY on the Claude serving endpoint | *Ask Claude* (only when the client agreed) |
 
-Notebooks are created in the app's own workspace folder (`/Workspace/Users/<app id>/wishbridge/<project>`).
+Notebooks are created in `/Workspace/Shared/wishbridge/<project>`, where the team can open them.
 
 ## Good to know
 

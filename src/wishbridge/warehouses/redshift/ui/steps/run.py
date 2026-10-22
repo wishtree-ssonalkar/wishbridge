@@ -31,6 +31,12 @@ def render(cfg, raw, packages) -> None:
             "the list of open items and **dummy data** - 5 made-up rows per table, built from the column types "
             "only (no client data).\n\n"
             "Nothing needs to be fixed now. A step that cannot run here is noted and skipped; the rest still runs.")
+        from wishbridge import hosting
+
+        if hosting.is_app():
+            st.info(f"**Analyze** and **Convert** need the migration toolkit: {hosting.LAPTOP_ONLY.lower()}. In the "
+                    "Databricks app they are noted as skipped; the description, fit check and report are made. For the "
+                    "full assessment run it on the laptop and open its zip here.")
         if st.button("▶ Assess and save everything", type="primary"):
             runner.start(cfg, runner.ASSESSMENT_STEPS, {}, keep_going=True)
             st.rerun()

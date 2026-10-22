@@ -119,8 +119,9 @@ def test_claude_goes_through_the_workspace_in_the_app(in_app, monkeypatch):
     from wishbridge.warehouses.ssis import ai
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    backend, _ = ai.assist_backend("claude-code", hosting.APP_PROFILE, "databricks-claude-sonnet-4")
-    assert backend == "databricks"
+    assert ai.assist_backend("auto", hosting.APP_PROFILE, "databricks-claude-sonnet-4")[0] == "databricks"
+    backend, why = ai.assist_backend("claude-code", hosting.APP_PROFILE, "databricks-claude-sonnet-4")
+    assert backend is None and "laptop" in why  # shown, and says where it works
 
 
 def test_the_app_warehouse_comes_from_its_resource(in_app, monkeypatch, tmp_path):
@@ -163,15 +164,20 @@ def app_ready(in_app, monkeypatch):
     return in_app
 
 
-def test_the_app_starts_with_code_and_data_migration_only(app_ready):
+def test_the_app_shows_the_same_choices_as_the_laptop(app_ready):
     at = st_testing.AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
     assert any("Running in Databricks" in s.value for s in at.success)
     assert [b.label for b in at.button if b.key and b.key.startswith("goal-")] == [
-        "Start a code migration", "Start a data migration"]
+        "Start an assessment", "Start a code migration", "Start a data migration"]
+    next(b for b in at.button if b.label == "Start an assessment").click().run()
+    starts = next(r for r in at.radio if r.key == "start_assessment")
+    assert starts.options == ["Open a folder", "Upload the code (zip)", "Start from the database"]
+    starts.set_value("Open a folder").run()
+    assert any("laptop only" in c.value for c in at.caption)  # says where a local folder works
     next(b for b in at.button if b.label == "Start a code migration").click().run()
     starts = next(r for r in at.radio if r.key == "start_code-migration")
-    assert starts.options == ["Open the assessment zip", "Open a saved project"]
+    assert starts.options == ["Open the assessment zip", "Open a project", "Create new"]
     assert not [t for t in at.text_input if t.label == "Create the project in"]  # no folders to type in the app
 
 
@@ -185,7 +191,7 @@ def test_the_app_opens_a_saved_project_and_saves_changes(app_ready):
     at = st_testing.AppTest.from_file(APP, default_timeout=120)
     at.session_state["goal"] = "code-migration"
     at.run()
-    next(r for r in at.radio if r.key == "start_code-migration").set_value("Open a saved project").run()
+    next(r for r in at.radio if r.key == "start_code-migration").set_value("Open a project").run()
     assert next(s for s in at.selectbox if s.key == "saved_pick").value == "salesdw"
     next(b for b in at.button if b.key == "saved_open").click().run()
     assert not at.exception
@@ -232,3 +238,37 @@ def test_the_same_zip_opened_again_gets_a_new_name(in_app):
     _project(hosting.local_root())  # salesdw is open in the app already
     assert hosting.free_name("salesdw") == "salesdw-2"
     assert hosting.free_name("other") == "other"
+
+
+def test_client_code_can_be_uploaded_as_a_zip(tmp_path):
+    """Laptop and app: a zip of the client's code becomes a code folder, refused if it tries to leave it."""
+    import zipfile
+
+    from wishbridge.ui import helpers
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("SalesDW/dw/tables.sql", "CREATE TABLE dw.T (a INT);")
+        z.writestr("SalesDW/LoadFact.dtsx", "<x/>")
+    folder = helpers.unpack_code_zip("Sales DW code.zip", buf.getvalue(), tmp_path)
+    assert folder.name == "SalesDW" and (folder / "dw" / "tables.sql").is_file()
+    again = helpers.unpack_code_zip("Sales DW code.zip", buf.getvalue(), tmp_path)
+    assert again != folder  # a second upload never overwrites the first
+
+    bad = io.BytesIO()
+    with zipfile.ZipFile(bad, "w") as z:
+        z.writestr("../outside.sql", "x")
+    with pytest.raises(ValueError, match="Unsafe"):
+        helpers.unpack_code_zip("bad.zip", bad.getvalue(), tmp_path)
+    with pytest.raises(ValueError, match="not a zip"):
+        helpers.unpack_code_zip("x.zip", b"not a zip", tmp_path)
+
+
+def test_people_get_the_schemas_the_app_creates(in_app, monkeypatch):
+    calls = []
+    w = types.SimpleNamespace(api_client=types.SimpleNamespace(do=lambda *a, **k: calls.append((a, k))))
+    monkeypatch.setattr(hosting, "viewer_email", lambda: "shubham@wishtree.example")
+    monkeypatch.setenv("WISHBRIDGE_SHARE_WITH", "migration-team, ")
+    assert hosting.share_schema(w, "test.salesdw") == []
+    assert [c[1]["body"]["changes"][0]["principal"] for c in calls] == ["shubham@wishtree.example", "migration-team"]
+    assert calls[0][0] == ("PATCH", "/api/2.1/unity-catalog/permissions/schema/test.salesdw")

@@ -18,6 +18,8 @@ from wishbridge.config import PURPOSE, SCOPE_ROWS, SOURCES, ConfigError
 from wishbridge import discover, hosting
 from wishbridge.ui import helpers as h
 
+LAPTOP_ONLY = "On the laptop only"
+
 
 st.set_page_config(page_title="Wishtree WishBridge", page_icon="🌉", layout="wide")
 
@@ -43,21 +45,15 @@ def project_ok() -> bool:
 GOALS = {"assessment": "🔍 Assessment", "code-migration": "🧩 Code migration", "data-migration": "🚚 Data migration"}
 # Ways to start, per goal (label -> the form that does it)
 START = {
-    "assessment": {"Open a folder": "folder", "Start from the database": "new"},
+    "assessment": {"Open a folder": "folder", "Upload the code (zip)": "codezip", "Start from the database": "new"},
     "code-migration": {"Open the assessment zip": "package", "Open a project": "folder", "Create new": "new"},
     # The data goes into tables the code migration created: open that project. "Data only" is for tables that
     # already exist in Databricks (created some other way). The assessment zip has no tables in Databricks yet.
     "data-migration": {"Open the code migration project": "folder", "Data only: tables already in Databricks": "new"},
 }
+# The same choices on the laptop and in the Databricks App; each form says where it works. In the app, projects live
+# on the workspace's volume, so "open a project" lists those instead of asking for a folder.
 APP = hosting.is_app()
-if APP:
-    # Databricks App: the assessment stays on the laptop (offline, at the client); the app takes over from its zip.
-    # Projects live on the workspace's volume, so they are opened from there instead of from a folder.
-    GOALS.pop("assessment")
-    START = {
-        "code-migration": {"Open the assessment zip": "package", "Open a saved project": "saved"},
-        "data-migration": {"Open a saved project": "saved", "Data only: tables already in Databricks": "new"},
-    }
 
 if project_ok() and "goal" not in ss:  # a project opened before (or by a test): its phase is the goal
     try:
@@ -173,7 +169,8 @@ def _setup_progress() -> None:
 
 def open_saved(locked: bool) -> None:
     """Databricks App: open a project kept on the workspace's volume."""
-    st.caption(f"Projects kept in this workspace (`{hosting.projects_volume()}`).")
+    st.caption(f"In the Databricks app projects are kept in this workspace (`{hosting.projects_volume()}`); a "
+               "folder path works on the laptop.")
     if "saved_projects" not in ss or st.button("↻ Refresh the list", width="stretch", disabled=locked):
         try:
             ss.saved_projects = hosting.saved_projects()
@@ -182,7 +179,8 @@ def open_saved(locked: bool) -> None:
             st.error(f"Could not list the projects: {str(e).splitlines()[0][:200]}")
     saved = ss.saved_projects
     if not saved:
-        st.caption("No saved projects yet: open an assessment zip in *Code migration* first.")
+        st.caption("No projects in this workspace yet: open an assessment zip (Code migration) or upload the code "
+                   "(Assessment) first.")
         return
     labels = {p.name: f"{p.name} · {p.modified} · {p.size // 1024:,} KB" for p in saved}
     name = st.selectbox("Project", list(labels), format_func=labels.get, disabled=locked, key="saved_pick")
@@ -218,7 +216,26 @@ with st.sidebar:
         ways = START[goal or next(iter(START))]
         mode = ways[st.radio("Project", list(ways), horizontal=True, label_visibility="collapsed", disabled=locked,
                              key=f"start_{goal}")]
-        if mode == "folder":
+        if mode == "folder" and APP:
+            if goal == "assessment":
+                st.caption(f"A folder on your computer: {LAPTOP_ONLY.lower()} - the app runs in Databricks and cannot "
+                           "see it. Here: **Upload the code (zip)**, or open a project kept in this workspace.")
+            open_saved(locked)
+        elif mode == "codezip":
+            st.caption("A zip of the client's code folder (SQL scripts, SSIS packages, a database project...). WishBridge "
+                       "unpacks it and creates the project, the same as opening the folder. Works on the laptop and in "
+                       "the Databricks app.")
+            code_up = st.file_uploader("Client code (.zip)", type=["zip"], key=f"code_upload_{goal}", disabled=locked)
+            if st.button("Open the code", width="stretch", disabled=locked or code_up is None):
+                try:
+                    folder = h.unpack_code_zip(code_up.name, code_up.getvalue(), h.default_parent(goal))
+                    with st.spinner("Looking at the code..."):
+                        ss.code_info = discover.inspect(folder)
+                    ss.project = ""
+                    st.rerun()
+                except (ValueError, OSError) as e:
+                    st.error(str(e))
+        elif mode == "folder":
             folder = st.text_input("Project or client code folder", value=ss.project, disabled=locked,
                                    placeholder=h.default_parent(goal) + r"\acme-dw  or  C:\client-repo",
                                    help="A WishBridge project opens directly. Any other folder of SQL/ETL code (a repository, "
@@ -278,10 +295,12 @@ with st.sidebar:
                     st.rerun()
                 except (ValueError, OSError, ConfigError) as e:
                     st.error(str(e))
-        elif mode == "saved":
-            open_saved(locked)
         else:
-            if goal == "assessment":
+            if APP and goal == "assessment":
+                st.caption(f"Reading the client's database: {LAPTOP_ONLY.lower()} (it needs the SQL Server driver and a "
+                           "route to the database). Here, create the project and add the code with **Upload the code "
+                           "(zip)**.")
+            elif goal == "assessment":
                 st.caption("No code folder? Create the project here, then read the tables and code straight from the "
                            "client's database in **Code › Read from the database** (read-only, no data).")
             elif goal == "data-migration":
@@ -334,8 +353,9 @@ def show_goal_choice() -> None:
     """First page: assessment, code migration or data migration. The sidebar then offers the ways to start."""
     st.subheader("What do you want to do?")
     if APP:
-        st.caption("This is WishBridge running in the Databricks workspace. The **assessment** runs on the "
-                   "consultant's laptop (offline, at the client); its zip is opened here for the code migration.")
+        st.caption("WishBridge is running in the Databricks workspace. Everything is here; a few choices work on the "
+                   "laptop only (they say so). For an assessment at the client, offline and with full conversion, use "
+                   "WishBridge on the laptop and open its zip here.")
     c1, c2, c3 = st.columns(3)
     cards = {
         "assessment": (c1, "At the client, offline (nothing goes to Databricks):\n"
@@ -353,7 +373,11 @@ def show_goal_choice() -> None:
                                "- map the tables, copy the data, prove it matches"),
     }
     if APP:
-        cards = {"code-migration": (c1, cards["code-migration"][1]), "data-migration": (c2, cards["data-migration"][1])}
+        cards["assessment"] = (c1, "Assess the client's code:\n"
+                                   "- **upload the code as a zip** (a local folder or the database: on the laptop)\n"
+                                   "- describe it, check it is a data warehouse, report\n"
+                                   "- analyzing and converting need the migration toolkit, which is on the laptop: "
+                                   "for the full assessment use the laptop and open its zip here")
     for key, (col, text) in cards.items():
         with col.container(border=True):
             chosen = ss.get("goal") == key
@@ -396,7 +420,8 @@ if info and not project_ok():
                               format_func=lambda k: SOURCES[k].label)
         default_parent = h.default_parent(ss.get("goal"))  # assessments and migrations in their own folders
         name = c2.text_input("Project name :red[*]", value=discover.suggested_name(info.path, default_parent), key="code_name")
-        parent = st.text_input("Create projects in :red[*]", value=default_parent, key="code_parent")
+        parent = default_parent if APP else st.text_input("Create projects in :red[*]", value=default_parent,
+                                                          key="code_parent")
         split = False
         if info.databases:
             dbs = ", ".join(f"{n} ({c} files)" for n, _, c in info.databases)

@@ -62,7 +62,7 @@ def test_welcome_after_the_check():
     next(b for b in at.button if b.label == "Start an assessment").click().run()
     assert at.session_state["goal"] == "assessment"
     starts = next(r for r in at.radio if r.key == "start_assessment")
-    assert starts.options == ["Open a folder", "Start from the database"]
+    assert starts.options == ["Open a folder", "Upload the code (zip)", "Start from the database"]
     assert next(b for b in at.button if b.label == "Open").disabled  # nothing typed yet
     next(t for t in at.text_input if t.label == "Project or client code folder").set_value(r"C:\code").run()
     assert not next(b for b in at.button if b.label == "Open").disabled

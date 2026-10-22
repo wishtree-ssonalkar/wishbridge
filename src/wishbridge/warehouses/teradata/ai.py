@@ -180,8 +180,10 @@ def assist_backend(via: str = "auto", profile: str = "", endpoint: str = "") -> 
     via: the project's choice; "auto" = the API key when set, else Claude Code."""
     from wishbridge.hosting import is_app
 
-    if is_app() and via in ("claude-code", "auto"):  # a Databricks App has no Claude Code: the workspace's model
-        via = "api" if via == "auto" and os.environ.get("ANTHROPIC_API_KEY") else "databricks"
+    if is_app() and via == "claude-code":
+        return None, "not available in the Databricks app (Claude Code is on the laptop): use the Databricks workspace"
+    if is_app() and via == "auto":  # no Claude Code in the app: the API key, else the workspace's model
+        via = "api" if os.environ.get("ANTHROPIC_API_KEY") else "databricks"
     if via == "databricks":
         if not profile:
             return None, "not available: the project has no Databricks login (Settings > Databricks workspace)"

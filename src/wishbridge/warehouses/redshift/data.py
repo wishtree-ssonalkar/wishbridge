@@ -90,6 +90,16 @@ def run_load(cfg: ProjectConfig, execute: bool = False, allow_prod: bool = False
             localdb.ensure_volume(cfg, wh)
         for i, entry in enumerate(tables):
             progress(i, len(tables), entry["target"])
+            if cfg.data_method == "files" and not entry["compare_only"]:
+                # the client's exported files: copy with every column cast to the table's type
+                try:
+                    from .exported_files import copy_sql
+
+                    sql = copy_sql(cfg, wh, by_target[entry["target"]])
+                    entry["statements"] = [sql if s.startswith("COPY INTO") else s for s in entry["statements"]]
+                except Exception as e:  # noqa: BLE001 - no files, unreadable files
+                    entry.update(status="failed", error=str(e).splitlines()[0][:400])
+                    continue
             if local and not entry["compare_only"]:
                 # read the table on this computer, upload it, then copy it with every column cast to the table's type
                 try:

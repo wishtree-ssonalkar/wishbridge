@@ -4,6 +4,10 @@ env:
   # Where the app keeps the projects (one zip each), so nothing is lost when the app restarts.
   - name: WISHBRIDGE_PROJECTS_VOLUME
     value: "__PROJECTS_VOLUME__"
+  # Groups (comma-separated) that get every privilege on the test schemas the app creates, besides the person
+  # using the app. Empty: only that person.
+  - name: WISHBRIDGE_SHARE_WITH
+    value: "__SHARE_WITH__"
   # The SQL warehouse given to the app as a resource named "sql-warehouse".
   - name: WISHBRIDGE_WAREHOUSE_ID
     valueFrom: "sql-warehouse"

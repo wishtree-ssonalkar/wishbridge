@@ -46,6 +46,33 @@ def default_parent(phase: str | None) -> str:
     return str(projects_root() / PHASE_FOLDERS.get(phase or "", PHASE_FOLDERS["assessment"]))
 
 
+def unpack_code_zip(filename: str, data: bytes, parent: str | Path) -> Path:
+    """Unpack a zip of client code next to the projects (parent/.wishbridge-code/<name>) and return the code folder.
+    A zip holding one top folder returns that folder. Paths that would leave the folder are refused."""
+    import io
+    import re
+    import zipfile
+
+    base = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(filename).stem).strip("-.") or "code"
+    root = Path(parent).expanduser().resolve() / ".wishbridge-code"
+    dest, n = root / base, 1
+    while dest.exists():
+        n += 1
+        dest = root / f"{base}-{n}"
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as e:
+        raise ValueError(f"{filename} is not a zip file") from e
+    with z:
+        for name in z.namelist():
+            if not (dest / name).resolve().is_relative_to(dest.resolve()):
+                raise ValueError(f"Unsafe path in the zip: {name}")
+        dest.mkdir(parents=True)
+        z.extractall(dest)
+    items = [p for p in dest.iterdir() if p.name not in ("__MACOSX",)]
+    return items[0] if len(items) == 1 and items[0].is_dir() else dest
+
+
 def project_file(folder: str | Path) -> Path:
     return Path(folder).expanduser().resolve() / "project.yml"
 

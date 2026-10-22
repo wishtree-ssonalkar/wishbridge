@@ -82,8 +82,10 @@ def export_upload(cfg: ProjectConfig, wh, source: str, where: str = "") -> tuple
     return len(df), [str(c) for c in df.columns]
 
 
-def copy_into_sql(cfg: ProjectConfig, wh, t: TableMapping, exported: list[str]) -> str:
-    """COPY INTO that casts every column to the Databricks table's own type (Parquet types differ from SQL Server's)."""
+def copy_into_sql(cfg: ProjectConfig, wh, t: TableMapping, exported: list[str], fmt: str = "PARQUET",
+                  fmt_opts: str = "", force: bool = True) -> str:
+    """COPY INTO that casts every column to the Databricks table's own type (Parquet types differ from SQL Server's).
+    Also used for files the client exported (exported_files.py) - then in their format, forced only with Replace."""
     from .reconcile import _columns
 
     have = {c.lower(): c for c in exported}
@@ -94,8 +96,9 @@ def copy_into_sql(cfg: ProjectConfig, wh, t: TableMapping, exported: list[str]) 
         if src.lower() in have:
             select.append(f"CAST(`{have[src.lower()]}` AS {dtype}) AS `{name}`")
     table = t.source.split(".")[-1]
+    options = "'force' = 'true'" if force else "'mergeSchema' = 'false'"
     return (f"COPY INTO {t.target} FROM (SELECT {', '.join(select)} FROM '{cfg.files_root.rstrip('/')}/{table}/') "
-            "FILEFORMAT = PARQUET COPY_OPTIONS ('force' = 'true')")
+            f"FILEFORMAT = {fmt} {fmt_opts}COPY_OPTIONS ({options})")
 
 
 def compare(cfg: ProjectConfig, wh, t: TableMapping) -> dict[str, Any]:

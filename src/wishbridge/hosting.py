@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-APP_PROFILE = "databricks-app"  # shown instead of a profile name when the app's identity is used
+APP_PROFILE = "databricks-app"
+LAPTOP_ONLY = "On the laptop only"  # how the shared screens mark a choice that needs WishBridge on a computer  # shown instead of a profile name when the app's identity is used
 PROJECTS_VOLUME_ENV = "WISHBRIDGE_PROJECTS_VOLUME"
 _SKIP = {".wishbridge-incoming", "__pycache__"}
 
@@ -180,6 +181,40 @@ def push(folder: str | Path, w=None, force: bool = False) -> bool:
     w.files.upload(remote, io.BytesIO(snapshot(folder)), overwrite=True)
     _SAVED[str(folder)] = fp
     return True
+
+
+# ----------------------------------------------------------------- people see what the app creates
+
+SHARE_WITH_ENV = "WISHBRIDGE_SHARE_WITH"
+
+
+def viewer_email() -> str:
+    """The person using the app (Databricks Apps passes their e-mail with every request)."""
+    try:
+        import streamlit as st
+
+        return (st.context.headers.get("X-Forwarded-Email") or "").strip()
+    except Exception:  # noqa: BLE001 - outside a page (tests, background runs)
+        return ""
+
+
+def people_to_share_with() -> list[str]:
+    """Who gets the test schemas the app creates: the person using it and the groups named in app.yaml."""
+    out = [viewer_email()] + [g.strip() for g in os.environ.get(SHARE_WITH_ENV, "").split(",")]
+    return list(dict.fromkeys(p for p in out if p))
+
+
+def share_schema(w, full_name: str) -> list[str]:
+    """The app owns what it creates, which hides it from people: give them every privilege on the schema
+    (its tables and views included). Returns who could not be given access (with why)."""
+    problems = []
+    for who in people_to_share_with():
+        try:
+            w.api_client.do("PATCH", f"/api/2.1/unity-catalog/permissions/schema/{full_name}",
+                            body={"changes": [{"principal": who, "add": ["ALL_PRIVILEGES"]}]})
+        except Exception as e:  # noqa: BLE001 - unknown group, no permission to grant
+            problems.append(f"{who}: {_first(e)}")
+    return problems
 
 
 # ----------------------------------------------------------------- the app's own check (instead of the laptop one)
