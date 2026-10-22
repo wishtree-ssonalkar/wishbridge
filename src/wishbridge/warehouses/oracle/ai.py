@@ -178,6 +178,10 @@ def _claude_code_env() -> dict[str, str]:
 def assist_backend(via: str = "auto", profile: str = "", endpoint: str = "") -> tuple[str | None, str]:
     """Which Claude Fix code uses: ("databricks" | "api" | "claude-code" | None, what to tell the person).
     via: the project's choice; "auto" = the API key when set, else Claude Code."""
+    from wishbridge.hosting import is_app
+
+    if is_app() and via in ("claude-code", "auto"):  # a Databricks App has no Claude Code: the workspace's model
+        via = "api" if via == "auto" and os.environ.get("ANTHROPIC_API_KEY") else "databricks"
     if via == "databricks":
         if not profile:
             return None, "not available: the project has no Databricks login (Settings > Databricks workspace)"
@@ -397,10 +401,10 @@ def _first_line(e: Exception) -> str:
 
 def databricks_claude_endpoints(profile: str) -> list[str]:
     """The Claude models the workspace serves (Serving > foundation models, or an external Anthropic model)."""
-    from databricks.sdk import WorkspaceClient
+    from wishbridge.hosting import workspace_client
 
     try:
-        endpoints = list(WorkspaceClient(profile=profile).serving_endpoints.list())
+        endpoints = list(workspace_client(profile=profile).serving_endpoints.list())
     except Exception as e:  # the SDK raises many types; the message says what is wrong
         raise AssistError(f"Could not reach the Databricks workspace with the login '{profile}': {_first_line(e)}. "
                           "If the login expired, sign in again in Settings > Databricks workspace.") from e
@@ -416,11 +420,11 @@ def databricks_claude_endpoints(profile: str) -> list[str]:
 
 
 def _ask_databricks(system: str, user: str, profile: str, endpoint: str) -> str:
-    from databricks.sdk import WorkspaceClient
+    from wishbridge.hosting import workspace_client
     from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
 
     try:
-        w = WorkspaceClient(profile=profile, http_timeout_seconds=900)
+        w = workspace_client(profile=profile, http_timeout_seconds=900)
         r = w.serving_endpoints.query(name=endpoint, max_tokens=32000, messages=[
             ChatMessage(role=ChatMessageRole.SYSTEM, content=system),
             ChatMessage(role=ChatMessageRole.USER, content=user)])

@@ -198,6 +198,10 @@ def _validity() -> dict[str, bool]:
 
 def list_profiles(check_validity: bool = True) -> list[dict[str, Any]]:
     """Saved Databricks logins on this computer: name, workspace URL and whether the login still works."""
+    from wishbridge.hosting import APP_PROFILE, app_host, is_app
+
+    if is_app():  # a Databricks App has one workspace - its own - reached with the app's identity
+        return [{"name": APP_PROFILE, "host": app_host(), "valid": True}]
     cp = configparser.ConfigParser(default_section="__wishbridge_none__", interpolation=None)
     path = databrickscfg_path()
     if path.exists():
@@ -237,10 +241,10 @@ def check_target(profile: str, catalog: str, warehouse_id: str = "", schema: str
                  create_catalog: bool = False) -> list[str]:
     """What is wrong with the Databricks target, asked from the workspace itself (empty: all fine).
     A new catalog (when the person chose New catalog) and a new schema are created here."""
-    from databricks.sdk import WorkspaceClient
+    from wishbridge.hosting import workspace_client
 
     try:
-        w = WorkspaceClient(profile=profile)
+        w = workspace_client(profile=profile)
         names = [c.name for c in w.catalogs.list() if c.name]
     except Exception as e:  # the SDK raises many types; the message says what is wrong
         return [f"Could not reach the workspace with this login: {str(e).splitlines()[0][:200]}"]
@@ -288,9 +292,9 @@ def check_target(profile: str, catalog: str, warehouse_id: str = "", schema: str
 
 def list_workspace(profile: str) -> dict[str, Any]:
     """Who we are, where, and the warehouses and catalogs visible - for the settings screen."""
-    from databricks.sdk import WorkspaceClient
+    from wishbridge.hosting import workspace_client
 
-    w = WorkspaceClient(profile=profile)
+    w = workspace_client(profile=profile)
     user = w.current_user.me().user_name
     warehouses = [{"id": wh.id, "name": wh.name, "state": str(wh.state.value if wh.state else "")}
                   for wh in w.warehouses.list()]
@@ -343,14 +347,14 @@ def test_local_db(local_db: dict, password: str = "") -> tuple[bool, str]:
 
 def check_volume(profile: str, files_root: str) -> tuple[bool, str]:
     """Is the upload folder's volume there (or can WishBridge create it)? Asked from the workspace."""
-    from databricks.sdk import WorkspaceClient
+    from wishbridge.hosting import workspace_client
 
     parts = [p for p in files_root.split("/") if p]
     if len(parts) < 4 or parts[0] != "Volumes":
         return False, "The folder must be in a Unity Catalog volume: /Volumes/<catalog>/<schema>/<volume>/..."
     catalog, schema, volume = parts[1:4]
     try:
-        w = WorkspaceClient(profile=profile)
+        w = workspace_client(profile=profile)
     except Exception as e:  # noqa: BLE001
         return False, f"Could not reach the workspace with the login '{profile}': {str(e).splitlines()[0][:200]}"
     try:
@@ -372,10 +376,10 @@ def check_volume(profile: str, files_root: str) -> tuple[bool, str]:
 
 def check_files_folder(profile: str, files_root: str) -> tuple[bool, str]:
     """What is in the exported-files folder: one sub-folder per table is expected."""
-    from databricks.sdk import WorkspaceClient
+    from wishbridge.hosting import workspace_client
 
     try:
-        w = WorkspaceClient(profile=profile)
+        w = workspace_client(profile=profile)
         entries = list(w.files.list_directory_contents(files_root.rstrip("/")))
     except Exception as e:  # noqa: BLE001 - not found, no permission, ...
         return False, f"Could not read {files_root}: {str(e).splitlines()[0][:250]}"

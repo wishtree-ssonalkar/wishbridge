@@ -39,6 +39,10 @@ def projects_root() -> Path:
 
 def default_parent(phase: str | None) -> str:
     """Assessments and migrations get their own folder, so they are easy to tell apart later."""
+    from wishbridge.hosting import is_app, local_root
+
+    if is_app():  # one working folder in the app; the projects themselves are kept on the volume
+        return str(local_root())
     return str(projects_root() / PHASE_FOLDERS.get(phase or "", PHASE_FOLDERS["assessment"]))
 
 
@@ -238,9 +242,9 @@ def sign_in(host: str, profile: str) -> tuple[bool, str]:
 
 def list_workspace(profile: str) -> dict[str, Any]:
     """Who we are, where, and the warehouses and catalogs visible - for the settings screen."""
-    from databricks.sdk import WorkspaceClient
+    from wishbridge.hosting import workspace_client
 
-    w = WorkspaceClient(profile=profile)
+    w = workspace_client(profile=profile)
     user = w.current_user.me().user_name
     warehouses = [{"id": wh.id, "name": wh.name, "state": str(wh.state.value if wh.state else "")}
                   for wh in w.warehouses.list()]

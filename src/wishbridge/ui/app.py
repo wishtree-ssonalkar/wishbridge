@@ -15,7 +15,7 @@ import streamlit as st
 
 from wishbridge import __version__
 from wishbridge.config import PURPOSE, SCOPE_ROWS, SOURCES, ConfigError
-from wishbridge import discover
+from wishbridge import discover, hosting
 from wishbridge.ui import helpers as h
 
 
@@ -49,6 +49,15 @@ START = {
     # already exist in Databricks (created some other way). The assessment zip has no tables in Databricks yet.
     "data-migration": {"Open the code migration project": "folder", "Data only: tables already in Databricks": "new"},
 }
+APP = hosting.is_app()
+if APP:
+    # Databricks App: the assessment stays on the laptop (offline, at the client); the app takes over from its zip.
+    # Projects live on the workspace's volume, so they are opened from there instead of from a folder.
+    GOALS.pop("assessment")
+    START = {
+        "code-migration": {"Open the assessment zip": "package", "Open a saved project": "saved"},
+        "data-migration": {"Open a saved project": "saved", "Data only: tables already in Databricks": "new"},
+    }
 
 if project_ok() and "goal" not in ss:  # a project opened before (or by a test): its phase is the goal
     try:
@@ -71,9 +80,32 @@ SETUP_STATUS = Path.home() / ".wishbridge" / "setup_status.json"
 
 def system_ready() -> bool:
     """Projects can be opened once the computer has been checked and is ready (or the user chose to continue)."""
+    if APP:
+        return bool(ss.get("app_check")) and all(r["ok"] for r in ss.app_check)
     from wishbridge import system
 
     return bool(ss.get("system")) and (system.ready(ss.system) or ss.get("continue_anyway", False))
+
+
+def app_check() -> None:
+    """Step 0 in a Databricks App: the app's identity, its SQL warehouse and the volume that keeps the projects."""
+    if not ss.get("app_check"):
+        with st.spinner("Checking the app's access in this workspace..."):
+            ss.app_check = hosting.check_app()
+    rows = ss.app_check
+    if all(r["ok"] for r in rows):
+        st.success("✅ Running in Databricks")
+    else:
+        st.error("The app is missing access: " + ", ".join(r["name"] for r in rows if not r["ok"]))
+    with st.expander("App check details", expanded=not all(r["ok"] for r in rows)):
+        for r in rows:
+            st.markdown(f"{'✅' if r['ok'] else '❌'} **{r['name']}** — {r['detail']}")
+            if not r["ok"] and r.get("fix"):
+                st.caption(r["fix"])
+        st.caption("Projects are kept on the volume and saved after every change; the assessment runs on the laptop.")
+    if st.button("Check again", width="stretch"):
+        ss.app_check = None
+        st.rerun()
 
 
 def system_check() -> None:
@@ -139,9 +171,36 @@ def _setup_progress() -> None:
     st.info(f"⏳ Installing in the background — {rep.get('current') or 'starting…'}")
 
 
+def open_saved(locked: bool) -> None:
+    """Databricks App: open a project kept on the workspace's volume."""
+    st.caption(f"Projects kept in this workspace (`{hosting.projects_volume()}`).")
+    if "saved_projects" not in ss or st.button("↻ Refresh the list", width="stretch", disabled=locked):
+        try:
+            ss.saved_projects = hosting.saved_projects()
+        except Exception as e:  # noqa: BLE001 - permission / volume missing: the app check says what to do
+            ss.saved_projects = []
+            st.error(f"Could not list the projects: {str(e).splitlines()[0][:200]}")
+    saved = ss.saved_projects
+    if not saved:
+        st.caption("No saved projects yet: open an assessment zip in *Code migration* first.")
+        return
+    labels = {p.name: f"{p.name} · {p.modified} · {p.size // 1024:,} KB" for p in saved}
+    name = st.selectbox("Project", list(labels), format_func=labels.get, disabled=locked, key="saved_pick")
+    if st.button("Open", width="stretch", disabled=locked or not name, key="saved_open"):
+        try:
+            with st.spinner("Opening..."):
+                ss.project, ss.workspace = str(hosting.pull(name)), None
+            ss.pop("goal_applied", None)
+            st.rerun()
+        except (ValueError, OSError) as e:
+            st.error(str(e))
+        except Exception as e:  # noqa: BLE001 - SDK errors
+            st.error(f"Could not open {name}: {str(e).splitlines()[0][:200]}")
+
+
 with st.sidebar:
     st.markdown(f"### 🌉 Wishtree WishBridge\nData warehouse migration to Databricks · v{__version__}")
-    system_check()
+    app_check() if APP else system_check()
     goal = ss.get("goal")
     st.radio("I want to do", list(GOALS), format_func=GOALS.get, key="goal", index=None, horizontal=True,
              help="Assessment: at the client, offline - read and assess the code, share one zip. Migration: deploy to "
@@ -153,7 +212,7 @@ with st.sidebar:
         st.caption("🔒 Choose **Assessment** or **Migration** first.")
     # While a project is open, the ways to start another one are folded away.
     with (st.expander("Open or start another project") if project_ok() and not locked else st.container()):
-        ways = START[goal or "assessment"]
+        ways = START[goal or next(iter(START))]
         mode = ways[st.radio("Project", list(ways), horizontal=True, label_visibility="collapsed", disabled=locked,
                              key=f"start_{goal}")]
         if mode == "folder":
@@ -185,8 +244,9 @@ with st.sidebar:
             st.caption("The zip saved by the assessment (*Assess and save everything*) on any computer. "
                        "It becomes a project here, ready to migrate.")
             pkg_up = st.file_uploader("Package (.zip)", type=["zip"], key="pkg_upload", disabled=locked)
-            pkg_parent = st.text_input("Create the project in", value=h.default_parent(goal), key=f"pkg_parent_{goal}",
-                                       disabled=locked, help="Migrations and assessments have their own folders.")
+            pkg_parent = h.default_parent(goal) if APP else st.text_input(
+                "Create the project in", value=h.default_parent(goal), key=f"pkg_parent_{goal}", disabled=locked,
+                help="Migrations and assessments have their own folders.")
             if st.button("Open package", width="stretch", disabled=locked or pkg_up is None or not pkg_parent.strip()):
                 from wishbridge.open_package import open_package
 
@@ -196,10 +256,14 @@ with st.sidebar:
                     tmp.write_bytes(pkg_up.getvalue())
                     dest = open_package(tmp, pkg_parent)
                     tmp.unlink(missing_ok=True)
+                    if APP:
+                        hosting.push(dest, force=True)  # kept on the volume from the start
                     ss.project, ss.workspace = str(dest), None
                     st.rerun()
                 except (ValueError, OSError, ConfigError) as e:
                     st.error(str(e))
+        elif mode == "saved":
+            open_saved(locked)
         else:
             if goal == "assessment":
                 st.caption("No code folder? Create the project here, then read the tables and code straight from the "
@@ -210,8 +274,9 @@ with st.sidebar:
                            "and map the tables. Otherwise open the code migration project instead.")
             name = st.text_input("Project name :red[*]", placeholder="acme-dw", disabled=locked, key="new_name")
             source = st.selectbox("Source system :red[*]", list(SOURCES), format_func=lambda k: SOURCES[k].label, disabled=locked)
-            parent = st.text_input("Create in folder :red[*]", value=h.default_parent(goal), disabled=locked,
-                                   key=f"new_parent_{goal}", help="Migrations and assessments have their own folders.")
+            parent = h.default_parent(goal) if APP else st.text_input(
+                "Create in folder :red[*]", value=h.default_parent(goal), disabled=locked, key=f"new_parent_{goal}",
+                help="Migrations and assessments have their own folders.")
             if st.button("Create project", width="stretch", disabled=locked or not name.strip() or not parent.strip()):
                 try:
                     ss.project = str(h.create_project(parent, name, source))
@@ -225,7 +290,11 @@ with st.sidebar:
                     st.error(str(e))
     if project_ok() and not locked:
         st.success(f"Open: {Path(ss.project).name}")
-        st.caption(ss.project.replace("\\", "\\\\").replace("_", "\\_"))  # show the path as typed, not as Markdown
+        if APP:
+            st.caption(f"Saved in the workspace: `{hosting.projects_volume()}/{Path(ss.project).name}.zip`"
+                       + (f" · last saved {ss.saved_at}" if ss.get("saved_at") else ""))
+        else:
+            st.caption(ss.project.replace("\\", "\\\\").replace("_", "\\_"))  # show the path as typed, not as Markdown
 
 
 st.title("Wishtree WishBridge")
@@ -248,6 +317,9 @@ def show_welcome() -> None:
 def show_goal_choice() -> None:
     """First page: assessment, code migration or data migration. The sidebar then offers the ways to start."""
     st.subheader("What do you want to do?")
+    if APP:
+        st.caption("This is WishBridge running in the Databricks workspace. The **assessment** runs on the "
+                   "consultant's laptop (offline, at the client); its zip is opened here for the code migration.")
     c1, c2, c3 = st.columns(3)
     cards = {
         "assessment": (c1, "At the client, offline (nothing goes to Databricks):\n"
@@ -264,6 +336,8 @@ def show_goal_choice() -> None:
                                "- needs the client's database reachable from Databricks (or exported files)\n"
                                "- map the tables, copy the data, prove it matches"),
     }
+    if APP:
+        cards = {"code-migration": (c1, cards["code-migration"][1]), "data-migration": (c2, cards["data-migration"][1])}
     for key, (col, text) in cards.items():
         with col.container(border=True):
             chosen = ss.get("goal") == key
@@ -277,8 +351,12 @@ def show_goal_choice() -> None:
 
 if not system_ready():
     show_goal_choice()
-    st.info("Then **Step 0 · System check** in the sidebar: *Check this computer*, and *Install missing* if "
-            "anything is not there.")
+    if APP:
+        st.info("The app cannot start yet: see **App check details** in the sidebar for what the workspace admin "
+                "needs to give it.")
+    else:
+        st.info("Then **Step 0 · System check** in the sidebar: *Check this computer*, and *Install missing* if "
+                "anything is not there.")
     show_welcome()
     st.stop()
 
@@ -378,4 +456,19 @@ if ss.get("goal") and ss.get("goal_applied") != (ss.project, ss.goal):
 # ----------------------------------------------------------------- the project's warehouse takes over
 # Everything after opening a project (step bar, steps) is in wishbridge/warehouses/<warehouse>/ui/.
 
-ui_for(source_key).run(raw)
+def save_to_workspace() -> None:
+    """Databricks App: keep the project on the volume (only when something changed since the last save)."""
+    try:
+        if hosting.push(ss.project):
+            from datetime import datetime
+
+            ss.saved_at = datetime.now().strftime("%H:%M:%S")
+    except Exception as e:  # noqa: BLE001 - shown, never lost silently
+        st.sidebar.warning(f"Could not save the project to the workspace: {str(e).splitlines()[0][:200]}")
+
+
+try:
+    ui_for(source_key).run(raw)
+finally:
+    if APP:
+        save_to_workspace()  # also when a step stops or reruns the page

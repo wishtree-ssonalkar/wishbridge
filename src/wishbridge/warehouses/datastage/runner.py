@@ -134,6 +134,13 @@ def run_pipeline(cfg: ProjectConfig, steps: list[str], opts: dict[str, Any], kee
     status["state"] = "done"
     status["finished"] = datetime.now().isoformat(timespec="seconds")
     save()
+    from wishbridge import hosting
+
+    if hosting.is_app():  # in a Databricks App: keep the results on the volume, also if nobody has the page open
+        try:
+            hosting.push(cfg.path.parent, force=True)
+        except Exception:  # noqa: BLE001 - the page saves again on its next visit
+            pass
     return status
 
 

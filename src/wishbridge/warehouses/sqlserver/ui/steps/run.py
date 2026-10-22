@@ -44,8 +44,12 @@ def render(cfg, raw, packages) -> None:
             do_deploy = st.checkbox("Create the tables and code in the test schema", value=True)
             recreate = st.checkbox("…rebuild objects that already exist", value=False, disabled=not do_deploy)
         with c2:
-            again = st.checkbox("Analyze and convert again first", value=False,
-                                help="Only when the client's code changed since the assessment. Hand fixes are kept.")
+            from wishbridge import hosting
+
+            again = st.checkbox("Analyze and convert again first", value=False, disabled=hosting.is_app(),
+                                help="Only when the client's code changed since the assessment. Hand fixes are kept."
+                                     + (" Converting needs the migration toolkit, which runs on the laptop: assess "
+                                        "again there and open the new zip here." if hosting.is_app() else ""))
             do_report = st.checkbox("Build the report", value=True)
         chosen = (["analyze", "convert"] if again else []) + [n for n, on in (("deploy", do_deploy),
                                                                              ("report", do_report)) if on]
