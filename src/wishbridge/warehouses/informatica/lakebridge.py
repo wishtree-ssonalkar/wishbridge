@@ -98,7 +98,20 @@ def _run_offline(command: str, flags: list[str], env: dict[str, str]) -> subproc
     home = _toolkit_home()
     python = home / "state" / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     entry = home / "lib" / "src" / "databricks" / "labs" / "lakebridge" / "cli.py"
+    from_source = entry.is_file()
+    if not from_source:  # the Databricks App installs the toolkit as a package (wishbridge/toolkit_setup.py)
+        entry = next((home / "state" / "venv").rglob("site-packages/databricks/labs/lakebridge/cli.py"), entry)
     if not python.is_file() or not entry.is_file():
+        from wishbridge.hosting import is_app
+
+        if is_app():
+            from wishbridge import toolkit_setup
+
+            st = toolkit_setup.status()
+            raise LakeBridgeError(
+                "The migration toolkit is still being installed in the app (a few minutes after it starts) - run "
+                "again shortly." if st.get("state") in ("installing", "missing") else
+                f"The migration toolkit could not be installed in the app: {st.get('error') or 'unknown error'}")
         raise LakeBridgeError("The migration toolkit is not installed on this computer: run Step 0 - System check, "
                               "then Install missing.")
     named = {}
@@ -109,7 +122,8 @@ def _run_offline(command: str, flags: list[str], env: dict[str, str]) -> subproc
     env = {k: v for k, v in env.items() if not k.startswith("DATABRICKS_")}
     # The toolkit's own source folder first: its logger looks for pyproject.toml above the running file and loops
     # forever on Windows when it runs from the installed copy instead.
-    env["PYTHONPATH"] = str(home / "lib" / "src")
+    if from_source:
+        env["PYTHONPATH"] = str(home / "lib" / "src")
     with _OfflineWorkspace() as url:
         env.update(DATABRICKS_HOST=url, DATABRICKS_TOKEN="offline", DATABRICKS_AUTH_TYPE="pat")
         return subprocess.run([str(python), str(entry), payload], capture_output=True, text=True, encoding="utf-8",
@@ -128,8 +142,14 @@ def run(cfg: ProjectConfig, *args: str, strict: bool = True) -> str:
         proc = subprocess.run([_databricks_cli(), "labs", "lakebridge", *args], capture_output=True, text=True,
                               encoding="utf-8", errors="replace", env=env)
     out = _ANSI.sub("", (proc.stdout or "") + (proc.stderr or ""))
+    try:  # the toolkit's whole answer, for when a step fails without saying why on screen
+        log = cfg.out("logs", f"toolkit_{args[0]}.log") if args else None
+        if log is not None:
+            log.write_text(f"exit code {proc.returncode}\n{out}", encoding="utf-8")
+    except OSError:
+        pass
     if strict and (proc.returncode != 0 or re.search(r"^(\d\d:\d\d:\d\d\s+)?ERROR\b|^Error:", out, re.MULTILINE)):
-        raise _fail(args[0], out)
+        raise _fail(args[0], out if out.strip() else f"(no output, exit code {proc.returncode})")
     return out
 
 
@@ -145,6 +165,11 @@ def fatal_error(output: str) -> str:
 def transpiler_config_path(transpiler: str) -> Path:
     path = Path.home() / ".databricks" / "labs" / "remorph-transpilers" / TRANSPILER_DIRS[transpiler] / "lib" / "config.yml"
     if not path.exists():
+        from wishbridge.hosting import LAPTOP_ONLY, is_app
+
+        if is_app():
+            raise LakeBridgeError(f"The converter '{transpiler}' is a Java program: {LAPTOP_ONLY.lower()}. Convert "
+                                  "this project on the laptop and open its zip here.")
         raise LakeBridgeError(
             f"Transpiler '{transpiler}' is not installed ({path} missing).\n"
             "Run: databricks labs lakebridge install-transpile --interactive false"

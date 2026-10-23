@@ -1,0 +1,36 @@
+remorph:
+  version: 1
+  name: Bladebridge
+  dialects:
+    - datastage
+    - informatica (desktop edition)
+    - informatica cloud
+    - ssis
+    - mssql
+    - netezza
+    - oracle
+    - redshift
+    - synapse
+    - teradata
+  command_line: ["python3", "-m", "databricks.labs.bladebridge.server"]
+options:
+  all:
+    - flag: "overrides-file"
+      method: QUESTION
+      prompt: "Specify the config file to override the default[Bladebridge] config - press <enter> for none"
+      default: "<none>"
+  datastage:
+    - flag: "target-tech"
+      method: CHOICE
+      prompt: "Specify which technology should be generated"
+      choices: [ SPARKSQL, PYSPARK ]
+  "informatica (desktop edition)":
+    - flag: "target-tech"
+      method: CHOICE
+      prompt: "Specify which technology should be generated"
+      choices: [ SPARKSQL, PYSPARK ]
+  ssis:
+    - flag: "target-tech"
+      method: CHOICE
+      prompt: "Specify which technology should be generated"
+      choices: [ SPARKSQL ]

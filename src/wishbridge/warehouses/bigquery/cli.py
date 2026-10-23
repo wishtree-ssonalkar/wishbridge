@@ -117,7 +117,7 @@ def convert(config_path: str, ai: bool | None) -> None:
         tag = "  (manual fix)" if f.get("manual_override") else ""
         if not tag and f.get("converter") not in (None, cfg.transpiler):
             tag = f"  (converted by {f['converter']})"
-        click.echo(f"  {click.style(f'{f["status"]:<9}', fg=colour)} {f['file']}{tag}")
+        click.echo(f"  {click.style(format(f['status'], '<9'), fg=colour)} {f['file']}{tag}")
         for x in f["findings"]:
             if not x["fixed"] and x["severity"] != "info":
                 click.echo(f"      line {x['line']}: {x['message']}")

@@ -8,6 +8,8 @@ import re
 import pandas as pd
 import streamlit as st
 
+from wishbridge import hosting
+
 from wishbridge.warehouses.synapse import source_db as sd
 from wishbridge.warehouses.synapse.config import CONVERTER_DIALECTS, SOURCES, ConfigError, converter_summary, looks_like_prod
 from wishbridge.warehouses.synapse.dbx import SqlError, Warehouse
@@ -74,7 +76,8 @@ def render(cfg, raw, packages) -> None:
 
     cur_phase = normalise_phase(raw.get("phase"))
     phase = st.radio("Phase", list(phase_labels), format_func=phase_labels.get, horizontal=True, key="phase_radio",
-                     index=list(phase_labels).index(cur_phase) if cur_phase in phase_labels else 1, on_change=_save_phase,
+                     index=list(phase_labels).index(cur_phase if cur_phase in phase_labels else "code-migration"),
+                     on_change=_save_phase,
                      help="Assessment: nothing is sent to Databricks or the client's database. Switch to Migration for "
                           "the visit where the code is deployed and the data copied. Changing it saves right away.")
     offline = phase == "assessment"
@@ -154,12 +157,16 @@ def render(cfg, raw, packages) -> None:
         profiles = ss.profiles
         names = [p["name"] for p in profiles]
         cur_profile = ss.get("pending_profile") or dbx.get("profile", "DEFAULT")
+        if hosting.is_app():  # a Databricks App works in its own workspace, with its own identity
+            cur_profile = hosting.APP_PROFILE
         if cur_profile not in names:
             names = [cur_profile] + names
         by_name = {p["name"]: p for p in profiles}
 
         def profile_label(n: str) -> str:
             p = by_name.get(n)
+            if n == hosting.APP_PROFILE and p:
+                return f"This app's workspace — {p['host']}"
             if not p:
                 return f"{n} — not set up on this computer"
             state = {True: "signed in", False: "login expired", None: "status unknown"}[p["valid"]]
@@ -206,23 +213,27 @@ def render(cfg, raw, packages) -> None:
             if by_name.get(profile, {}).get("valid") is False:
                 st.warning("This login has expired. Sign in again below with the same profile name.")
 
-            with st.expander("Connect to another workspace (sign in)"):
-                st.caption("Opens a browser on this computer to sign in. The login is saved in this user's ~/.databrickscfg; "
-                           "WishBridge never sees the password.")
-                n1, n2, n3 = st.columns([3, 2, 1])
-                new_host = n1.text_input("Workspace URL :red[*]", placeholder="https://adb-1234567890.12.azuredatabricks.net")
-                new_profile = n2.text_input("Profile name :red[*]", placeholder="CLIENT_ACME")
-                n3.write("")
-                if new_host.strip() and not new_host.strip().lower().startswith("https://"):
-                    required("The workspace URL starts with https://")
-                if n3.button("Sign in", disabled=not new_host.strip().lower().startswith("https://") or not new_profile.strip()):
-                    with st.spinner("Finish signing in in the browser window..."):
-                        ok, msg = h.sign_in(new_host, new_profile)
-                    (st.success if ok else st.error)(msg)
-                    if ok:
-                        ss.profiles = h.list_profiles()
-                        ss.pending_profile = new_profile.strip()
-                        st.rerun()
+            if hosting.is_app():
+                st.caption("The Databricks app works in its own workspace, with its own identity. Signing in to "
+                           f"another workspace: {hosting.LAPTOP_ONLY.lower()}.")
+            else:
+                with st.expander("Connect to another workspace (sign in)"):
+                    st.caption("Opens a browser on this computer to sign in. The login is saved in this user's ~/.databrickscfg; "
+                               "WishBridge never sees the password.")
+                    n1, n2, n3 = st.columns([3, 2, 1])
+                    new_host = n1.text_input("Workspace URL :red[*]", placeholder="https://adb-1234567890.12.azuredatabricks.net")
+                    new_profile = n2.text_input("Profile name :red[*]", placeholder="CLIENT_ACME")
+                    n3.write("")
+                    if new_host.strip() and not new_host.strip().lower().startswith("https://"):
+                        required("The workspace URL starts with https://")
+                    if n3.button("Sign in", disabled=not new_host.strip().lower().startswith("https://") or not new_profile.strip()):
+                        with st.spinner("Finish signing in in the browser window..."):
+                            ok, msg = h.sign_in(new_host, new_profile)
+                        (st.success if ok else st.error)(msg)
+                        if ok:
+                            ss.profiles = h.list_profiles()
+                            ss.pending_profile = new_profile.strip()
+                            st.rerun()
 
             _login = by_name.get(profile)
             ws_done = bool(_login) and _login.get("valid") is not False and not other_ws
@@ -314,9 +325,12 @@ def render(cfg, raw, packages) -> None:
             method_labels = {"federation": "Client's database, read directly by Databricks (Lakehouse Federation)",
                              "local": "A database on this computer (WishBridge exports and uploads it)",
                              "files": "Exported files already in a Unity Catalog volume"}
+            if hosting.is_app():
+                method_labels["local"] += f" - {hosting.LAPTOP_ONLY.lower()}"
             method = st.radio("How to copy the data :red[*]", list(method_labels), format_func=method_labels.get,
                               horizontal=True, key="data_method",
-                              index=list(method_labels).index(data.get("method", "federation")))
+                              index=list(method_labels).index(data.get("method", "federation"))
+                              if data.get("method", "federation") in method_labels else 0)
             if method == "federation":
                 st.markdown("**Source database** :red[*] — WishBridge creates a Lakehouse Federation connection in "
                             "Databricks; the password goes into Databricks secrets, never into project.yml.")
@@ -417,6 +431,11 @@ def render(cfg, raw, packages) -> None:
                 if not str(source_catalog or "").strip():
                     required("Required: create the connection above (or use an existing federation catalog).")
                 src_done = bool(str(source_catalog or "").strip())
+            elif method == "local" and hosting.is_app():
+                st.info(f"**{hosting.LAPTOP_ONLY}:** WishBridge reads the database on the computer it runs on, and "
+                        "the Databricks app runs in Databricks. Here choose the **client's database** (Databricks reads "
+                        "it directly) or **exported files** in a volume - or copy this way from WishBridge on the laptop.")
+                src_done = False
             elif method == "local":
                 st.markdown("**Database on this computer** :red[*] - for a demo, or a database Databricks cannot reach. "
                             "When you copy, WishBridge reads the mapped tables (read-only), saves them as Parquet, "

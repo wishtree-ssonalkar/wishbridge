@@ -120,6 +120,8 @@ Check it works:
 
 Everything in this guide can also be done in the WishBridge app, which opens in your browser.
 
+WishBridge runs in two places with the same screens: on the **laptop**, and as a **Databricks App** inside a workspace (Databricks single sign-on, projects kept in the workspace). A choice that needs the laptop says *On the laptop only* and what to use instead. Deploying and using the app: [DATABRICKS_APP.md](DATABRICKS_APP.md).
+
 - **Start it:** double-click `Start WishBridge.cmd` in the WishBridge folder (right-click → *Send to → Desktop*
   to make a desktop shortcut), or run `wishbridge ui`. It opens at http://localhost:8501 and runs only on
   your computer; close the black window to stop it.

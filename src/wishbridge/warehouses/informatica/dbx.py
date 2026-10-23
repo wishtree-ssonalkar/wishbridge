@@ -27,6 +27,12 @@ def normalise_host(host: str) -> str:
 def check_workspace(cfg: ProjectConfig, actual_host: str) -> None:
     """Refuse to work on a different workspace than the one the project belongs to."""
     if cfg.host and normalise_host(actual_host) != normalise_host(cfg.host):
+        from wishbridge.hosting import is_app
+
+        if is_app():
+            raise SqlError(
+                f"This project belongs to {cfg.host}, but this app runs in {actual_host}. Open Settings and press "
+                f"'Move this project to {normalise_host(actual_host)}' (e.g. after testing it in Wishtree's workspace).")
         raise SqlError(
             f"Profile '{cfg.profile}' is signed in to {actual_host}, but this project belongs to {cfg.host}. "
             "Choose the right workspace in Settings (or set databricks.profile in project.yml).")
@@ -34,7 +40,7 @@ def check_workspace(cfg: ProjectConfig, actual_host: str) -> None:
 
 class Warehouse:
     def __init__(self, cfg: ProjectConfig):
-        from databricks.sdk import WorkspaceClient
+        from wishbridge.hosting import workspace_client
 
         if cfg.phase == "assessment":
             raise SqlError(
@@ -42,9 +48,12 @@ class Warehouse:
                 "Analyze, convert, review and fix the code first. When it is ready, switch the project to the "
                 "code migration phase (Settings > Phase, or `phase: code-migration` in project.yml).")
 
-        self.w = WorkspaceClient(profile=cfg.profile)
+        self.w = workspace_client(profile=cfg.profile)
         check_workspace(cfg, self.w.config.host)
-        self.warehouse_id = cfg.warehouse_id or self._pick_warehouse()
+        from wishbridge.hosting import app_warehouse_id
+
+        # a Databricks App gets its SQL warehouse as a resource; a laptop uses the project's (or the first running)
+        self.warehouse_id = cfg.warehouse_id or app_warehouse_id() or self._pick_warehouse()
 
     def _pick_warehouse(self) -> str:
         from databricks.sdk.service.sql import State

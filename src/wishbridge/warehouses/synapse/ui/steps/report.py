@@ -312,7 +312,10 @@ def _data_migration_report(cfg, raw, state) -> None:
     if ss.get("signoff") and Path(ss.signoff).is_file():
         so = Path(ss.signoff)
         st.download_button(f"⬇ {so.name}", so.read_bytes(), file_name=so.name, mime="application/zip")
-        st.caption(f"Also kept at `{so}`. The client approves the data migration from it.")
+        from wishbridge import hosting
+
+        kept = "Saved with the project in the workspace" if hosting.is_app() else f"Also kept at `{so}`"
+        st.caption(f"{kept}. The client approves the data migration from it.")
 
     st.markdown("#### Copied tables")
     st.dataframe(pd.DataFrame([{"source": t["source"], "Databricks table": t["target"], "status": t["status"],
@@ -469,4 +472,7 @@ def _download_reports(cfg) -> None:
             st.download_button(f"⬇ Everything in one zip ({z.stat().st_size / 1_048_576:.1f} MB, made {made})",
                                z.read_bytes(), file_name=z.name, mime="application/zip", key="dl-complete",
                                type="primary")
-            st.caption(f"`{z.name}` - with {', '.join(t.lower() for _, t, _ in reports)}. Also kept at `{z.parent}`.")
+            from wishbridge import hosting
+
+            kept = "saved with the project in the workspace" if hosting.is_app() else f"also kept at `{z.parent}`"
+            st.caption(f"`{z.name}` - with {', '.join(t.lower() for _, t, _ in reports)}; {kept}.")

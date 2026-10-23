@@ -11,6 +11,12 @@ from wishbridge.warehouses.synapse.state import load_state
 from wishbridge.warehouses.synapse.ui.common import next_button, run_progress, show_run_status
 
 
+def _app() -> bool:
+    from wishbridge import hosting
+
+    return hosting.is_app()
+
+
 def render(cfg, raw, packages) -> None:
     offline = cfg.phase == "assessment"
     status = runner.read_status(cfg)
@@ -22,7 +28,8 @@ def render(cfg, raw, packages) -> None:
     elif offline:
         st.subheader("First run: assess the code and save everything")
         st.markdown(
-            "One button does it all, on this computer only (nothing goes to Databricks or the client's database):\n"
+            "One button does it all" + (" here in the workspace" if _app() else ", on this computer only")
+            + " (nothing goes to the client's database):\n"
             "1. **Describe** the code: what is there and whether it really is a data warehouse.\n"
             "2. **Analyze** it: size, complexity and effort.\n"
             "3. **Convert** it to Databricks.\n"
@@ -31,6 +38,19 @@ def render(cfg, raw, packages) -> None:
             "the list of open items and **dummy data** - 5 made-up rows per table, built from the column types "
             "only (no client data).\n\n"
             "Nothing needs to be fixed now. A step that cannot run here is noted and skipped; the rest still runs.")
+        from wishbridge import hosting
+
+        if hosting.is_app():
+            from wishbridge import toolkit_setup
+
+            tk = toolkit_setup.status()
+            if tk.get("state") != "ready":
+                st.warning("The migration toolkit is "
+                           + ("being installed in the app (a few minutes after it starts) - wait for it, or Analyze "
+                              "and Convert are noted as skipped." if tk.get("state") in ("installing", "missing") else
+                              f"not installed in the app ({tk.get('error')}): Analyze and Convert are noted as skipped."))
+            st.caption("In the Databricks app the code is processed in this workspace (on the laptop it stays on the "
+                       "computer). Converters that need Java (Morpheus) work on the laptop only.")
         if st.button("▶ Assess and save everything", type="primary"):
             runner.start(cfg, runner.ASSESSMENT_STEPS, {}, keep_going=True)
             st.rerun()
@@ -44,6 +64,8 @@ def render(cfg, raw, packages) -> None:
             do_deploy = st.checkbox("Create the tables and code in the test schema", value=True)
             recreate = st.checkbox("…rebuild objects that already exist", value=False, disabled=not do_deploy)
         with c2:
+            from wishbridge import hosting
+
             again = st.checkbox("Analyze and convert again first", value=False,
                                 help="Only when the client's code changed since the assessment. Hand fixes are kept.")
             do_report = st.checkbox("Build the report", value=True)
@@ -76,10 +98,15 @@ def render(cfg, raw, packages) -> None:
         st.markdown("#### Last run")
         if status["state"] == "interrupted":
             st.warning("The last run stopped before it finished (the app or computer was closed). Start it again.")
+            tail = runner.log_tail(cfg)
+            if tail:
+                with st.expander("What the run said last"):
+                    st.code(tail, language="text")
         show_run_status(status)
         pkg = Path(status.get("package") or "")
         if status.get("package") and pkg.is_file():
-            st.success(f"Everything is saved in **{pkg.name}** ({pkg.stat().st_size // 1024:,} KB), also kept at `{pkg}`.")
+            kept = "saved with the project in the workspace" if _app() else f"also kept at `{pkg}`"
+            st.success(f"Everything is saved in **{pkg.name}** ({pkg.stat().st_size // 1024:,} KB), {kept}.")
             st.download_button("⬇ Download the zip", pkg.read_bytes(), file_name=pkg.name, mime="application/zip")
         if load_state(cfg):
             if cfg.phase == "assessment":
