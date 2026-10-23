@@ -13,6 +13,9 @@ here = os.path.dirname(os.path.abspath(__file__))
 src = os.path.join(os.path.dirname(here), "src")
 os.environ["PYTHONPATH"] = src + os.pathsep + os.environ.get("PYTHONPATH", "")
 os.environ.setdefault("WISHBRIDGE_HOME", os.path.join(os.path.expanduser("~"), "wishbridge"))
+# Start from src/: `python -m streamlit` puts the working folder first on the import path, so a stray copy of the
+# package elsewhere (e.g. left over from an older upload) can never be imported instead of this one.
+os.chdir(src)
 
 os.execv(sys.executable, [
     sys.executable, "-m", "streamlit", "run", os.path.join(src, "wishbridge", "ui", "app.py"),
