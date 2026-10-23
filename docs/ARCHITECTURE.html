@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WishBridge Architecture</title>
+<style>
+  :root { --ink:#1f2328; --muted:#5b6370; --line:#d9dde3; --soft:#f5f7fa; --accent:#c8102e; --bg:#ffffff;
+          --blue:#2d6ca8; --blue-soft:#e8f0f9; --green:#1f7a4d; --green-soft:#e6f4ec; --amber:#a35b00; --amber-soft:#fdf1e1; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --ink:#e6e8eb; --muted:#a3abb6; --line:#3a4049; --soft:#1d2228; --accent:#ff5a6e; --bg:#14181d;
+            --blue:#7fb2e6; --blue-soft:#1b2a3a; --green:#6fcf97; --green-soft:#17291f; --amber:#f0b45c; --amber-soft:#2e2414; }
+  }
+  :root[data-theme="dark"] { --ink:#e6e8eb; --muted:#a3abb6; --line:#3a4049; --soft:#1d2228; --accent:#ff5a6e; --bg:#14181d;
+            --blue:#7fb2e6; --blue-soft:#1b2a3a; --green:#6fcf97; --green-soft:#17291f; --amber:#f0b45c; --amber-soft:#2e2414; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font: 16px/1.55 "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; }
+  main { max-width: 1000px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { font-size: 2.1rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: .95rem; }
+  .lead { font-size: 1.12rem; border-left: 4px solid var(--accent); padding: 4px 0 4px 14px; margin: 0 0 28px; }
+  h2 { font-size: 1.4rem; margin: 40px 0 10px; padding-top: 12px; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.1rem; margin: 22px 0 6px; }
+  nav { background: var(--soft); border: 1px solid var(--line); border-radius: 10px; padding: 12px 18px; margin-bottom: 8px; }
+  nav ol { margin: 4px 0; padding-left: 20px; columns: 2; }
+  a { color: var(--blue); }
+  nav a { color: var(--ink); }
+  .scroll { overflow-x: auto; }
+  table.wide { font-size: .86rem; }
+  table.wide td:first-child { white-space: nowrap; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: .93rem; }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--soft); }
+  code { background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: .88em; }
+  pre { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-size: .88rem; }
+  pre code { background: none; border: 0; padding: 0; }
+  ul, ol { padding-left: 22px; }
+  li { margin: 4px 0; }
+  .note { background: var(--soft); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin: 14px 0; }
+  .diagram { margin: 18px 0 8px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--bg); overflow-x: auto; }
+  .diagram svg { display: block; width: 100%; min-width: 640px; height: auto; }
+  .cap { color: var(--muted); font-size: .9rem; margin: 4px 0 18px; }
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--soft); }
+  .card > b:first-child { display: block; margin-bottom: 4px; }
+  .card code { overflow-wrap: anywhere; }
+  svg text { font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; fill: var(--ink); }
+  svg .muted { fill: var(--muted); }
+  svg .box { fill: var(--soft); stroke: var(--line); stroke-width: 1.5; }
+  svg .blue { fill: var(--blue-soft); stroke: var(--blue); stroke-width: 1.5; }
+  svg .green { fill: var(--green-soft); stroke: var(--green); stroke-width: 1.5; }
+  svg .amber { fill: var(--amber-soft); stroke: var(--amber); stroke-width: 1.5; }
+  svg .red { fill: var(--soft); stroke: var(--accent); stroke-width: 2; }
+  svg .arrow { stroke: var(--muted); stroke-width: 1.8; fill: none; marker-end: url(#a); }
+  svg .dash { stroke: var(--muted); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; marker-end: url(#a); }
+  svg marker path { fill: var(--muted); }
+  footer { margin-top: 48px; color: var(--muted); font-size: .85rem; border-top: 1px solid var(--line); padding-top: 12px; }
+  @media (max-width: 640px) { nav ol { columns: 1; } h1 { font-size: 1.7rem; } }
+  @media print { nav { display:none; } h2 { break-after: avoid; } .diagram { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<main>
+<h1>WishBridge architecture</h1>
+<p class="sub">For developers · Wishtree Technologies · 23 October 2026</p>
+<p class="lead">How WishBridge is built, where things live, and how to change or debug it - so the next person can
+find their way in minutes. For using WishBridge see the User Guide; for the Databricks App, DATABRICKS_APP.md.</p>
+
+<nav><b>Contents</b>
+<ol>
+<li><a href="#picture">The big picture</a></li>
+<li><a href="#shell">1 · Shared shell</a></li>
+<li><a href="#warehouses">2 · Warehouse packages</a></li>
+<li><a href="#pipeline">The pipeline</a></li>
+<li><a href="#by-warehouse">Warehouse by warehouse</a></li>
+<li><a href="#project">3 · The project folder</a></li>
+<li><a href="#hosting">Laptop and Databricks App</a></li>
+<li><a href="#change">Changing WishBridge</a></li>
+<li><a href="#debug">Debugging - where to look</a></li>
+<li><a href="#run">Install, deploy and use</a></li>
+<li><a href="#tests">Tests and deployment</a></li>
+</ol></nav>
+
+<h2 id="picture">The big picture</h2>
+<p>WishBridge builds on the Databricks Labs migration toolkit (LakeBridge): the toolkit analyzes and converts the code;
+WishBridge adds the fit check, fix rules, Claude, deployment, data copy, comparison, reports and the screens. It has
+three layers:</p>
+
+<div class="diagram">
+<svg viewBox="0 0 960 470" role="img" aria-label="Layers: entry points, shared shell, warehouse packages, project folder, and the outside services">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker></defs>
+  <!-- entry points -->
+  <rect class="box" x="20" y="16" width="440" height="58" rx="8"/>
+  <text x="36" y="40" font-weight="600" font-size="15">Laptop</text>
+  <text x="36" y="61" font-size="13" class="muted">Start WishBridge.cmd → wishbridge ui · wishbridge command line</text>
+  <rect class="box" x="500" y="16" width="440" height="58" rx="8"/>
+  <text x="516" y="40" font-weight="600" font-size="15">Databricks App</text>
+  <text x="516" y="61" font-size="13" class="muted">databricks_app/app_main.py → the same Streamlit app</text>
+  <path class="arrow" d="M240 74 L240 102"/><path class="arrow" d="M720 74 L720 102"/>
+  <!-- shell -->
+  <rect class="blue" x="20" y="104" width="920" height="96" rx="10"/>
+  <text x="36" y="128" font-weight="700" font-size="16">1 · Shared shell  -  src/wishbridge/</text>
+  <text x="36" y="152" font-size="13">ui/app.py: checks, first page, sidebar (open · create · upload)    ·    hosting.py: laptop or Databricks App</text>
+  <text x="36" y="174" font-size="13">toolkit_setup.py · open_package.py · discover.py · config.py + sources/ · system.py · cli.py</text>
+  <text x="36" y="192" font-size="12" class="muted">project.yml "source:" → warehouses/__init__.py picks the warehouse package</text>
+  <path class="arrow" d="M480 200 L480 228"/>
+  <!-- warehouses -->
+  <rect class="green" x="20" y="230" width="920" height="112" rx="10"/>
+  <text x="36" y="254" font-weight="700" font-size="16">2 · Warehouse packages  -  src/wishbridge/warehouses/&lt;warehouse&gt;/   (one independent copy each)</text>
+  <text x="36" y="278" font-size="13">Pipeline: fit · overview · analysis · convert (+ rules, staging) · deploy · data (+ copy methods) · reconcile · report · package</text>
+  <text x="36" y="300" font-size="13">Services: dbx.py (SQL warehouse) · lakebridge.py (toolkit) · ai.py (Claude) · state.py · runner.py (background runs)</text>
+  <text x="36" y="322" font-size="13">Screens: ui/main.py (step bar) · ui/steps/*.py (one file per tab) · ui/claude_panel.py</text>
+  <path class="arrow" d="M480 342 L480 370"/>
+  <!-- project folder -->
+  <rect class="amber" x="20" y="372" width="560" height="80" rx="10"/>
+  <text x="36" y="396" font-weight="700" font-size="16">3 · The project folder  -  the data</text>
+  <text x="36" y="418" font-size="13">project.yml · input/ · overrides/ · output/state.json · output/logs/</text>
+  <text x="36" y="438" font-size="12" class="muted">Laptop: a folder · App: one zip on a Unity Catalog volume</text>
+  <!-- outside -->
+  <rect class="box" x="610" y="372" width="330" height="80" rx="10"/>
+  <text x="626" y="396" font-weight="600" font-size="14">Outside services</text>
+  <text x="626" y="418" font-size="13">Databricks (SQL, files, jobs) · migration toolkit</text>
+  <text x="626" y="438" font-size="13">Claude · the client's database (read-only)</text>
+  <path class="dash" d="M860 342 L860 370"/>
+</svg>
+</div>
+<p class="cap">Entry points start the same app; the shell opens a project and hands it to the warehouse package named in its project.yml.</p>
+
+<h2 id="shell">1 · Shared shell - <code>src/wishbridge/</code></h2>
+<div class="scroll"><table>
+<tr><th>File</th><th>What it does</th></tr>
+<tr><td><code>ui/app.py</code></td><td>The app's frame: system check (laptop) or app check (Databricks), first page, sidebar (open, create, upload a project), then hands the open project to its warehouse (<code>ui_for(source).run(raw)</code>).</td></tr>
+<tr><td><code>ui/helpers.py</code></td><td>Project folders: create, read/save <code>project.yml</code>, unpack an uploaded code zip.</td></tr>
+<tr><td><code>hosting.py</code></td><td><b>The only place that knows laptop vs Databricks App</b>: which Databricks client (saved login or the app's identity), where projects are kept, the app check, sharing the schemas the app creates. Everything else asks <code>hosting.is_app()</code> / <code>hosting.workspace_client()</code>.</td></tr>
+<tr><td><code>toolkit_setup.py</code></td><td>Installs the migration toolkit inside the Databricks App (from PyPI, in the background).</td></tr>
+<tr><td><code>open_package.py</code></td><td>Turns an assessment zip back into a project (rewrites stored paths for the new place).</td></tr>
+<tr><td><code>discover.py</code></td><td>Looks at a folder of client code: which source system, how many databases.</td></tr>
+<tr><td><code>config.py</code>, <code>sources/</code></td><td>The list of source systems (SQL Server, SSIS, Teradata…) and what each needs.</td></tr>
+<tr><td><code>system.py</code></td><td>The laptop's system check and installer (CLI, Java, toolkit, converters).</td></tr>
+<tr><td><code>cli.py</code></td><td>The <code>wishbridge</code> command; forwards to the project's warehouse.</td></tr>
+<tr><td><code>warehouses/__init__.py</code></td><td><code>project.yml</code> <code>source:</code> → the warehouse package that handles it (<code>WAREHOUSE_OF</code>).</td></tr>
+</table></div>
+
+<h2 id="warehouses">2 · Warehouse packages - <code>src/wishbridge/warehouses/&lt;warehouse&gt;/</code></h2>
+<p>Each warehouse - bigquery, datastage, informatica, netezza, oracle, redshift, snowflake, sqlserver, <b>ssis</b>,
+synapse, teradata - is a <b>complete, independent copy</b>, so it can analyze, convert and copy data its own way and
+a change for one warehouse cannot break another. <code>ssis/</code> is the <b>reference copy</b> for fixes that apply to all
+(see <a href="#change">Changing WishBridge</a>).</p>
+
+<div class="steps">
+<div class="card"><b>Services</b><code>dbx.py</code> SQL warehouse · <code>lakebridge.py</code> toolkit · <code>ai.py</code> Claude · <code>inventory.py</code> client database (read-only) · <code>state.py</code> results · <code>config.py</code> settings</div>
+<div class="card"><b>Background runs</b><code>runner.py</code> starts <code>python -m wishbridge pipeline …</code>, writes <code>run_status.json</code> (the page shows progress from it) and <code>pipeline.log</code></div>
+<div class="card"><b>Screens</b><code>ui/main.py</code> step bar · <code>ui/steps/&lt;tab&gt;.py</code> one tab each (settings, code, run, fix, data, report, share) · <code>ui/claude_panel.py</code></div>
+</div>
+
+<h2 id="pipeline">The pipeline</h2>
+<p>Each step is one module with one main function; its result is saved in <code>output/state.json</code>, which the screens
+read. Steps run in the background, one after another.</p>
+<div class="diagram">
+<svg viewBox="0 0 960 250" role="img" aria-label="Pipeline: describe, analyze, convert, deploy, copy the data, compare, report">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker></defs>
+  <text x="20" y="22" font-weight="600" font-size="13" class="muted">ASSESSMENT</text>
+  <text x="400" y="22" font-weight="600" font-size="13" class="muted">CODE MIGRATION</text>
+  <text x="560" y="22" font-weight="600" font-size="13" class="muted">DATA MIGRATION</text>
+  <rect class="blue" x="20" y="34" width="110" height="76" rx="8"/><text x="32" y="58" font-weight="600" font-size="14">Describe</text><text x="32" y="78" font-size="12">fit.py</text><text x="32" y="96" font-size="12">overview.py</text>
+  <path class="arrow" d="M130 72 L148 72"/>
+  <rect class="blue" x="150" y="34" width="110" height="76" rx="8"/><text x="162" y="58" font-weight="600" font-size="14">Analyze</text><text x="162" y="78" font-size="12">analysis.py</text><text x="162" y="96" font-size="12" class="muted">→ toolkit</text>
+  <path class="arrow" d="M260 72 L278 72"/>
+  <rect class="blue" x="280" y="34" width="110" height="76" rx="8"/><text x="292" y="58" font-weight="600" font-size="14">Convert</text><text x="292" y="78" font-size="12">convert.py</text><text x="292" y="96" font-size="12">rules · staging</text>
+  <path class="arrow" d="M390 72 L408 72"/>
+  <rect class="green" x="410" y="34" width="120" height="76" rx="8"/><text x="422" y="58" font-weight="600" font-size="14">Deploy</text><text x="422" y="78" font-size="12">deploy.py</text><text x="422" y="96" font-size="12">schema · dbcode</text>
+  <path class="arrow" d="M530 72 L558 72"/>
+  <rect class="amber" x="560" y="34" width="130" height="76" rx="8"/><text x="572" y="58" font-weight="600" font-size="14">Copy the data</text><text x="572" y="78" font-size="12">data.py</text><text x="572" y="96" font-size="12">+ a copy method</text>
+  <path class="arrow" d="M690 72 L708 72"/>
+  <rect class="amber" x="710" y="34" width="110" height="76" rx="8"/><text x="722" y="58" font-weight="600" font-size="14">Compare</text><text x="722" y="78" font-size="12">reconcile.py</text>
+  <path class="arrow" d="M820 72 L838 72"/>
+  <rect class="red" x="840" y="34" width="100" height="76" rx="8"/><text x="852" y="58" font-weight="600" font-size="14">Report</text><text x="852" y="78" font-size="12">report.py</text><text x="852" y="96" font-size="12">package.py</text>
+  <!-- copy methods -->
+  <rect class="box" x="520" y="150" width="420" height="84" rx="8"/>
+  <text x="536" y="172" font-weight="600" font-size="13">Copy methods (one module each)</text>
+  <text x="536" y="194" font-size="12">source_db.py - the client's database, read by Databricks (federation)</text>
+  <text x="536" y="212" font-size="12">exported_files.py - files the client exported to a volume</text>
+  <text x="536" y="230" font-size="12">localdb.py - a database on this computer (laptop only)</text>
+  <path class="dash" d="M625 110 L625 148"/>
+  <!-- state -->
+  <rect class="box" x="20" y="150" width="460" height="84" rx="8"/>
+  <text x="36" y="172" font-weight="600" font-size="13">Every step saves its result in output/state.json</text>
+  <text x="36" y="194" font-size="12">runner.py runs the chosen steps in a background process</text>
+  <text x="36" y="212" font-size="12">progress → output/logs/run_status.json · messages → pipeline.log</text>
+  <text x="36" y="230" font-size="12">toolkit output → output/logs/toolkit_analyze.log, toolkit_transpile.log</text>
+</svg>
+</div>
+<p class="cap">Blue: assessment (no Databricks needed) · green: code migration · amber: data migration · red: reports and zips.</p>
+
+<h2 id="by-warehouse">Warehouse by warehouse</h2>
+<p>Each warehouse folder can process its code and data its own way. This section shows what already differs, where a warehouse&#x27;s own logic goes, and what each is expected to need when it is tested on its own.</p>
+<h3>What each warehouse does differently today</h3>
+<p>Converter: the first one tried in automatic mode, then the second on files with errors. In the Databricks App only BladeBridge runs (Morpheus needs Java). &quot;DBA query&quot;: the client&#x27;s DBA runs a read-only query and sends its CSV.</p>
+<div class="scroll"><table class="wide">
+<tr><th>Folder</th><th>Source(s)</th><th>Kind</th><th>Converter (laptop)</th><th>In the app</th><th>Tables read from</th><th>Data copy</th><th>Own rules (sources/&lt;warehouse&gt;.py)</th></tr>
+<tr><td><b><code>sqlserver</code></b></td><td>SQL Server (<code>mssql</code>)</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>BladeBridge</td><td>Live (ODBC, Azure SQL too) + procedures/views (<code>CODE_QUERY</code>)</td><td>Federation <code>sqlserver</code>, files, this computer</td><td>6 fixes (brackets, NOLOCK, GETDATE, SET NOCOUNT, GO…), 13 checks, T-SQL tidy before converting (<code>PREP</code>)</td></tr>
+<tr><td><b><code>synapse</code></b></td><td>Azure Synapse</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>BladeBridge</td><td>Live (Entra ID sign-in)</td><td>Federation <code>sqldw</code>, files</td><td>1 type mapping</td></tr>
+<tr><td><b><code>snowflake</code></b></td><td>Snowflake</td><td>Warehouse DB</td><td>Morpheus only</td><td>Laptop only (Java)</td><td>DBA query</td><td>Federation <code>snowflake</code>, files</td><td>1 fix (max VARCHAR), 3 checks, 2 types</td></tr>
+<tr><td><b><code>oracle</code></b></td><td>Oracle</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>BladeBridge</td><td>DBA query</td><td>Federation <code>oracle</code>, files</td><td>8 checks, 2 types</td></tr>
+<tr><td><b><code>teradata</code></b></td><td>Teradata</td><td>Warehouse DB</td><td>BladeBridge → Morpheus</td><td>BladeBridge</td><td>DBA query (type codes)</td><td>Federation <code>teradata</code>, files</td><td>5 checks, type codes</td></tr>
+<tr><td><b><code>redshift</code></b></td><td>Amazon Redshift</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>BladeBridge</td><td>DBA query</td><td>Federation <code>redshift</code>, files</td><td>-</td></tr>
+<tr><td><b><code>bigquery</code></b></td><td>Google BigQuery</td><td>Warehouse DB</td><td>Morpheus only</td><td>Laptop only (Java)</td><td>DBA query</td><td>Exported files only (no federation)</td><td>5 types</td></tr>
+<tr><td><b><code>netezza</code></b></td><td>IBM Netezza</td><td>Warehouse DB</td><td>BladeBridge only</td><td>BladeBridge</td><td>DBA query</td><td>Exported files only (no federation)</td><td>3 checks</td></tr>
+<tr><td><b><code>ssis</code></b></td><td>SSIS</td><td>ETL (loads a warehouse)</td><td>BladeBridge → Spark SQL</td><td>BladeBridge</td><td>The warehouse DB beside the packages (<code>companion.py</code>)</td><td>As its warehouse DB</td><td>Master package → Databricks job (<code>orchestration.py</code>), own screen (<code>ui/screens/ssis.py</code>)</td></tr>
+<tr><td><b><code>informatica</code></b></td><td>PowerCenter, Informatica Cloud</td><td>ETL</td><td>BladeBridge → Spark SQL (Cloud: PySpark)</td><td>BladeBridge</td><td>As SSIS</td><td>As its warehouse DB</td><td>Cloud .zip export check (<code>staging.py</code>), ETL screen</td></tr>
+<tr><td><b><code>datastage</code></b></td><td>IBM DataStage</td><td>ETL</td><td>BladeBridge → Spark SQL</td><td>BladeBridge</td><td>As SSIS</td><td>As its warehouse DB</td><td>.dsx/.isx export check (<code>staging.py</code>), ETL screen</td></tr></table></div>
+<h3>Customization points - where a warehouse&#x27;s own logic goes</h3>
+<p>Each stage is one file with a few main functions. To make a warehouse work differently, change these in its folder and list the file in its <code>CUSTOMIZED.txt</code>.</p>
+<div class="scroll"><table class="wide">
+<tr><th>Stage</th><th>File · functions</th><th>What typically differs per warehouse</th></tr>
+<tr><td><b>Knowledge about the source</b></td><td><code>sources/&lt;warehouse&gt;.py</code> - <code>SOURCES</code>, <code>INVENTORY_QUERY</code>, <code>TYPES</code>, <code>FEDERATION</code>, <code>FIXES</code>, <code>DETECTORS</code>, <code>PREP</code>, <code>CODE_QUERY</code></td><td>Dialect, converter, table-list query, type map, federation type, rewrite rules and checks. <b>Start here - most differences fit in this file.</b></td></tr>
+<tr><td><b>Recognise the code</b></td><td><code>discover.py</code> · <code>inspect()</code>; <code>HINTS</code> in <code>sources/&lt;warehouse&gt;.py</code></td><td>File types and keywords that identify the source</td></tr>
+<tr><td><b>Prepare the code</b></td><td><code>staging.py</code> · <code>source_files()</code>, <code>prepare_tsql()</code>, <code>check_export_format()</code></td><td>Which files are code, clean-ups before converting, export formats (DataStage, Informatica Cloud)</td></tr>
+<tr><td><b>Fit check</b></td><td><code>fit.py</code> · <code>run_fit()</code></td><td>What counts as warehouse logic vs application logic</td></tr>
+<tr><td><b>Analyze</b></td><td><code>analysis.py</code> · <code>run_analyze()</code>, <code>estimate_hours()</code></td><td>Analyzer source type, effort per file or complexity</td></tr>
+<tr><td><b>Convert</b></td><td><code>convert.py</code> · <code>run_convert()</code>, <code>choose_best_converter()</code>; <code>lakebridge.py</code> · <code>transpile()</code></td><td>Converter order, converter options (target technology for ETL), per-file choices</td></tr>
+<tr><td><b>Fix rules</b></td><td><code>rules.py</code> · <code>apply_rules()</code>, <code>detect()</code> (shared) + <code>FIXES</code>/<code>DETECTORS</code> in <code>sources/&lt;warehouse&gt;.py</code></td><td>Mechanical rewrites and checks for the dialect</td></tr>
+<tr><td><b>ETL jobs</b></td><td><code>orchestration.py</code> · <code>job_tasks()</code>; <code>companion.py</code></td><td>How packages, workflows or job sequences become a Databricks job</td></tr>
+<tr><td><b>Read the client&#x27;s database</b></td><td><code>inventory.py</code> · <code>read_live()</code>, <code>script()</code>; <code>dbcode.py</code> · <code>read()</code></td><td>Driver, sign-in, queries for tables and code</td></tr>
+<tr><td><b>Deploy</b></td><td><code>deploy.py</code> · <code>run_deploy()</code>; <code>schema.py</code> · <code>scripts()</code></td><td>Table DDL, types, objects Databricks does not have (sequences, synonyms)</td></tr>
+<tr><td><b>Copy the data</b></td><td><code>data.py</code> · <code>build_plan()</code>, <code>run_load()</code>; <code>source_db.py</code> (federation), <code>exported_files.py</code>, <code>localdb.py</code></td><td>Connection type, export format, casts, incremental loads</td></tr>
+<tr><td><b>Compare</b></td><td><code>reconcile.py</code> · <code>compare_table()</code></td><td>Which types count as equal (NUMBER vs DECIMAL, timestamps, strings)</td></tr>
+<tr><td><b>Screens</b></td><td><code>ui/screens/&lt;tool&gt;.py</code>, <code>ui/steps/code.py</code></td><td>What the person sees and fills in for this source</td></tr></table></div>
+<h3>Planned per-warehouse work</h3>
+<p>Only SSIS has been tested end to end. When each warehouse gets its own sample project and test, these are the differences we expect to build - each in that warehouse&#x27;s folder, listed in its <code>CUSTOMIZED.txt</code>:</p>
+<div class="scroll"><table class="wide">
+<tr><th>Folder</th><th>Expected differences</th><th>Files likely to change</th></tr>
+<tr><td><b><code>sqlserver</code></b></td><td>More T-SQL patterns (temp tables, cursors, MERGE options, IDENTITY), procedure-to-notebook choices</td><td><code>sources/sqlserver.py</code>, <code>rules.py</code>, <code>staging.py</code>, <code>deploy.py</code></td></tr>
+<tr><td><b><code>synapse</code></b></td><td>Distribution / index options removed, CTAS, PolyBase external tables</td><td><code>sources/synapse.py</code>, <code>rules.py</code>, <code>schema.py</code></td></tr>
+<tr><td><b><code>snowflake</code></b></td><td>VARIANT and semi-structured types, streams and tasks as jobs, conversion on the laptop only</td><td><code>sources/snowflake.py</code>, <code>schema.py</code>, <code>orchestration.py</code>, <code>reconcile.py</code></td></tr>
+<tr><td><b><code>oracle</code></b></td><td>PL/SQL packages split per procedure, sequences and synonyms, NUMBER precision</td><td><code>staging.py</code>, <code>deploy.py</code>, <code>schema.py</code>, <code>reconcile.py</code></td></tr>
+<tr><td><b><code>teradata</code></b></td><td>BTEQ and FastLoad scripts, type codes, primary index removed, TPT exports</td><td><code>staging.py</code>, <code>analysis.py</code>, <code>sources/teradata.py</code>, <code>exported_files.py</code></td></tr>
+<tr><td><b><code>redshift</code></b></td><td>DISTKEY/SORTKEY removed, UNLOAD to cloud storage for the data</td><td><code>sources/redshift.py</code>, <code>rules.py</code>, <code>exported_files.py</code></td></tr>
+<tr><td><b><code>bigquery</code></b></td><td>STRUCT/ARRAY types, exports from Cloud Storage, conversion on the laptop only</td><td><code>schema.py</code>, <code>exported_files.py</code>, <code>reconcile.py</code></td></tr>
+<tr><td><b><code>netezza</code></b></td><td>DISTRIBUTE ON / ORGANIZE ON removed, nzsql exports</td><td><code>sources/netezza.py</code>, <code>rules.py</code>, <code>exported_files.py</code></td></tr>
+<tr><td><b><code>ssis</code></b></td><td>Script tasks, event handlers, package parameters</td><td><code>orchestration.py</code>, <code>convert.py</code>, <code>ui/screens/ssis.py</code></td></tr>
+<tr><td><b><code>informatica</code></b></td><td>Workflows and sessions as jobs, Cloud mappings (PySpark)</td><td><code>orchestration.py</code>, <code>staging.py</code>, <code>ui/screens/etl.py</code></td></tr>
+<tr><td><b><code>datastage</code></b></td><td>Job sequences as jobs, parallel-job stages</td><td><code>orchestration.py</code>, <code>staging.py</code>, <code>ui/screens/etl.py</code></td></tr></table></div>
+<p>This list is a plan, not a record: it changes as each warehouse is tested. What a warehouse actually changed is always in its <code>CUSTOMIZED.txt</code>.</p>
+
+<h2 id="project">3 · The project folder - the data</h2>
+<pre><code>&lt;project&gt;/
+  project.yml            all settings (no passwords - ever)
+  input/                 the client's code as received
+  database_code/         tables and procedures read from the database
+  overrides/             hand fixes (Fix code) - used on every later run, never overwritten
+  output/state.json      every step's result (the screens read this)
+  output/final/          converted code
+  output/logs/           pipeline.log, run_status.json, toolkit_&lt;step&gt;.log
+  output/review_package/ the zips</code></pre>
+<p>On the laptop it is a folder. In the Databricks App the whole folder is kept as one zip on the projects volume and
+unpacked into the app's working folder when opened (<code>hosting.push</code> / <code>hosting.pull</code>).</p>
+
+<h2 id="hosting">Laptop and Databricks App</h2>
+<div class="diagram">
+<svg viewBox="0 0 960 230" role="img" aria-label="Laptop and Databricks App share the same code; hosting.py decides the differences">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker></defs>
+  <rect class="box" x="20" y="20" width="300" height="190" rx="10"/>
+  <text x="36" y="46" font-weight="700" font-size="16">Laptop</text>
+  <text x="36" y="74" font-size="13">Saved Databricks login (profile)</text>
+  <text x="36" y="98" font-size="13">Projects: folders on the laptop</text>
+  <text x="36" y="122" font-size="13">Toolkit: Databricks CLI + Java</text>
+  <text x="36" y="146" font-size="13">Claude Code, workspace model, API key</text>
+  <text x="36" y="170" font-size="13">Database on this computer: yes</text>
+  <text x="36" y="194" font-size="12" class="muted">The assessment at the client, offline</text>
+  <rect class="blue" x="360" y="70" width="240" height="90" rx="10"/>
+  <text x="380" y="100" font-weight="700" font-size="16">hosting.py</text>
+  <text x="380" y="124" font-size="13">is_app() · workspace_client()</text>
+  <text x="380" y="146" font-size="13">push() / pull() · share_schema()</text>
+  <path class="arrow" d="M358 115 L322 115"/><path class="arrow" d="M602 115 L638 115"/>
+  <rect class="box" x="640" y="20" width="300" height="190" rx="10"/>
+  <text x="656" y="46" font-weight="700" font-size="16">Databricks App</text>
+  <text x="656" y="74" font-size="13">The app's own identity + single sign-on</text>
+  <text x="656" y="98" font-size="13">Projects: zips on a Unity Catalog volume</text>
+  <text x="656" y="122" font-size="13">Toolkit: installed from PyPI at start</text>
+  <text x="656" y="146" font-size="13">Workspace model or API key</text>
+  <text x="656" y="170" font-size="13">Database on this computer: laptop only</text>
+  <text x="656" y="194" font-size="12" class="muted">Code and data migration in the workspace</text>
+</svg>
+</div>
+<p>The same code and screens. <code>hosting.is_app()</code> is true inside Databricks Apps (<code>DATABRICKS_APP_NAME</code>). A
+choice that cannot work where you are shows <b>"On the laptop only"</b> and what to use instead
+(<code>hosting.LAPTOP_ONLY</code>) - it is never hidden. Differences live in <code>hosting.py</code> and in a few clearly
+marked <code>if hosting.is_app():</code> branches in the screens. The app runs <b>Python 3.11</b> (no 3.12-only syntax -
+<code>tests/test_python311.py</code>).</p>
+
+<h2 id="change">Changing WishBridge</h2>
+<div class="diagram">
+<svg viewBox="0 0 960 250" role="img" aria-label="A fix made in ssis is copied by the sync tool to every warehouse that did not customize the file">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker></defs>
+  <rect class="red" x="20" y="80" width="200" height="90" rx="10"/>
+  <text x="36" y="108" font-weight="700" font-size="15">ssis/  (reference)</text>
+  <text x="36" y="132" font-size="13">1. make the fix here</text>
+  <text x="36" y="154" font-size="12" class="muted">CUSTOMIZED.txt: SSIS-only</text>
+  <path class="arrow" d="M222 125 L268 125"/>
+  <rect class="blue" x="270" y="80" width="250" height="90" rx="10"/>
+  <text x="286" y="108" font-weight="700" font-size="15">tools/sync_warehouses.py</text>
+  <text x="286" y="132" font-size="13">2. copies it, package name filled in</text>
+  <text x="286" y="154" font-size="12" class="muted">--check · --dry-run · &lt;file&gt;</text>
+  <path class="arrow" d="M522 110 L598 50"/><path class="arrow" d="M522 125 L598 125"/><path class="arrow" d="M522 140 L598 200"/>
+  <rect class="green" x="600" y="20" width="340" height="60" rx="8"/>
+  <text x="616" y="44" font-weight="600" font-size="14">sqlserver/, oracle/, … (file shared)</text>
+  <text x="616" y="66" font-size="12">→ updated</text>
+  <rect class="green" x="600" y="95" width="340" height="60" rx="8"/>
+  <text x="616" y="119" font-weight="600" font-size="14">snowflake/, synapse/, … (file shared)</text>
+  <text x="616" y="141" font-size="12">→ updated</text>
+  <rect class="amber" x="600" y="170" width="340" height="60" rx="8"/>
+  <text x="616" y="194" font-weight="600" font-size="14">teradata/ (file in its CUSTOMIZED.txt)</text>
+  <text x="616" y="216" font-size="12">→ left alone: it works differently on purpose</text>
+</svg>
+</div>
+<div class="steps">
+<div class="card"><b>A fix for every warehouse</b> (most fixes)
+1. Change the file in <code>ssis/</code>.<br>2. <code>python tools/sync_warehouses.py &lt;file&gt;</code><br>3. Run the tests.</div>
+<div class="card"><b>A change for one warehouse only</b>
+1. Change the file in that warehouse's folder.<br>2. Add it to that folder's <code>CUSTOMIZED.txt</code> with why, e.g. <code>analysis.py - Teradata BTEQ scripts are analyzed per statement</code>.</div>
+<div class="card"><b>The safety net</b>
+<code>tests/test_warehouse_drift.py</code> fails when a shared file differs from <code>ssis/</code> - a fix forgotten in some warehouses - and says how to fix it. <code>--check</code> shows the same.</div>
+</div>
+
+<h2 id="debug">Debugging - where to look</h2>
+<div class="scroll"><table>
+<tr><th>Symptom</th><th>Look at</th></tr>
+<tr><td>A run stopped or a step failed</td><td>The screen's <i>What the run said last</i>; <code>output/logs/pipeline.log</code>; the step's entry in <code>output/state.json</code></td></tr>
+<tr><td>Analyze or convert failed</td><td><code>output/logs/toolkit_analyze.log</code>, <code>toolkit_transpile.log</code> (the toolkit's full output and exit code)</td></tr>
+<tr><td>A SQL statement failed in Databricks</td><td>The Deployment / Data report (statement and Databricks' message), <code>output/data/load_plan.sql</code></td></tr>
+<tr><td>The Databricks App misbehaves</td><td><code>databricks apps logs wishbridge --profile &lt;login&gt;</code>; the app check in the sidebar</td></tr>
+<tr><td>Run one step by hand</td><td><code>wishbridge pipeline -c &lt;project&gt;/project.yml --steps analyze --options "{}"</code></td></tr>
+</table></div>
+
+<h2 id="run">Install, deploy and use</h2>
+<p>WishBridge runs on a laptop (desktop) and as a Databricks App. Same code, same screens; pick per client and per
+phase. Full step-by-step guides: <code>docs/USER_GUIDE.md</code> (laptop) and <code>docs/DATABRICKS_APP.md</code> (app).</p>
+
+<div class="diagram">
+<svg viewBox="0 0 960 200" role="img" aria-label="Usual flow: assessment on the laptop at the client, code migration in the app in Wishtree's workspace, then the app in the client's workspace for the final migration">
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker></defs>
+  <rect class="blue" x="20" y="30" width="270" height="120" rx="10"/>
+  <text x="36" y="56" font-weight="700" font-size="15">1 · Laptop, at the client</text>
+  <text x="36" y="80" font-size="13">Assessment, offline</text>
+  <text x="36" y="102" font-size="13">code folder or the database (read-only)</text>
+  <text x="36" y="126" font-size="13" font-weight="600">→ the assessment zip</text>
+  <path class="arrow" d="M292 90 L338 90"/>
+  <rect class="green" x="340" y="30" width="280" height="120" rx="10"/>
+  <text x="356" y="56" font-weight="700" font-size="15">2 · App in Wishtree's workspace</text>
+  <text x="356" y="80" font-size="13">Open the zip · Fix code (Claude)</text>
+  <text x="356" y="102" font-size="13">deploy to a test schema · check</text>
+  <text x="356" y="126" font-size="12" class="muted">(or do this on the laptop)</text>
+  <path class="arrow" d="M622 90 L668 90"/>
+  <rect class="amber" x="670" y="30" width="270" height="120" rx="10"/>
+  <text x="686" y="56" font-weight="700" font-size="15">3 · App in the client's workspace</text>
+  <text x="686" y="80" font-size="13">once the client agrees: deploy the app</text>
+  <text x="686" y="102" font-size="13">open the zip · deploy · copy the data</text>
+  <text x="686" y="126" font-size="13">compare · sign-off zip</text>
+  <text x="20" y="182" font-size="12" class="muted">Everything can also be done on the laptop alone, signed in to the client's workspace - nothing has to be installed there.</text>
+</svg>
+</div>
+
+<h3>Laptop (desktop)</h3>
+<div class="steps">
+<div class="card"><b>1 · Install once (about 20 minutes)</b>
+Get the folder: <code>git clone https://github.com/wishtree-ssonalkar/wishbridge.git C:\wishbridge</code> (or the ZIP from
+GitHub). Double-click <code>Install WishBridge.cmd</code>. It installs what is missing (Python, Java, Databricks CLI),
+opens a browser to sign in to Databricks, installs the migration toolkit and its converters, installs WishBridge and
+adds a desktop icon. Safe to run again; <code>-DryRun</code> shows what it would do. macOS / Linux: <code>./install.sh</code>.</div>
+<div class="card"><b>2 · Start</b>
+The <b>Wishtree WishBridge</b> desktop icon (or <code>Start WishBridge.cmd</code>). The app opens in the browser at
+<code>http://localhost:8501</code> and only listens on this computer. Close the window to stop it.</div>
+<div class="card"><b>3 · Use</b>
+Sidebar: <b>Check this computer</b> (installs anything missing) → choose <b>Assessment</b>, <b>Code migration</b> or
+<b>Data migration</b> → open a folder, upload the code (zip), open the assessment zip or a project → work through
+the tabs. Projects live in <code>C:\WishBridge\Assessments</code> and <code>C:\WishBridge\Migrations</code>.</div>
+<div class="card"><b>4 · Update</b>
+<code>cd C:\wishbridge</code> → <code>git pull</code> → restart WishBridge. (WishBridge is installed from this folder, so a
+pull is the update; if it adds packages, run <code>Install WishBridge.cmd</code> again.) A sign-in that expired: <code>databricks auth login --profile DEFAULT</code>.</div>
+</div>
+
+<h3>Databricks App (deployed on Databricks)</h3>
+<div class="steps">
+<div class="card"><b>1 · Before you deploy</b>
+On a laptop with WishBridge's folder and the Databricks CLI: a login to the workspace
+(<code>databricks auth login --profile CLIENT</code>), the right to create apps, a <b>SQL warehouse ID</b> (SQL ›
+SQL Warehouses), a catalog for the projects volume and the catalog(s) for the test schemas.</div>
+<div class="card"><b>2 · Deploy (one command, about 5 minutes)</b>
+<code>.\deploy-databricks-app.ps1 -Profile CLIENT -WarehouseId &lt;id&gt; -ProjectsVolume /Volumes/&lt;catalog&gt;/wishbridge/projects -TargetCatalogs &lt;catalog&gt; -ShareWith &lt;team-group&gt;</code>
+- creates the volume, the app (with the SQL warehouse), the permissions, checks the code compiles, uploads and starts it, prints the link.</div>
+<div class="card"><b>3 · Give access</b>
+Databricks › <b>Compute › Apps › wishbridge › Permissions</b> → CAN USE for the people or group. They open the link
+and sign in with their usual Databricks account (single sign-on).</div>
+<div class="card"><b>4 · Use</b>
+The same screens. The sidebar's <b>App check</b> shows the workspace, warehouse, project storage and the migration
+toolkit (installed by itself about a minute after the app starts). Projects are saved in the workspace after every
+change - <b>Open a project</b> lists them.</div>
+<div class="card"><b>5 · Update</b>
+Run the same deploy command again: only changed files are uploaded, the projects stay. Run the tests first
+(<code>pytest</code>).</div>
+<div class="card"><b>6 · Run it day to day</b>
+Logs: <code>databricks apps logs wishbridge --profile CLIENT</code>. A running app costs compute: stop it when not
+needed - <code>databricks apps stop wishbridge</code> / <code>start wishbridge</code>. Remove it:
+<code>databricks apps delete wishbridge</code> (the projects stay on the volume).</div>
+</div>
+
+<div class="scroll"><table>
+<tr><th>Which one when?</th><th>Laptop</th><th>Databricks App</th></tr>
+<tr><td>Assessment at the client, offline</td><td>✔ best</td><td>Upload the code; it is processed in the workspace</td></tr>
+<tr><td>Code and data migration</td><td>✔ signed in to the client's workspace</td><td>✔ best when the client wants everything in their workspace, or several people work on it</td></tr>
+<tr><td>A database on this computer (demo)</td><td>✔</td><td>On the laptop only</td></tr>
+<tr><td>Snowflake / BigQuery conversion (Morpheus, Java)</td><td>✔</td><td>On the laptop only</td></tr>
+<tr><td>Claude</td><td>Claude Code, the workspace's model or an API key</td><td>The workspace's model or an API key</td></tr>
+</table></div>
+
+<h2 id="tests">Tests and deployment</h2>
+<ul>
+<li><code>pytest</code> - 328 tests that run without Databricks, the toolkit or a database (stand-ins replace them); UI tests use Streamlit's <code>AppTest</code>.</li>
+<li>Run the tests before every deployment; <code>deploy-databricks-app.ps1</code> also refuses code that does not compile.</li>
+<li>Commit to <code>Shubham/WishbridgePhase1</code>; merge to <code>main</code> with a pull request.</li>
+</ul>
+
+<footer>WishBridge architecture · same content as docs/ARCHITECTURE.md in the repository.</footer>
+</main>
+</body>
+</html>

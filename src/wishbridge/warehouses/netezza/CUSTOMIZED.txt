@@ -1,0 +1,8 @@
+# Files this warehouse changes on purpose. They are never overwritten by tools/sync_warehouses.py and the
+# drift test (tests/test_warehouse_drift.py) does not compare them with the reference copy (ssis/).
+# One line per file:   path/inside/this/folder.py - why it differs
+# A file NOT listed here is shared: fix it in ssis/ and run  python tools/sync_warehouses.py <file>
+
+README.md - this warehouse's name and what it migrates
+__init__.py - this warehouse's name
+ui/main.py - this warehouse's name in the step bar
