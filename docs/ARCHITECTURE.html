@@ -196,20 +196,20 @@ read. Steps run in the background, one after another.</p>
 <h2 id="by-warehouse">Warehouse by warehouse</h2>
 <p>Each warehouse folder can process its code and data its own way. This section shows what already differs, where a warehouse&#x27;s own logic goes, and what each is expected to need when it is tested on its own.</p>
 <h3>What each warehouse does differently today</h3>
-<p>Converter: the first one tried in automatic mode, then the second on files with errors. In the Databricks App only BladeBridge runs (Morpheus needs Java). &quot;DBA query&quot;: the client&#x27;s DBA runs a read-only query and sends its CSV.</p>
+<p>Converter: the first one tried in automatic mode, then the second on files with errors. The Databricks App installs Java 21 and both converters, so it converts the same way. &quot;DBA query&quot;: the client&#x27;s DBA runs a read-only query and sends its CSV.</p>
 <div class="scroll"><table class="wide">
 <tr><th>Folder</th><th>Source(s)</th><th>Kind</th><th>Converter (laptop)</th><th>In the app</th><th>Tables read from</th><th>Data copy</th><th>Own rules (sources/&lt;warehouse&gt;.py)</th></tr>
-<tr><td><b><code>sqlserver</code></b></td><td>SQL Server (<code>mssql</code>)</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>BladeBridge</td><td>Live (ODBC, Azure SQL too) + procedures/views (<code>CODE_QUERY</code>)</td><td>Federation <code>sqlserver</code>, files, this computer</td><td>6 fixes (brackets, NOLOCK, GETDATE, SET NOCOUNT, GO…), 13 checks, T-SQL tidy before converting (<code>PREP</code>)</td></tr>
-<tr><td><b><code>synapse</code></b></td><td>Azure Synapse</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>BladeBridge</td><td>Live (Entra ID sign-in)</td><td>Federation <code>sqldw</code>, files</td><td>1 type mapping</td></tr>
-<tr><td><b><code>snowflake</code></b></td><td>Snowflake</td><td>Warehouse DB</td><td>Morpheus only</td><td>Laptop only (Java)</td><td>DBA query</td><td>Federation <code>snowflake</code>, files</td><td>1 fix (max VARCHAR), 3 checks, 2 types</td></tr>
-<tr><td><b><code>oracle</code></b></td><td>Oracle</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>BladeBridge</td><td>DBA query</td><td>Federation <code>oracle</code>, files</td><td>8 checks, 2 types</td></tr>
-<tr><td><b><code>teradata</code></b></td><td>Teradata</td><td>Warehouse DB</td><td>BladeBridge → Morpheus</td><td>BladeBridge</td><td>DBA query (type codes)</td><td>Federation <code>teradata</code>, files</td><td>5 checks, type codes</td></tr>
-<tr><td><b><code>redshift</code></b></td><td>Amazon Redshift</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>BladeBridge</td><td>DBA query</td><td>Federation <code>redshift</code>, files</td><td>-</td></tr>
-<tr><td><b><code>bigquery</code></b></td><td>Google BigQuery</td><td>Warehouse DB</td><td>Morpheus only</td><td>Laptop only (Java)</td><td>DBA query</td><td>Exported files only (no federation)</td><td>5 types</td></tr>
-<tr><td><b><code>netezza</code></b></td><td>IBM Netezza</td><td>Warehouse DB</td><td>BladeBridge only</td><td>BladeBridge</td><td>DBA query</td><td>Exported files only (no federation)</td><td>3 checks</td></tr>
-<tr><td><b><code>ssis</code></b></td><td>SSIS</td><td>ETL (loads a warehouse)</td><td>BladeBridge → Spark SQL</td><td>BladeBridge</td><td>The warehouse DB beside the packages (<code>companion.py</code>)</td><td>As its warehouse DB</td><td>Master package → Databricks job (<code>orchestration.py</code>), own screen (<code>ui/screens/ssis.py</code>)</td></tr>
-<tr><td><b><code>informatica</code></b></td><td>PowerCenter, Informatica Cloud</td><td>ETL</td><td>BladeBridge → Spark SQL (Cloud: PySpark)</td><td>BladeBridge</td><td>As SSIS</td><td>As its warehouse DB</td><td>Cloud .zip export check (<code>staging.py</code>), ETL screen</td></tr>
-<tr><td><b><code>datastage</code></b></td><td>IBM DataStage</td><td>ETL</td><td>BladeBridge → Spark SQL</td><td>BladeBridge</td><td>As SSIS</td><td>As its warehouse DB</td><td>.dsx/.isx export check (<code>staging.py</code>), ETL screen</td></tr></table></div>
+<tr><td><b><code>sqlserver</code></b></td><td>SQL Server (<code>mssql</code>)</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>Same</td><td>Live (ODBC, Azure SQL too) + procedures/views (<code>CODE_QUERY</code>)</td><td>Federation <code>sqlserver</code>, files, this computer</td><td>6 fixes (brackets, NOLOCK, GETDATE, SET NOCOUNT, GO…), 13 checks, T-SQL tidy before converting (<code>PREP</code>)</td></tr>
+<tr><td><b><code>synapse</code></b></td><td>Azure Synapse</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>Same</td><td>Live (Entra ID sign-in)</td><td>Federation <code>sqldw</code>, files</td><td>1 type mapping</td></tr>
+<tr><td><b><code>snowflake</code></b></td><td>Snowflake</td><td>Warehouse DB</td><td>Morpheus only</td><td>Same</td><td>DBA query</td><td>Federation <code>snowflake</code>, files</td><td>1 fix (max VARCHAR), 3 checks, 2 types</td></tr>
+<tr><td><b><code>oracle</code></b></td><td>Oracle</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>Same</td><td>DBA query</td><td>Federation <code>oracle</code>, files</td><td>8 checks, 2 types</td></tr>
+<tr><td><b><code>teradata</code></b></td><td>Teradata</td><td>Warehouse DB</td><td>BladeBridge → Morpheus</td><td>Same</td><td>DBA query (type codes)</td><td>Federation <code>teradata</code>, files</td><td>5 checks, type codes</td></tr>
+<tr><td><b><code>redshift</code></b></td><td>Amazon Redshift</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>Same</td><td>DBA query</td><td>Federation <code>redshift</code>, files</td><td>-</td></tr>
+<tr><td><b><code>bigquery</code></b></td><td>Google BigQuery</td><td>Warehouse DB</td><td>Morpheus only</td><td>Same</td><td>DBA query</td><td>Exported files only (no federation)</td><td>5 types</td></tr>
+<tr><td><b><code>netezza</code></b></td><td>IBM Netezza</td><td>Warehouse DB</td><td>BladeBridge only</td><td>Same</td><td>DBA query</td><td>Exported files only (no federation)</td><td>3 checks</td></tr>
+<tr><td><b><code>ssis</code></b></td><td>SSIS</td><td>ETL (loads a warehouse)</td><td>BladeBridge → Spark SQL</td><td>Same</td><td>The warehouse DB beside the packages (<code>companion.py</code>)</td><td>As its warehouse DB</td><td>Master package → Databricks job (<code>orchestration.py</code>), own screen (<code>ui/screens/ssis.py</code>)</td></tr>
+<tr><td><b><code>informatica</code></b></td><td>PowerCenter, Informatica Cloud</td><td>ETL</td><td>BladeBridge → Spark SQL (Cloud: PySpark)</td><td>Same</td><td>As SSIS</td><td>As its warehouse DB</td><td>Cloud .zip export check (<code>staging.py</code>), ETL screen</td></tr>
+<tr><td><b><code>datastage</code></b></td><td>IBM DataStage</td><td>ETL</td><td>BladeBridge → Spark SQL</td><td>Same</td><td>As SSIS</td><td>As its warehouse DB</td><td>.dsx/.isx export check (<code>staging.py</code>), ETL screen</td></tr></table></div>
 <h3>Customization points - where a warehouse&#x27;s own logic goes</h3>
 <p>Each stage is one file with a few main functions. To make a warehouse work differently, change these in its folder and list the file in its <code>CUSTOMIZED.txt</code>.</p>
 <div class="scroll"><table class="wide">
@@ -278,7 +278,7 @@ unpacked into the app's working folder when opened (<code>hosting.push</code> / 
   <text x="656" y="46" font-weight="700" font-size="16">Databricks App</text>
   <text x="656" y="74" font-size="13">The app's own identity + single sign-on</text>
   <text x="656" y="98" font-size="13">Projects: zips on a Unity Catalog volume</text>
-  <text x="656" y="122" font-size="13">Toolkit: installed from PyPI at start</text>
+  <text x="656" y="122" font-size="13">Toolkit, Java 21: installed at start</text>
   <text x="656" y="146" font-size="13">Workspace model or API key</text>
   <text x="656" y="170" font-size="13">Database on this computer: laptop only</text>
   <text x="656" y="194" font-size="12" class="muted">Code and data migration in the workspace</text>
@@ -416,7 +416,7 @@ needed - <code>databricks apps stop wishbridge</code> / <code>start wishbridge</
 <tr><td>Assessment at the client, offline</td><td>✔ best</td><td>Upload the code; it is processed in the workspace</td></tr>
 <tr><td>Code and data migration</td><td>✔ signed in to the client's workspace</td><td>✔ best when the client wants everything in their workspace, or several people work on it</td></tr>
 <tr><td>A database on this computer (demo)</td><td>✔</td><td>On the laptop only</td></tr>
-<tr><td>Snowflake / BigQuery conversion (Morpheus, Java)</td><td>✔</td><td>On the laptop only</td></tr>
+<tr><td>Snowflake / BigQuery conversion (Morpheus)</td><td>✔</td><td>✔ (Java 21 installed in the app)</td></tr>
 <tr><td>Claude</td><td>Claude Code, the workspace's model or an API key</td><td>The workspace's model or an API key</td></tr>
 </table></div>
 
