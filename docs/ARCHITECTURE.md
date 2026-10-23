@@ -182,6 +182,49 @@ and forgotten in the others - and says how to fix it. `python tools/sync_warehou
 | The Databricks App misbehaves | `databricks apps logs wishbridge --profile <login>`; the app check in the sidebar |
 | Run one step by hand | `wishbridge pipeline -c <project>/project.yml --steps analyze --options "{}"` |
 
+## Install, deploy and use
+
+Same code and screens on both; pick per client and per phase. Usual flow: **1** assessment on the laptop at the
+client (offline) → assessment zip → **2** code migration in the app in Wishtree's workspace (or on the laptop) →
+**3** once the client agrees, the app in the client's workspace: deploy, copy the data, compare, sign-off.
+Everything can also be done on the laptop alone, signed in to the client's workspace.
+
+### Laptop (desktop)
+
+1. **Install once** (about 20 minutes): `git clone https://github.com/wishtree-ssonalkar/wishbridge.git C:\wishbridge`
+   (or the ZIP), then double-click `Install WishBridge.cmd` - Python, Java, Databricks CLI, Databricks sign-in, the
+   migration toolkit and converters, WishBridge and a desktop icon. Safe to run again; `-DryRun` shows what it would
+   do. macOS / Linux: `./install.sh`.
+2. **Start**: the *Wishtree WishBridge* desktop icon (or `Start WishBridge.cmd`) → http://localhost:8501 (this
+   computer only). Close the window to stop it.
+3. **Use**: *Check this computer* → Assessment, Code migration or Data migration → open a folder, upload the code,
+   open the assessment zip or a project → the tabs. Projects: `C:\WishBridge\Assessments`, `C:\WishBridge\Migrations`.
+4. **Update**: `cd C:\wishbridge`, `git pull`, restart (installed from this folder; if new packages are needed, run
+   the installer again). Expired sign-in: `databricks auth login --profile DEFAULT`.
+
+### Databricks App (deployed on Databricks)
+
+1. **Before**: on a laptop with WishBridge's folder and the Databricks CLI - a login to the workspace
+   (`databricks auth login --profile CLIENT`), the right to create apps, a SQL warehouse ID, a catalog for the
+   projects volume and the catalog(s) for test schemas.
+2. **Deploy** (about 5 minutes):
+   `.\deploy-databricks-app.ps1 -Profile CLIENT -WarehouseId <id> -ProjectsVolume /Volumes/<catalog>/wishbridge/projects -TargetCatalogs <catalog> -ShareWith <team-group>`
+   - volume, app, permissions, compile check, upload, start; prints the link.
+3. **Give access**: Compute › Apps › wishbridge › Permissions → CAN USE. People sign in with their Databricks account.
+4. **Use**: the same screens; the sidebar's App check shows the workspace, warehouse, project storage and the
+   migration toolkit (installed by itself about a minute after start). Projects are saved in the workspace.
+5. **Update**: run the same deploy command (only changed files are uploaded; projects stay). Run `pytest` first.
+6. **Day to day**: logs `databricks apps logs wishbridge --profile CLIENT`; a running app costs compute -
+   `databricks apps stop wishbridge` / `start wishbridge`; remove with `databricks apps delete wishbridge` (projects stay).
+
+| Which one when? | Laptop | Databricks App |
+|---|---|---|
+| Assessment at the client, offline | best | upload the code; processed in the workspace |
+| Code and data migration | signed in to the client's workspace | best when the client wants everything in their workspace, or several people work on it |
+| A database on this computer (demo) | yes | on the laptop only |
+| Snowflake / BigQuery conversion (Java) | yes | on the laptop only |
+| Claude | Claude Code, workspace model, API key | workspace model, API key |
+
 ## Tests and deployment
 
 - `pytest` (316+ tests) runs without Databricks, the toolkit or a database - Databricks and the toolkit are
