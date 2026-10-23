@@ -55,3 +55,20 @@ def test_automatic_mode_in_the_app_starts_with_the_python_converter(app_home, tm
     (tmp_path / "p" / "project.yml").write_text((DEMO / "project.yml").read_text(encoding="utf-8"), encoding="utf-8")
     cfg = load_config(tmp_path / "p" / "project.yml")
     assert cfg.source.key == "mssql" and cfg.transpiler == "bladebridge"
+
+
+def test_with_java_in_the_app_the_converter_order_is_the_laptops(app_home, tmp_path, monkeypatch):
+    from wishbridge.warehouses.sqlserver.config import load_config
+
+    monkeypatch.setattr(toolkit_setup, "morph_ready", lambda: True)
+    (tmp_path / "q").mkdir()
+    (tmp_path / "q" / "project.yml").write_text((DEMO / "project.yml").read_text(encoding="utf-8"), encoding="utf-8")
+    assert load_config(tmp_path / "q" / "project.yml").transpiler == "morph"  # as on the laptop
+
+
+def test_the_toolkit_gets_the_apps_java(app_home, monkeypatch):
+    java = app_home / ".wishbridge" / "java" / "jdk-21.0.13+9-jre" / "bin" / "java"
+    java.parent.mkdir(parents=True)
+    java.write_text("", encoding="utf-8")
+    monkeypatch.setattr(toolkit_setup, "JAVA_HOME", app_home / ".wishbridge" / "java")
+    assert toolkit_setup.java_bin() == java

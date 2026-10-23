@@ -6,9 +6,12 @@ toolkit needs older versions of some packages than WishBridge), in the places th
 
   ~/.databricks/labs/lakebridge/state/venv                       the toolkit and its analyzer (Linux build included)
   ~/.databricks/labs/remorph-transpilers/bladebridge/lib/.venv  the BladeBridge converter (+ lib/config.yml)
+  ~/.databricks/labs/remorph-transpilers/databricks-morph-plugin/lib  the Morpheus converter (a Java program, from
+                                                                  Maven Central, the version the laptop uses)
+  ~/.wishbridge/java                                             Java 21 for Morpheus (Eclipse Temurin, from Adoptium)
 
-It runs in the background when the app starts (a few minutes) and writes its progress to a status file. The
-second converter (Morpheus) is a Java program: it stays on the laptop.
+It runs in the background when the app starts (a few minutes) and writes its progress to a status file. With all
+of it in place the app converts exactly like the laptop (same converters, same order).
 
     python -m wishbridge.toolkit_setup      # what the app starts
 """
@@ -28,8 +31,14 @@ BLADEBRIDGE = "databricks-bb-plugin==0.3.0"
 LABS = Path.home() / ".databricks" / "labs"
 TOOLKIT_VENV = LABS / "lakebridge" / "state" / "venv"
 BB_LIB = LABS / "remorph-transpilers" / "bladebridge" / "lib"
+MORPH_LIB = LABS / "remorph-transpilers" / "databricks-morph-plugin" / "lib"
+MORPH_VERSION = "0.10.0"  # the version the laptop's install-transpile put in place
+MORPH_URL = (f"https://repo.maven.apache.org/maven2/com/databricks/labs/databricks-morph-plugin/{MORPH_VERSION}/"
+             f"databricks-morph-plugin-{MORPH_VERSION}.jar")
+JAVA_HOME = Path.home() / ".wishbridge" / "java"
+JAVA_URL = "https://api.adoptium.net/v3/binary/latest/21/ga/linux/{arch}/jre/hotspot/normal/eclipse"
 STATUS = Path.home() / ".wishbridge" / "toolkit_status.json"
-SETUP_VERSION = 2  # raise it when the setup changes: an app that installed an older one sets up again
+SETUP_VERSION = 3  # raise it when the setup changes: an app that installed an older one sets up again
 
 
 def _bin(venv: Path, name: str) -> Path:
@@ -50,6 +59,48 @@ def status() -> dict:
 def ready() -> bool:
     st = status()
     return st.get("state") == "ready" and st.get("version") == SETUP_VERSION and _bin(TOOLKIT_VENV, "python").is_file()
+
+
+def java_bin() -> Path | None:
+    """The app's own Java (for Morpheus), when it is installed."""
+    found = next(JAVA_HOME.glob("*/bin/java"), None) if JAVA_HOME.is_dir() else None
+    return found if found and found.is_file() else None
+
+
+def morph_ready() -> bool:
+    return java_bin() is not None and (MORPH_LIB / "databricks-morph-plugin.jar").is_file()
+
+
+def _download(url: str, dest: Path) -> None:
+    import urllib.request
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    with urllib.request.urlopen(url, timeout=600) as r, open(tmp, "wb") as f:
+        shutil.copyfileobj(r, f)
+    tmp.replace(dest)
+
+
+def _install_java() -> None:
+    import platform
+    import tarfile
+
+    if java_bin():
+        return
+    arch = {"x86_64": "x64", "amd64": "x64", "aarch64": "aarch64", "arm64": "aarch64"}.get(platform.machine().lower(), "x64")
+    archive = JAVA_HOME.parent / "java-21.tar.gz"
+    _download(JAVA_URL.format(arch=arch), archive)
+    if JAVA_HOME.exists():
+        shutil.rmtree(JAVA_HOME)
+    JAVA_HOME.mkdir(parents=True)
+    with tarfile.open(archive) as t:
+        for m in t.getmembers():  # never write outside the Java folder
+            if not (JAVA_HOME / m.name).resolve().is_relative_to(JAVA_HOME.resolve()):
+                raise RuntimeError(f"Unsafe path in the Java download: {m.name}")
+        t.extractall(JAVA_HOME)
+    archive.unlink(missing_ok=True)
+    if not java_bin():
+        raise RuntimeError("Java was downloaded but java was not found in it")
 
 
 def _save(**kw) -> None:
@@ -86,6 +137,13 @@ def install() -> None:
         _save(state="installing", step="the BladeBridge converter")
         _venv(BB_LIB / ".venv", BLADEBRIDGE)
         shutil.copy(Path(__file__).parent / "toolkit_files" / "bladebridge-config.yml", BB_LIB / "config.yml")
+        _save(state="installing", step="Java 21 for the Morpheus converter")
+        _install_java()
+        _save(state="installing", step="the Morpheus converter")
+        jar = MORPH_LIB / "databricks-morph-plugin.jar"
+        if not jar.is_file():
+            _download(MORPH_URL, jar)
+        shutil.copy(Path(__file__).parent / "toolkit_files" / "morph-config.yml", MORPH_LIB / "config.yml")
         for analyzer in TOOLKIT_VENV.rglob("bladespector/Analyzer/Linux/analyzer"):
             analyzer.chmod(0o755)  # the analyzer is a program; make sure it may run
         # The toolkit names its loggers from the project folder: it looks for a pyproject.toml above its code,

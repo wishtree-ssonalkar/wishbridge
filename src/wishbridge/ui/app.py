@@ -102,7 +102,7 @@ def app_check() -> None:
             if not r["ok"] and r.get("fix"):
                 st.caption(r["fix"])
         tk = toolkit_setup.status()
-        mark, text = {"ready": ("✅", "installed - analyze and convert run here"),
+        mark, text = {"ready": ("✅", "installed - analyze and convert (BladeBridge and Morpheus) run here"),
                       "failed": ("⚠️", f"could not be installed: {tk.get('error')}")}.get(
             tk.get("state"), ("⏳", f"installing ({tk.get('step') or 'starting'}) - a few minutes after the app starts"))
         st.markdown(f"{mark} **Migration toolkit** — {text}")

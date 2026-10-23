@@ -1,0 +1,15 @@
+remorph:
+  version: 1
+  name: Morpheus
+  dialects:
+    - bigquery
+    - oracle
+    - teradata
+    - mssql
+    - redshift
+    - snowflake
+    - synapse
+  command_line:
+    - java
+    - '-jar'
+    - databricks-morph-plugin.jar

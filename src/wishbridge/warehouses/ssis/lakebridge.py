@@ -124,6 +124,12 @@ def _run_offline(command: str, flags: list[str], env: dict[str, str]) -> subproc
     # forever on Windows when it runs from the installed copy instead.
     if from_source:
         env["PYTHONPATH"] = str(home / "lib" / "src")
+    from wishbridge import toolkit_setup
+
+    java = toolkit_setup.java_bin()
+    if java:  # the Databricks App's own Java, for the Morpheus converter
+        env["JAVA_HOME"] = str(java.parent.parent)
+        env["PATH"] = str(java.parent) + os.pathsep + env.get("PATH", "")
     with _OfflineWorkspace() as url:
         env.update(DATABRICKS_HOST=url, DATABRICKS_TOKEN="offline", DATABRICKS_AUTH_TYPE="pat")
         return subprocess.run([str(python), str(entry), payload], capture_output=True, text=True, encoding="utf-8",

@@ -50,7 +50,7 @@ def render(cfg, raw, packages) -> None:
                               "and Convert are noted as skipped." if tk.get("state") in ("installing", "missing") else
                               f"not installed in the app ({tk.get('error')}): Analyze and Convert are noted as skipped."))
             st.caption("In the Databricks app the code is processed in this workspace (on the laptop it stays on the "
-                       "computer). Converters that need Java (Morpheus) work on the laptop only.")
+                       "computer).")
         if st.button("▶ Assess and save everything", type="primary"):
             runner.start(cfg, runner.ASSESSMENT_STEPS, {}, keep_going=True)
             st.rerun()
