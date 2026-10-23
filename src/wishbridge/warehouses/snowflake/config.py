@@ -164,10 +164,12 @@ def load_config(path: str | Path) -> ProjectConfig:
     chosen = str(raw.get("transpiler") or "auto").lower()
     auto_converter = chosen == "auto"
     transpiler = source.transpiler if auto_converter else chosen
+    from wishbridge import toolkit_setup
     from wishbridge.hosting import is_app
 
-    if is_app() and auto_converter and transpiler == "morph" and source.dialect in CONVERTER_DIALECTS["bladebridge"]:
-        transpiler = "bladebridge"  # the Databricks App runs Python converters only (Morpheus needs Java)
+    if (is_app() and auto_converter and transpiler == "morph" and not toolkit_setup.morph_ready()
+            and source.dialect in CONVERTER_DIALECTS["bladebridge"]):
+        transpiler = "bladebridge"  # Java not (yet) installed in the app: start with the Python converter
     if transpiler not in TRANSPILER_DIRS:
         raise ConfigError(f"Unknown transpiler '{transpiler}'. Use one of: {', '.join(TRANSPILER_DIRS)}")
 
