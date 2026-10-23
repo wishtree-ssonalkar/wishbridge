@@ -58,7 +58,7 @@ def status() -> dict:
 
 def ready() -> bool:
     st = status()
-    return st.get("state") == "ready" and st.get("version") == SETUP_VERSION and _bin(TOOLKIT_VENV, "python").is_file()
+    return st.get("state") == "ready" and st.get("version") == SETUP_VERSION and all(parts().values())
 
 
 def java_bin() -> Path | None:
@@ -68,7 +68,32 @@ def java_bin() -> Path | None:
 
 
 def morph_ready() -> bool:
-    return java_bin() is not None and (MORPH_LIB / "databricks-morph-plugin.jar").is_file()
+    return java_bin() is not None and (MORPH_LIB / "databricks-morph-plugin.jar").is_file() and \
+        (MORPH_LIB / "config.yml").is_file()
+
+
+def parts() -> dict[str, bool]:
+    """What is in place, part by part (shown in the app check)."""
+    return {"toolkit and analyzer": _bin(TOOLKIT_VENV, "python").is_file(),
+            "BladeBridge converter": (BB_LIB / "config.yml").is_file(),
+            "Java 21": java_bin() is not None,
+            "Morpheus converter": (MORPH_LIB / "databricks-morph-plugin.jar").is_file() and (MORPH_LIB / "config.yml").is_file()}
+
+
+LOG = STATUS.with_name("toolkit_setup.log")
+
+
+def _log(text: str) -> None:
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(time.strftime("%H:%M:%S ") + text + "\n")
+
+
+def log_tail(lines: int = 8) -> str:
+    try:
+        return "\n".join(LOG.read_text(encoding="utf-8").splitlines()[-lines:])
+    except OSError:
+        return ""
 
 
 def _download(url: str, dest: Path) -> None:
@@ -104,6 +129,7 @@ def _install_java() -> None:
 
 
 def _save(**kw) -> None:
+    _log(f"{kw.get('state')}: {kw.get('step') or kw.get('error') or ''}")
     STATUS.parent.mkdir(parents=True, exist_ok=True)
     STATUS.write_text(json.dumps({**kw, "updated": time.time()}), encoding="utf-8")
 

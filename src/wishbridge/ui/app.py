@@ -102,10 +102,16 @@ def app_check() -> None:
             if not r["ok"] and r.get("fix"):
                 st.caption(r["fix"])
         tk = toolkit_setup.status()
-        mark, text = {"ready": ("✅", "installed - analyze and convert (BladeBridge and Morpheus) run here"),
-                      "failed": ("⚠️", f"could not be installed: {tk.get('error')}")}.get(
-            tk.get("state"), ("⏳", f"installing ({tk.get('step') or 'starting'}) - a few minutes after the app starts"))
+        if toolkit_setup.ready():
+            mark, text = "✅", "installed - analyze and convert (BladeBridge and Morpheus) run here"
+        elif tk.get("state") == "failed":
+            mark, text = "⚠️", f"could not be installed: {tk.get('error')}"
+        else:
+            mark, text = "⏳", f"installing ({tk.get('step') or 'starting'}) - a few minutes after the app starts"
         st.markdown(f"{mark} **Migration toolkit** — {text}")
+        st.caption(" · ".join(f"{'✓' if ok else '✗'} {name}" for name, ok in toolkit_setup.parts().items()))
+        if not toolkit_setup.ready() and toolkit_setup.log_tail():
+            st.code(toolkit_setup.log_tail(), language="text")
         st.caption("Projects are kept on the volume and saved after every change.")
     if st.button("Check again", width="stretch"):
         ss.app_check = None
