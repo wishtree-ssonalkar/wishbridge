@@ -41,9 +41,16 @@ def render(cfg, raw, packages) -> None:
         from wishbridge import hosting
 
         if hosting.is_app():
-            st.info(f"**Analyze** and **Convert** need the migration toolkit: {hosting.LAPTOP_ONLY.lower()}. In the "
-                    "Databricks app they are noted as skipped; the description, fit check and report are made. For the "
-                    "full assessment run it on the laptop and open its zip here.")
+            from wishbridge import toolkit_setup
+
+            tk = toolkit_setup.status()
+            if tk.get("state") != "ready":
+                st.warning("The migration toolkit is "
+                           + ("being installed in the app (a few minutes after it starts) - wait for it, or Analyze "
+                              "and Convert are noted as skipped." if tk.get("state") in ("installing", "missing") else
+                              f"not installed in the app ({tk.get('error')}): Analyze and Convert are noted as skipped."))
+            st.caption("In the Databricks app the code is processed in this workspace (on the laptop it stays on the "
+                       "computer). Converters that need Java (Morpheus) work on the laptop only.")
         if st.button("▶ Assess and save everything", type="primary"):
             runner.start(cfg, runner.ASSESSMENT_STEPS, {}, keep_going=True)
             st.rerun()
@@ -59,10 +66,8 @@ def render(cfg, raw, packages) -> None:
         with c2:
             from wishbridge import hosting
 
-            again = st.checkbox("Analyze and convert again first", value=False, disabled=hosting.is_app(),
-                                help="Only when the client's code changed since the assessment. Hand fixes are kept."
-                                     + (" Converting needs the migration toolkit, which runs on the laptop: assess "
-                                        "again there and open the new zip here." if hosting.is_app() else ""))
+            again = st.checkbox("Analyze and convert again first", value=False,
+                                help="Only when the client's code changed since the assessment. Hand fixes are kept.")
             do_report = st.checkbox("Build the report", value=True)
         chosen = (["analyze", "convert"] if again else []) + [n for n, on in (("deploy", do_deploy),
                                                                              ("report", do_report)) if on]

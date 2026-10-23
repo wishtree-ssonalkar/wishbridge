@@ -38,12 +38,6 @@ def status_file(cfg: ProjectConfig) -> Path:
 def _step(cfg: ProjectConfig, name: str, opts: dict[str, Any],
           note: Callable[[str], None] = lambda text: None) -> tuple[str, Any]:
     """Run one step; returns (summary, result). note(text) shows progress while the step runs."""
-    if name in ("analyze", "convert"):
-        from wishbridge import hosting
-
-        if hosting.is_app():
-            raise RuntimeError("Needs the migration toolkit - on the laptop only. Assess on the laptop for the analysis "
-                               "and the conversion, and open its zip here.")
     if name == "describe":
         from .fit import run_fit
         from .overview import build_overview

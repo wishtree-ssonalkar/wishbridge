@@ -88,6 +88,9 @@ def app_check() -> None:
     if not ss.get("app_check"):
         with st.spinner("Checking the app's access in this workspace..."):
             ss.app_check = hosting.check_app()
+    from wishbridge import toolkit_setup
+
+    toolkit_setup.ensure_started()  # analyze and convert in the app (installs in the background, once per start)
     rows = ss.app_check
     if all(r["ok"] for r in rows):
         st.success("✅ Running in Databricks")
@@ -98,7 +101,12 @@ def app_check() -> None:
             st.markdown(f"{'✅' if r['ok'] else '❌'} **{r['name']}** — {r['detail']}")
             if not r["ok"] and r.get("fix"):
                 st.caption(r["fix"])
-        st.caption("Projects are kept on the volume and saved after every change; the assessment runs on the laptop.")
+        tk = toolkit_setup.status()
+        mark, text = {"ready": ("✅", "installed - analyze and convert run here"),
+                      "failed": ("⚠️", f"could not be installed: {tk.get('error')}")}.get(
+            tk.get("state"), ("⏳", f"installing ({tk.get('step') or 'starting'}) - a few minutes after the app starts"))
+        st.markdown(f"{mark} **Migration toolkit** — {text}")
+        st.caption("Projects are kept on the volume and saved after every change.")
     if st.button("Check again", width="stretch"):
         ss.app_check = None
         st.rerun()
@@ -354,8 +362,8 @@ def show_goal_choice() -> None:
     st.subheader("What do you want to do?")
     if APP:
         st.caption("WishBridge is running in the Databricks workspace. Everything is here; a few choices work on the "
-                   "laptop only (they say so). For an assessment at the client, offline and with full conversion, use "
-                   "WishBridge on the laptop and open its zip here.")
+                   "laptop only (they say so). For an assessment at the client, offline, use WishBridge on the laptop "
+                   "and open its zip here.")
     c1, c2, c3 = st.columns(3)
     cards = {
         "assessment": (c1, "At the client, offline (nothing goes to Databricks):\n"
@@ -375,9 +383,8 @@ def show_goal_choice() -> None:
     if APP:
         cards["assessment"] = (c1, "Assess the client's code:\n"
                                    "- **upload the code as a zip** (a local folder or the database: on the laptop)\n"
-                                   "- describe it, check it is a data warehouse, report\n"
-                                   "- analyzing and converting need the migration toolkit, which is on the laptop: "
-                                   "for the full assessment use the laptop and open its zip here")
+                                   "- check it really is a data warehouse, size it and convert it\n"
+                                   "- everything as one zip (the code is processed in this workspace)")
     for key, (col, text) in cards.items():
         with col.container(border=True):
             chosen = ss.get("goal") == key
