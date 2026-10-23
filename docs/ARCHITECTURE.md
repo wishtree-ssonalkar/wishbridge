@@ -210,6 +210,9 @@ Everything can also be done on the laptop alone, signed in to the client's works
 2. **Deploy** (about 5 minutes):
    `.\deploy-databricks-app.ps1 -Profile CLIENT -WarehouseId <id> -ProjectsVolume /Volumes/<catalog>/wishbridge/projects -TargetCatalogs <catalog> -ShareWith <team-group>`
    - volume, app, permissions, compile check, upload, start; prints the link.
+   **Or from Git**: Compute › Apps › wishbridge › Deploy › from Git, repository `wishtree-ssonalkar/wishbridge`,
+   the branch with the app. Databricks reads `app.yaml` and `requirements.txt` at the repository root. In a new
+   workspace run the script once (permissions, `sql-warehouse` resource).
 3. **Give access**: Compute › Apps › wishbridge › Permissions → CAN USE. People sign in with their Databricks account.
 4. **Use**: the same screens; the sidebar's App check shows the workspace, warehouse, project storage and the
    migration toolkit (installed by itself about a minute after start). Projects are saved in the workspace.

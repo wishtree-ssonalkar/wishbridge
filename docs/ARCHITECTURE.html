@@ -390,6 +390,11 @@ SQL Warehouses), a catalog for the projects volume and the catalog(s) for the te
 <div class="card"><b>2 · Deploy (one command, about 5 minutes)</b>
 <code>.\deploy-databricks-app.ps1 -Profile CLIENT -WarehouseId &lt;id&gt; -ProjectsVolume /Volumes/&lt;catalog&gt;/wishbridge/projects -TargetCatalogs &lt;catalog&gt; -ShareWith &lt;team-group&gt;</code>
 - creates the volume, the app (with the SQL warehouse), the permissions, checks the code compiles, uploads and starts it, prints the link.</div>
+<div class="card"><b>2b · Or deploy from Git</b>
+Databricks › Compute › Apps › wishbridge › <b>Deploy › from Git</b>, repository <code>wishtree-ssonalkar/wishbridge</code>,
+the branch with the app (<code>Shubham/WishbridgePhase1</code>, or <code>main</code> after the merge). <code>app.yaml</code> and
+<code>requirements.txt</code> at the repository root are what Databricks reads. In a new workspace run the script once for the
+permissions and the <code>sql-warehouse</code> resource.</div>
 <div class="card"><b>3 · Give access</b>
 Databricks › <b>Compute › Apps › wishbridge › Permissions</b> → CAN USE for the people or group. They open the link
 and sign in with their usual Databricks account (single sign-on).</div>
