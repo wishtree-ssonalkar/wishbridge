@@ -27,6 +27,8 @@
   a { color: var(--blue); }
   nav a { color: var(--ink); }
   .scroll { overflow-x: auto; }
+  table.wide { font-size: .86rem; }
+  table.wide td:first-child { white-space: nowrap; }
   table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: .93rem; }
   th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
   th { background: var(--soft); }
@@ -70,6 +72,7 @@ find their way in minutes. For using WishBridge see the User Guide; for the Data
 <li><a href="#shell">1 · Shared shell</a></li>
 <li><a href="#warehouses">2 · Warehouse packages</a></li>
 <li><a href="#pipeline">The pipeline</a></li>
+<li><a href="#by-warehouse">Warehouse by warehouse</a></li>
 <li><a href="#project">3 · The project folder</a></li>
 <li><a href="#hosting">Laptop and Databricks App</a></li>
 <li><a href="#change">Changing WishBridge</a></li>
@@ -187,6 +190,57 @@ read. Steps run in the background, one after another.</p>
 </svg>
 </div>
 <p class="cap">Blue: assessment (no Databricks needed) · green: code migration · amber: data migration · red: reports and zips.</p>
+
+<h2 id="by-warehouse">Warehouse by warehouse</h2>
+<p>Each warehouse folder can process its code and data its own way. This section shows what already differs, where a warehouse&#x27;s own logic goes, and what each is expected to need when it is tested on its own.</p>
+<h3>What each warehouse does differently today</h3>
+<p>Converter: the first one tried in automatic mode, then the second on files with errors. In the Databricks App only BladeBridge runs (Morpheus needs Java). &quot;DBA query&quot;: the client&#x27;s DBA runs a read-only query and sends its CSV.</p>
+<div class="scroll"><table class="wide">
+<tr><th>Folder</th><th>Source(s)</th><th>Kind</th><th>Converter (laptop)</th><th>In the app</th><th>Tables read from</th><th>Data copy</th><th>Own rules (sources/&lt;warehouse&gt;.py)</th></tr>
+<tr><td><b><code>sqlserver</code></b></td><td>SQL Server (<code>mssql</code>)</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>BladeBridge</td><td>Live (ODBC, Azure SQL too) + procedures/views (<code>CODE_QUERY</code>)</td><td>Federation <code>sqlserver</code>, files, this computer</td><td>6 fixes (brackets, NOLOCK, GETDATE, SET NOCOUNT, GO…), 13 checks, T-SQL tidy before converting (<code>PREP</code>)</td></tr>
+<tr><td><b><code>synapse</code></b></td><td>Azure Synapse</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>BladeBridge</td><td>Live (Entra ID sign-in)</td><td>Federation <code>sqldw</code>, files</td><td>1 type mapping</td></tr>
+<tr><td><b><code>snowflake</code></b></td><td>Snowflake</td><td>Warehouse DB</td><td>Morpheus only</td><td>Laptop only (Java)</td><td>DBA query</td><td>Federation <code>snowflake</code>, files</td><td>1 fix (max VARCHAR), 3 checks, 2 types</td></tr>
+<tr><td><b><code>oracle</code></b></td><td>Oracle</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>BladeBridge</td><td>DBA query</td><td>Federation <code>oracle</code>, files</td><td>8 checks, 2 types</td></tr>
+<tr><td><b><code>teradata</code></b></td><td>Teradata</td><td>Warehouse DB</td><td>BladeBridge → Morpheus</td><td>BladeBridge</td><td>DBA query (type codes)</td><td>Federation <code>teradata</code>, files</td><td>5 checks, type codes</td></tr>
+<tr><td><b><code>redshift</code></b></td><td>Amazon Redshift</td><td>Warehouse DB</td><td>Morpheus → BladeBridge</td><td>BladeBridge</td><td>DBA query</td><td>Federation <code>redshift</code>, files</td><td>-</td></tr>
+<tr><td><b><code>bigquery</code></b></td><td>Google BigQuery</td><td>Warehouse DB</td><td>Morpheus only</td><td>Laptop only (Java)</td><td>DBA query</td><td>Exported files only (no federation)</td><td>5 types</td></tr>
+<tr><td><b><code>netezza</code></b></td><td>IBM Netezza</td><td>Warehouse DB</td><td>BladeBridge only</td><td>BladeBridge</td><td>DBA query</td><td>Exported files only (no federation)</td><td>3 checks</td></tr>
+<tr><td><b><code>ssis</code></b></td><td>SSIS</td><td>ETL (loads a warehouse)</td><td>BladeBridge → Spark SQL</td><td>BladeBridge</td><td>The warehouse DB beside the packages (<code>companion.py</code>)</td><td>As its warehouse DB</td><td>Master package → Databricks job (<code>orchestration.py</code>), own screen (<code>ui/screens/ssis.py</code>)</td></tr>
+<tr><td><b><code>informatica</code></b></td><td>PowerCenter, Informatica Cloud</td><td>ETL</td><td>BladeBridge → Spark SQL (Cloud: PySpark)</td><td>BladeBridge</td><td>As SSIS</td><td>As its warehouse DB</td><td>Cloud .zip export check (<code>staging.py</code>), ETL screen</td></tr>
+<tr><td><b><code>datastage</code></b></td><td>IBM DataStage</td><td>ETL</td><td>BladeBridge → Spark SQL</td><td>BladeBridge</td><td>As SSIS</td><td>As its warehouse DB</td><td>.dsx/.isx export check (<code>staging.py</code>), ETL screen</td></tr></table></div>
+<h3>Customization points - where a warehouse&#x27;s own logic goes</h3>
+<p>Each stage is one file with a few main functions. To make a warehouse work differently, change these in its folder and list the file in its <code>CUSTOMIZED.txt</code>.</p>
+<div class="scroll"><table class="wide">
+<tr><th>Stage</th><th>File · functions</th><th>What typically differs per warehouse</th></tr>
+<tr><td><b>Knowledge about the source</b></td><td><code>sources/&lt;warehouse&gt;.py</code> - <code>SOURCES</code>, <code>INVENTORY_QUERY</code>, <code>TYPES</code>, <code>FEDERATION</code>, <code>FIXES</code>, <code>DETECTORS</code>, <code>PREP</code>, <code>CODE_QUERY</code></td><td>Dialect, converter, table-list query, type map, federation type, rewrite rules and checks. <b>Start here - most differences fit in this file.</b></td></tr>
+<tr><td><b>Recognise the code</b></td><td><code>discover.py</code> · <code>inspect()</code>; <code>HINTS</code> in <code>sources/&lt;warehouse&gt;.py</code></td><td>File types and keywords that identify the source</td></tr>
+<tr><td><b>Prepare the code</b></td><td><code>staging.py</code> · <code>source_files()</code>, <code>prepare_tsql()</code>, <code>check_export_format()</code></td><td>Which files are code, clean-ups before converting, export formats (DataStage, Informatica Cloud)</td></tr>
+<tr><td><b>Fit check</b></td><td><code>fit.py</code> · <code>run_fit()</code></td><td>What counts as warehouse logic vs application logic</td></tr>
+<tr><td><b>Analyze</b></td><td><code>analysis.py</code> · <code>run_analyze()</code>, <code>estimate_hours()</code></td><td>Analyzer source type, effort per file or complexity</td></tr>
+<tr><td><b>Convert</b></td><td><code>convert.py</code> · <code>run_convert()</code>, <code>choose_best_converter()</code>; <code>lakebridge.py</code> · <code>transpile()</code></td><td>Converter order, converter options (target technology for ETL), per-file choices</td></tr>
+<tr><td><b>Fix rules</b></td><td><code>rules.py</code> · <code>apply_rules()</code>, <code>detect()</code> (shared) + <code>FIXES</code>/<code>DETECTORS</code> in <code>sources/&lt;warehouse&gt;.py</code></td><td>Mechanical rewrites and checks for the dialect</td></tr>
+<tr><td><b>ETL jobs</b></td><td><code>orchestration.py</code> · <code>job_tasks()</code>; <code>companion.py</code></td><td>How packages, workflows or job sequences become a Databricks job</td></tr>
+<tr><td><b>Read the client&#x27;s database</b></td><td><code>inventory.py</code> · <code>read_live()</code>, <code>script()</code>; <code>dbcode.py</code> · <code>read()</code></td><td>Driver, sign-in, queries for tables and code</td></tr>
+<tr><td><b>Deploy</b></td><td><code>deploy.py</code> · <code>run_deploy()</code>; <code>schema.py</code> · <code>scripts()</code></td><td>Table DDL, types, objects Databricks does not have (sequences, synonyms)</td></tr>
+<tr><td><b>Copy the data</b></td><td><code>data.py</code> · <code>build_plan()</code>, <code>run_load()</code>; <code>source_db.py</code> (federation), <code>exported_files.py</code>, <code>localdb.py</code></td><td>Connection type, export format, casts, incremental loads</td></tr>
+<tr><td><b>Compare</b></td><td><code>reconcile.py</code> · <code>compare_table()</code></td><td>Which types count as equal (NUMBER vs DECIMAL, timestamps, strings)</td></tr>
+<tr><td><b>Screens</b></td><td><code>ui/screens/&lt;tool&gt;.py</code>, <code>ui/steps/code.py</code></td><td>What the person sees and fills in for this source</td></tr></table></div>
+<h3>Planned per-warehouse work</h3>
+<p>Only SSIS has been tested end to end. When each warehouse gets its own sample project and test, these are the differences we expect to build - each in that warehouse&#x27;s folder, listed in its <code>CUSTOMIZED.txt</code>:</p>
+<div class="scroll"><table class="wide">
+<tr><th>Folder</th><th>Expected differences</th><th>Files likely to change</th></tr>
+<tr><td><b><code>sqlserver</code></b></td><td>More T-SQL patterns (temp tables, cursors, MERGE options, IDENTITY), procedure-to-notebook choices</td><td><code>sources/sqlserver.py</code>, <code>rules.py</code>, <code>staging.py</code>, <code>deploy.py</code></td></tr>
+<tr><td><b><code>synapse</code></b></td><td>Distribution / index options removed, CTAS, PolyBase external tables</td><td><code>sources/synapse.py</code>, <code>rules.py</code>, <code>schema.py</code></td></tr>
+<tr><td><b><code>snowflake</code></b></td><td>VARIANT and semi-structured types, streams and tasks as jobs, conversion on the laptop only</td><td><code>sources/snowflake.py</code>, <code>schema.py</code>, <code>orchestration.py</code>, <code>reconcile.py</code></td></tr>
+<tr><td><b><code>oracle</code></b></td><td>PL/SQL packages split per procedure, sequences and synonyms, NUMBER precision</td><td><code>staging.py</code>, <code>deploy.py</code>, <code>schema.py</code>, <code>reconcile.py</code></td></tr>
+<tr><td><b><code>teradata</code></b></td><td>BTEQ and FastLoad scripts, type codes, primary index removed, TPT exports</td><td><code>staging.py</code>, <code>analysis.py</code>, <code>sources/teradata.py</code>, <code>exported_files.py</code></td></tr>
+<tr><td><b><code>redshift</code></b></td><td>DISTKEY/SORTKEY removed, UNLOAD to cloud storage for the data</td><td><code>sources/redshift.py</code>, <code>rules.py</code>, <code>exported_files.py</code></td></tr>
+<tr><td><b><code>bigquery</code></b></td><td>STRUCT/ARRAY types, exports from Cloud Storage, conversion on the laptop only</td><td><code>schema.py</code>, <code>exported_files.py</code>, <code>reconcile.py</code></td></tr>
+<tr><td><b><code>netezza</code></b></td><td>DISTRIBUTE ON / ORGANIZE ON removed, nzsql exports</td><td><code>sources/netezza.py</code>, <code>rules.py</code>, <code>exported_files.py</code></td></tr>
+<tr><td><b><code>ssis</code></b></td><td>Script tasks, event handlers, package parameters</td><td><code>orchestration.py</code>, <code>convert.py</code>, <code>ui/screens/ssis.py</code></td></tr>
+<tr><td><b><code>informatica</code></b></td><td>Workflows and sessions as jobs, Cloud mappings (PySpark)</td><td><code>orchestration.py</code>, <code>staging.py</code>, <code>ui/screens/etl.py</code></td></tr>
+<tr><td><b><code>datastage</code></b></td><td>Job sequences as jobs, parallel-job stages</td><td><code>orchestration.py</code>, <code>staging.py</code>, <code>ui/screens/etl.py</code></td></tr></table></div>
+<p>This list is a plan, not a record: it changes as each warehouse is tested. What a warehouse actually changed is always in its <code>CUSTOMIZED.txt</code>.</p>
 
 <h2 id="project">3 · The project folder - the data</h2>
 <pre><code>&lt;project&gt;/
