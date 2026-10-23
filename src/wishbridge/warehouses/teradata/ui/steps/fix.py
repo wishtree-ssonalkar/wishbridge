@@ -194,13 +194,14 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
         else:
             _setup_steps("claude-code", msg)
     backend, how = ai.assist_backend(chosen, cfg.profile, endpoint)
-    if backend is None and chosen in ("databricks", "api") and not (chosen == "databricks" and cfg.profile
-                                                                   and not endpoint):
+    found_none = ss.get("claude_endpoints") == []  # Find Claude models found nothing in this workspace
+    if backend is None and chosen in ("databricks", "api") and (
+            hosting.is_app() or not (chosen == "databricks" and cfg.profile and not endpoint) or found_none):
         _setup_steps(chosen, f"Claude is {how}.")
     if not signed_in:
         backend = None
     st.caption(f"Sends this file's original, the Databricks version above (with your unsaved edits) and the open "
-               f"issues - never data. Uses {how}.")
+               f"issues - never data. " + (f"Uses {how}." if backend else "Claude is not connected yet - see above."))
     key = f"claude:{pick}"
     scope = st.radio("What do you want Claude to do?", list(_SCOPES), format_func=lambda s: _scope_label(cfg, s, pick),
                      horizontal=True, key="claude-scope")
