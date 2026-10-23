@@ -46,6 +46,21 @@ and starts it, then prints the link. Run it again to deploy a new version; the p
 
 Then give people access: **Compute › Apps › wishbridge › Permissions** (CAN USE).
 
+### Or: deploy from Git (Databricks UI)
+
+The repository deploys as it is: `app.yaml` and `requirements.txt` are at its root, the app starts
+`databricks_app/app_main.py`, which runs WishBridge from `src/`.
+
+1. **Compute › Apps › wishbridge › Deploy › from Git**: repository `wishtree-ssonalkar/wishbridge`, branch
+   **`Shubham/WishbridgePhase1`** (or `main` once the pull request is merged - `main` must contain the app).
+2. The app needs a **SQL warehouse resource named `sql-warehouse`** (Settings › Resources, CAN USE). An app created
+   by the deploy script already has it.
+3. `app.yaml` keeps the projects in `/Volumes/workspace/wishbridge/projects` (Wishtree's workspace). For another
+   workspace, change that value in `app.yaml`, or deploy with the script, which writes the workspace's own value.
+4. Git deploys do not grant permissions: in a new workspace run the deploy script once (it grants them), or have an
+   admin give the app's service principal the permissions in the table below.
+
+
 Wishtree's test app: https://wishbridge-7474656385457319.aws.databricksapps.com (workspace dbc-fd31c11a-4da6,
 projects in `/Volumes/workspace/wishbridge/projects`).
 

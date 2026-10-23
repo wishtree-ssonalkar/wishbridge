@@ -88,15 +88,22 @@ Write-Host "5/6 Upload WishBridge"
 $stage = Join-Path $env:LOCALAPPDATA "WishBridge\app-build\$AppName"
 if (Test-Path $stage) { Get-ChildItem $stage -Force | Where-Object Name -ne ".databricks" | Remove-Item -Recurse -Force }
 else { New-Item -ItemType Directory -Path $stage -Force | Out-Null }
-Copy-Item (Join-Path $repo "databricks_app\*") $stage -Recurse
-Copy-Item (Join-Path $repo "src\wishbridge") (Join-Path $stage "wishbridge") -Recurse
+# the same layout as the repository (what a Git deployment uses): app.yaml, requirements.txt, databricks_app/, src/
+Copy-Item (Join-Path $repo "app.yaml"), (Join-Path $repo "requirements.txt") $stage
+Copy-Item (Join-Path $repo "databricks_app") (Join-Path $stage "databricks_app") -Recurse
+New-Item -ItemType Directory -Path (Join-Path $stage "src") -Force | Out-Null
+Copy-Item (Join-Path $repo "src\wishbridge") (Join-Path $stage "src\wishbridge") -Recurse
 Get-ChildItem $stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
+# this workspace's values over the defaults in app.yaml
 $yaml = Join-Path $stage "app.yaml"
-[System.IO.File]::WriteAllText($yaml, (Get-Content $yaml -Raw).Replace("__PROJECTS_VOLUME__", $ProjectsVolume).Replace("__SHARE_WITH__", $ShareWith))
+$text = Get-Content $yaml -Raw
+$text = [regex]::Replace($text, '(name: WISHBRIDGE_PROJECTS_VOLUME\s+value: )"[^"]*"', ('${1}"' + $ProjectsVolume + '"'))
+$text = [regex]::Replace($text, '(name: WISHBRIDGE_SHARE_WITH\s+value: )"[^"]*"', ('${1}"' + $ShareWith + '"'))
+[System.IO.File]::WriteAllText($yaml, $text)
 # never upload code that does not compile
 $py = (Get-Command python -ErrorAction SilentlyContinue).Source
 if ($py) {
-    & $py -m compileall -q (Join-Path $stage "wishbridge") | Out-Null
+    & $py -m compileall -q (Join-Path $stage "src\wishbridge") | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "WishBridge does not compile - fix it before deploying (python -m compileall src)." }
     Get-ChildItem $stage -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 }
