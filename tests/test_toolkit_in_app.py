@@ -38,7 +38,7 @@ def test_the_app_finds_the_toolkit_installed_as_a_package(app_home, monkeypatch)
 
 
 def test_a_toolkit_still_installing_says_so(app_home):
-    toolkit_setup._save(state="installing", step="the BladeBridge converter")
+    toolkit_setup._save(state="installing", step="the BladeBridge converter", version=toolkit_setup.SETUP_VERSION)
     with pytest.raises(lakebridge.LakeBridgeError, match="still being installed in the app"):
         lakebridge._run_offline("analyze", [], {})
 

@@ -142,8 +142,14 @@ def run(cfg: ProjectConfig, *args: str, strict: bool = True) -> str:
         proc = subprocess.run([_databricks_cli(), "labs", "lakebridge", *args], capture_output=True, text=True,
                               encoding="utf-8", errors="replace", env=env)
     out = _ANSI.sub("", (proc.stdout or "") + (proc.stderr or ""))
+    try:  # the toolkit's whole answer, for when a step fails without saying why on screen
+        log = cfg.out("logs", f"toolkit_{args[0]}.log") if args else None
+        if log is not None:
+            log.write_text(f"exit code {proc.returncode}\n{out}", encoding="utf-8")
+    except OSError:
+        pass
     if strict and (proc.returncode != 0 or re.search(r"^(\d\d:\d\d:\d\d\s+)?ERROR\b|^Error:", out, re.MULTILINE)):
-        raise _fail(args[0], out)
+        raise _fail(args[0], out if out.strip() else f"(no output, exit code {proc.returncode})")
     return out
 
 

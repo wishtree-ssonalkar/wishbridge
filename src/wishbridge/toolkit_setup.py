@@ -29,6 +29,7 @@ LABS = Path.home() / ".databricks" / "labs"
 TOOLKIT_VENV = LABS / "lakebridge" / "state" / "venv"
 BB_LIB = LABS / "remorph-transpilers" / "bladebridge" / "lib"
 STATUS = Path.home() / ".wishbridge" / "toolkit_status.json"
+SETUP_VERSION = 2  # raise it when the setup changes: an app that installed an older one sets up again
 
 
 def _bin(venv: Path, name: str) -> Path:
@@ -47,7 +48,8 @@ def status() -> dict:
 
 
 def ready() -> bool:
-    return status().get("state") == "ready" and _bin(TOOLKIT_VENV, "python").is_file()
+    st = status()
+    return st.get("state") == "ready" and st.get("version") == SETUP_VERSION and _bin(TOOLKIT_VENV, "python").is_file()
 
 
 def _save(**kw) -> None:
@@ -59,7 +61,7 @@ def ensure_started() -> None:
     """Databricks App: start the installation in the background, once per app start."""
     from .hosting import is_app
 
-    if not is_app() or status().get("state") in ("ready", "installing"):
+    if not is_app() or ready() or status().get("state") == "installing":
         return
     _save(state="installing", step="starting")
     subprocess.Popen([sys.executable, "-m", "wishbridge.toolkit_setup"], stdin=subprocess.DEVNULL,
@@ -86,7 +88,13 @@ def install() -> None:
         shutil.copy(Path(__file__).parent / "toolkit_files" / "bladebridge-config.yml", BB_LIB / "config.yml")
         for analyzer in TOOLKIT_VENV.rglob("bladespector/Analyzer/Linux/analyzer"):
             analyzer.chmod(0o755)  # the analyzer is a program; make sure it may run
-        _save(state="ready", step="")
+        # The toolkit names its loggers from the project folder: it looks for a pyproject.toml above its code,
+        # which an install made by the Databricks CLI has and a package install does not.
+        for venv in (TOOLKIT_VENV, BB_LIB / ".venv"):
+            for site in venv.rglob("site-packages"):
+                if site.is_dir() and not (site / "pyproject.toml").exists():
+                    (site / "pyproject.toml").write_text('[project]\nname = "wishbridge-toolkit"\n', encoding="utf-8")
+        _save(state="ready", step="", version=SETUP_VERSION)
     except Exception as e:  # noqa: BLE001 - every failure is reported in the app check
         _save(state="failed", error=(str(e).strip().splitlines() or [type(e).__name__])[-1][:400])
 
