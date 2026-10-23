@@ -10,7 +10,7 @@ WishBridge runs in two places, from the same code and with **the same screens**:
 | Assessment | Open a folder, read the database, analyze, convert - offline | Upload the code as a zip, analyze, convert (the code is processed in the workspace) |
 | Code migration | ✓ | ✓ (opens the assessment zip; *Analyze and convert again* works too) |
 | Data migration | Client's database (federation), exported files, a database on this computer | Client's database (federation), exported files |
-| Converters | BladeBridge and Morpheus (Java) | BladeBridge (Morpheus needs Java: laptop) - automatic mode starts with BladeBridge |
+| Converters | BladeBridge and Morpheus (Java) | The same: the app installs Java 21 and both converters itself |
 | Claude | Claude Code, the workspace's model, or an API key | The workspace's model or an API key |
 
 Every choice shows in both places. One that cannot work where you are says so - **"On the laptop only"** - and

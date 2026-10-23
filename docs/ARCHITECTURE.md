@@ -71,22 +71,22 @@ warehouse's own logic goes, and what each is expected to need when it is tested 
 
 ### What each warehouse does differently today
 
-Converter: the first one tried in automatic mode, then the second on files with errors. In the Databricks App only
-BladeBridge runs (Morpheus needs Java). "DBA query": the client's DBA runs a read-only query and sends its CSV.
+Converter: the first one tried in automatic mode, then the second on files with errors. The Databricks App installs Java 21
+and both converters, so it converts the same way. "DBA query": the client's DBA runs a read-only query and sends its CSV.
 
 | Folder | Source(s) | Kind | Converter (laptop) | In the app | Tables read from | Data copy | Own rules (sources/&lt;warehouse&gt;.py) |
 |---|---|---|---|---|---|---|---|
-| `sqlserver` | SQL Server (`mssql`) | Warehouse DB | Morpheus → BladeBridge | BladeBridge | Live (ODBC, Azure SQL too) + procedures/views (`CODE_QUERY`) | Federation `sqlserver`, files, this computer | 6 fixes (brackets, NOLOCK, GETDATE, SET NOCOUNT, GO…), 13 checks, T-SQL tidy before converting (`PREP`) |
-| `synapse` | Azure Synapse | Warehouse DB | Morpheus → BladeBridge | BladeBridge | Live (Entra ID sign-in) | Federation `sqldw`, files | 1 type mapping |
-| `snowflake` | Snowflake | Warehouse DB | Morpheus only | Laptop only (Java) | DBA query | Federation `snowflake`, files | 1 fix (max VARCHAR), 3 checks, 2 types |
-| `oracle` | Oracle | Warehouse DB | Morpheus → BladeBridge | BladeBridge | DBA query | Federation `oracle`, files | 8 checks, 2 types |
-| `teradata` | Teradata | Warehouse DB | BladeBridge → Morpheus | BladeBridge | DBA query (type codes) | Federation `teradata`, files | 5 checks, type codes |
-| `redshift` | Amazon Redshift | Warehouse DB | Morpheus → BladeBridge | BladeBridge | DBA query | Federation `redshift`, files | - |
-| `bigquery` | Google BigQuery | Warehouse DB | Morpheus only | Laptop only (Java) | DBA query | Exported files only (no federation) | 5 types |
-| `netezza` | IBM Netezza | Warehouse DB | BladeBridge only | BladeBridge | DBA query | Exported files only (no federation) | 3 checks |
-| `ssis` | SSIS | ETL (loads a warehouse) | BladeBridge → Spark SQL | BladeBridge | The warehouse DB beside the packages (`companion.py`) | As its warehouse DB | Master package → Databricks job (`orchestration.py`), own screen (`ui/screens/ssis.py`) |
-| `informatica` | PowerCenter, Informatica Cloud | ETL | BladeBridge → Spark SQL (Cloud: PySpark) | BladeBridge | As SSIS | As its warehouse DB | Cloud .zip export check (`staging.py`), ETL screen |
-| `datastage` | IBM DataStage | ETL | BladeBridge → Spark SQL | BladeBridge | As SSIS | As its warehouse DB | .dsx/.isx export check (`staging.py`), ETL screen |
+| `sqlserver` | SQL Server (`mssql`) | Warehouse DB | Morpheus → BladeBridge | Same | Live (ODBC, Azure SQL too) + procedures/views (`CODE_QUERY`) | Federation `sqlserver`, files, this computer | 6 fixes (brackets, NOLOCK, GETDATE, SET NOCOUNT, GO…), 13 checks, T-SQL tidy before converting (`PREP`) |
+| `synapse` | Azure Synapse | Warehouse DB | Morpheus → BladeBridge | Same | Live (Entra ID sign-in) | Federation `sqldw`, files | 1 type mapping |
+| `snowflake` | Snowflake | Warehouse DB | Morpheus only | Same | DBA query | Federation `snowflake`, files | 1 fix (max VARCHAR), 3 checks, 2 types |
+| `oracle` | Oracle | Warehouse DB | Morpheus → BladeBridge | Same | DBA query | Federation `oracle`, files | 8 checks, 2 types |
+| `teradata` | Teradata | Warehouse DB | BladeBridge → Morpheus | Same | DBA query (type codes) | Federation `teradata`, files | 5 checks, type codes |
+| `redshift` | Amazon Redshift | Warehouse DB | Morpheus → BladeBridge | Same | DBA query | Federation `redshift`, files | - |
+| `bigquery` | Google BigQuery | Warehouse DB | Morpheus only | Same | DBA query | Exported files only (no federation) | 5 types |
+| `netezza` | IBM Netezza | Warehouse DB | BladeBridge only | Same | DBA query | Exported files only (no federation) | 3 checks |
+| `ssis` | SSIS | ETL (loads a warehouse) | BladeBridge → Spark SQL | Same | The warehouse DB beside the packages (`companion.py`) | As its warehouse DB | Master package → Databricks job (`orchestration.py`), own screen (`ui/screens/ssis.py`) |
+| `informatica` | PowerCenter, Informatica Cloud | ETL | BladeBridge → Spark SQL (Cloud: PySpark) | Same | As SSIS | As its warehouse DB | Cloud .zip export check (`staging.py`), ETL screen |
+| `datastage` | IBM DataStage | ETL | BladeBridge → Spark SQL | Same | As SSIS | As its warehouse DB | .dsx/.isx export check (`staging.py`), ETL screen |
 
 ### Customization points - where a warehouse's own logic goes
 
@@ -225,7 +225,7 @@ Everything can also be done on the laptop alone, signed in to the client's works
 | Assessment at the client, offline | best | upload the code; processed in the workspace |
 | Code and data migration | signed in to the client's workspace | best when the client wants everything in their workspace, or several people work on it |
 | A database on this computer (demo) | yes | on the laptop only |
-| Snowflake / BigQuery conversion (Java) | yes | on the laptop only |
+| Snowflake / BigQuery conversion (Morpheus) | yes | yes (Java 21 installed in the app) |
 | Claude | Claude Code, workspace model, API key | workspace model, API key |
 
 ## Tests and deployment

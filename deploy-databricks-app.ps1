@@ -110,6 +110,8 @@ if ($py) {
 $remote = "/Workspace/Users/$me/apps/$AppName"
 Dbx @("workspace", "mkdirs", $remote) | Out-Null
 Dbx @("sync", "--full", $stage, $remote) | Out-Null
+# leftovers of the layout before 23 Oct 2026 (package and start file at the top) - they would shadow src/
+foreach ($old in @("wishbridge", "app_main.py")) { Dbx @("workspace", "delete", "$remote/$old", "--recursive") -AllowFail | Out-Null }
 Write-Host "    $remote"
 
 Write-Host "6/6 Deploy and start (a few minutes)..."
