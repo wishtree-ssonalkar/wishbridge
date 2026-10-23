@@ -304,3 +304,107 @@ def test_the_claude_setup_steps_render_in_the_app(in_app):
     text = " ".join(m.value for m in at.markdown)
     assert "Serving" in text and "API key" in text
     assert any("ClaudeKeySecret" in c.value for c in at.code)
+
+
+def test_the_app_uses_its_claude_key_when_no_model_is_chosen(in_app, monkeypatch):
+    from wishbridge.warehouses.ssis.ui.steps import fix
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    assert fix._first_via("databricks", "", picked=False) == "api"
+    assert fix._first_via("claude-code", "", picked=False) == "api"
+    assert fix._first_via("databricks", "databricks-claude-sonnet-4", picked=False) == "databricks"
+    assert fix._first_via("databricks", "", picked=True) == "databricks"  # the person's own choice stays
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    assert fix._first_via("databricks", "", picked=False) == "databricks"
+    assert fix._first_via("claude-code", "", picked=False) == "databricks"
+
+
+def test_the_laptop_keeps_the_projects_claude_choice(monkeypatch):
+    from wishbridge.warehouses.ssis.ui.steps import fix
+
+    monkeypatch.delenv("WISHBRIDGE_HOSTED", raising=False)
+    monkeypatch.delenv("DATABRICKS_APP_NAME", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    assert fix._first_via("databricks", "", picked=False) == "databricks"
+
+
+def test_a_key_typed_in_the_app_goes_into_the_databricks_secret(in_app, monkeypatch):
+    stored = {}
+    in_app.secrets = types.SimpleNamespace(put_secret=lambda **kw: stored.update(kw))
+    monkeypatch.setenv("WISHBRIDGE_CLAUDE_SECRET", "wishbridge/anthropic-api-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # restored after the test
+    assert hosting.save_claude_key("sk-test") == ""
+    assert stored == {"scope": "wishbridge", "key": "anthropic-api-key", "string_value": "sk-test"}
+    assert __import__("os").environ["ANTHROPIC_API_KEY"] == "sk-test"
+
+
+def test_without_a_secret_the_typed_key_lasts_until_a_restart(in_app, monkeypatch):
+    monkeypatch.delenv("WISHBRIDGE_CLAUDE_SECRET", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # restored after the test
+    assert "until the app restarts" in hosting.save_claude_key("sk-test")
+
+
+def _key_panel():
+    from wishbridge.warehouses.ssis.ui.steps import fix
+    fix._api_key_box()
+
+
+def test_the_key_box_renders_and_never_writes_the_project(in_app, monkeypatch, tmp_path):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # restored after the test
+    monkeypatch.delenv("WISHBRIDGE_CLAUDE_SECRET", raising=False)
+    at = st_testing.AppTest.from_function(_key_panel, default_timeout=60).run()
+    assert not at.exception
+    monkeypatch.setattr(hosting, "test_claude_key", lambda v="": (True, "The key works - Claude answered."))
+    at.text_input[0].input("sk-ant-test-ui")
+    next(b for b in at.button if b.label == "Use this key").click().run()
+    assert not at.exception
+    assert __import__("os").environ["ANTHROPIC_API_KEY"] == "sk-ant-test-ui"
+    assert not any("sk-ant-test-ui" in p.read_text(errors="ignore") for p in tmp_path.rglob("*") if p.is_file())
+
+
+def test_a_wrong_key_is_tested_and_never_replaces_the_one_in_use(in_app, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-good")
+    monkeypatch.setenv("WISHBRIDGE_CLAUDE_SECRET", "")
+    monkeypatch.setattr(hosting, "test_claude_key", lambda v="": (False, "Anthropic does not accept this key"))
+    at = st_testing.AppTest.from_function(_key_panel, default_timeout=60).run()
+    at.text_input[0].input("sk-ant-wrong")
+    next(b for b in at.button if b.label == "Use this key").click().run()
+    assert not at.exception
+    assert __import__("os").environ["ANTHROPIC_API_KEY"] == "sk-ant-good"
+    assert any("does not accept" in e.value for e in at.error)
+    assert any("platform.claude.com" in m.value for m in at.markdown)  # how to get a key
+
+
+def test_the_keys_id_is_not_taken_for_the_key():
+    assert "ID" in hosting.key_format_problem("apikey_01ABC")
+    assert "sk-ant-" in hosting.key_format_problem("123456")
+    assert hosting.key_format_problem("sk-ant-api03-x") == ""
+    assert hosting.test_claude_key("apikey_01ABC")[0] is False  # caught before any call
+
+
+def _api_error(cls, status, message):
+    e = cls.__new__(cls)  # the error as the SDK raises it (status) - without a real HTTP response
+    Exception.__init__(e, f"Error code: {status} - {message}")
+    return e
+
+
+@pytest.mark.parametrize("cls,status,message,ok,says", [
+    ("AuthenticationError", 401, "invalid x-api-key", False, "does not accept"),
+    ("BadRequestError", 400, "Your credit balance is too low", False, "no credits"),
+    ("PermissionDeniedError", 403, "not allowed", False, "not allowed"),
+    (None, 0, "", True, "works"),
+])
+def test_testing_a_key_says_what_is_wrong(monkeypatch, cls, status, message, ok, says):
+    import anthropic
+
+    class Fake:
+        def __init__(self, **kw):
+            self.messages = self
+
+        def create(self, **kw):
+            if cls:
+                raise _api_error(getattr(anthropic, cls), status, message)
+
+    monkeypatch.setattr(anthropic, "Anthropic", Fake)
+    works, msg = hosting.test_claude_key("sk-ant-api03-x")
+    assert works is ok and says in msg

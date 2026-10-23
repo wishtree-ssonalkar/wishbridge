@@ -86,8 +86,8 @@ Grant "volume" "$cat.$sch.$vol" @("READ_VOLUME", "WRITE_VOLUME")
 foreach ($c in $TargetCatalogs) { Grant "catalog" $c @("USE_CATALOG", "CREATE_SCHEMA") }
 if ($ClaudeKeySecret) {
     $scope = $ClaudeKeySecret.Split("/")[0]
-    Dbx @("secrets", "put-acl", $scope, $sp, "READ") | Out-Null
-    Write-Host "    READ on secret scope $scope (Claude API key)"
+    Dbx @("secrets", "put-acl", $scope, $sp, "WRITE") | Out-Null  # WRITE: a key entered in the app is kept there
+    Write-Host "    WRITE on secret scope $scope (Claude API key)"
 }
 
 Write-Host "5/6 Upload WishBridge"

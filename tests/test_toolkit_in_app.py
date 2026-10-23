@@ -15,6 +15,9 @@ def app_home(monkeypatch, tmp_path):
     monkeypatch.setenv("WISHBRIDGE_HOSTED", "1")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(toolkit_setup, "STATUS", tmp_path / ".wishbridge" / "toolkit_status.json")
+    for name, part in (("JAVA_HOME", ".wishbridge/java"), ("JAVA_VENV", ".wishbridge/java-venv"),
+                       ("MORPH_LIB", ".databricks/labs/remorph-transpilers/databricks-morph-plugin/lib")):
+        monkeypatch.setattr(toolkit_setup, name, tmp_path / part)  # not this computer's own Java or Morpheus
     return tmp_path
 
 

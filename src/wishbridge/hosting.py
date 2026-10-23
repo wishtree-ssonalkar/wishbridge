@@ -240,6 +240,75 @@ def load_claude_key(w=None) -> str:
         return f"the secret {scope}/{key} could not be read: {_first(e)}"
 
 
+KEY_HELP = """**How to get an Anthropic API key**
+1. Sign in at [platform.claude.com](https://platform.claude.com) (the Claude Console) with the company account.
+2. **Billing**: the account needs credits - the free evaluation plan with $0.00 cannot call Claude (*Credits > Add funds*).
+3. **API keys > Create key**: name it e.g. *wishbridge* and create it.
+4. **Copy the key right away** - it starts with `sk-ant-` and is shown only once. The `apikey_...` value in the list
+   is only the key's ID; if the key was not copied, create a new one.
+5. Paste it below, **Test the key**, then **Use this key**."""
+
+
+def key_format_problem(value: str) -> str:
+    """Catch the usual mix-ups before asking Anthropic. '' when it looks like an API key."""
+    value = value.strip()
+    if value.startswith("apikey_"):
+        return ("That is the key's ID from the Console list, not the key. The key starts with sk-ant- and is shown "
+                "only once, when it is created - create a new key and copy it then.")
+    if not value.startswith("sk-ant-"):
+        return "An Anthropic API key starts with sk-ant-."
+    return ""
+
+
+def test_claude_key(value: str = "") -> tuple[bool, str]:
+    """Send Claude the smallest request (one token) with this key - or the key in use. (works, what happened)"""
+    value = value.strip() or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not value:
+        return False, "No key yet: paste one first."
+    problem = key_format_problem(value)
+    if problem:
+        return False, problem
+    import anthropic
+
+    try:
+        anthropic.Anthropic(api_key=value, max_retries=0, timeout=60).messages.create(
+            model="claude-haiku-5-5", max_tokens=1, messages=[{"role": "user", "content": "Hi"}])
+        return True, "The key works - Claude answered."
+    except anthropic.AuthenticationError:
+        return False, "Anthropic does not accept this key (wrong, deleted or disabled). Create a new key and paste it."
+    except anthropic.PermissionDeniedError as e:
+        return False, f"The key is valid but not allowed to call Claude here: {_first(e)}"
+    except anthropic.RateLimitError:
+        return True, "The key works (Claude is busy right now - try again in a minute)."
+    except anthropic.BadRequestError as e:
+        if "credit" in str(e).lower():
+            return False, ("The key is valid, but the account has no credits: in the Claude Console open Billing and "
+                           "add funds, then test again.")
+        return False, f"Claude refused the test: {_first(e)}"
+    except anthropic.APIConnectionError as e:
+        return False, f"Could not reach api.anthropic.com from here: {_first(e)}"
+    except anthropic.APIError as e:
+        return False, f"Claude could not be reached: {_first(e)}"
+
+
+def save_claude_key(value: str, w=None) -> str:
+    """Use this Anthropic API key from now on - never written to a project. On a laptop it lasts until WishBridge
+    closes; in the app it is also stored in the Databricks secret named in app.yaml, so it survives a restart.
+    Returns what went wrong, or ''."""
+    os.environ["ANTHROPIC_API_KEY"] = value
+    if not is_app():
+        return ""
+    if not os.environ.get(CLAUDE_SECRET_ENV, "").strip():
+        return "used until the app restarts: no Databricks secret is set up to keep it (deploy with -ClaudeKeySecret)"
+    scope, _, key = os.environ[CLAUDE_SECRET_ENV].strip().partition("/")
+    try:
+        w = w or workspace_client()
+        w.secrets.put_secret(scope=scope, key=key, string_value=value)
+        return ""
+    except Exception as e:  # noqa: BLE001 - no WRITE on the scope
+        return f"used until the app restarts: the secret {scope}/{key} could not be updated ({_first(e)})"
+
+
 # ----------------------------------------------------------------- the app's own check (instead of the laptop one)
 
 def check_app(w=None) -> list[dict[str, Any]]:

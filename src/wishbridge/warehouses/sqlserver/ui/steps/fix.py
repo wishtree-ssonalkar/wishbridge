@@ -124,11 +124,8 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
     from wishbridge import hosting
 
     vias = list(ai.VIA)  # the same choices everywhere; Claude Code says when it is not available here
-    via = cfg.assist_via if cfg.assist_via in vias else "databricks"
-    if hosting.is_app() and via in ("claude-code", "auto"):  # set on the laptop: use what works in the app
-        import os as _os
-
-        via = "api" if _os.environ.get("ANTHROPIC_API_KEY") else "databricks"
+    via = _first_via(cfg.assist_via if cfg.assist_via in vias else "databricks", cfg.assist_endpoint,
+                     "claude-via" in st.session_state)
     c1, c2 = st.columns([3, 2])
     chosen = c1.radio("Connect with", vias, index=vias.index(via), format_func=ai.VIA.get, horizontal=True,
                       key="claude-via")
@@ -195,6 +192,8 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
                 _setup_steps("claude-code", "Claude Code did not answer the test.")
         else:
             _setup_steps("claude-code", msg)
+    elif chosen == "api":
+        _api_key_box()
     backend, how = ai.assist_backend(chosen, cfg.profile, endpoint)
     found_none = ss.get("claude_endpoints") == []  # Find Claude models found nothing in this workspace
     if backend is None and chosen in ("databricks", "api") and (
@@ -260,6 +259,51 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
     if c2.button("🗑 Discard", key=f"claude-discard:{pick}"):
         ss.pop(key, None)
         st.rerun()
+
+
+def _first_via(via: str, endpoint: str, picked: bool) -> str:
+    """In the app, the project's choice may not work there: Claude Code is laptop-only, and the Databricks workspace
+    needs a chosen Claude model. Use the API key from the app's secret instead - until the person picks one."""
+    import os
+
+    if not hosting.is_app() or picked:
+        return via
+    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if via in ("claude-code", "auto"):
+        return "api" if has_key else "databricks"
+    if via == "databricks" and not endpoint and has_key:
+        return "api"
+    return via
+
+
+def _api_key_box() -> None:
+    """Paste an Anthropic API key here. It never goes into the project (see hosting.save_claude_key)."""
+    import os
+
+    have = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    tested = ss.get("claude_key_test")  # (works, message) of the last test
+    with st.expander("🔑 Anthropic API key" + (" - set (test or replace it here)" if have else " - paste it here"),
+                     expanded=not have or (tested is not None and not tested[0])):
+        st.markdown(hosting.KEY_HELP)
+        st.caption("Never saved in the project. " + ("Kept in the workspace's Databricks secret." if hosting.is_app()
+                   else "Used until WishBridge closes (set ANTHROPIC_API_KEY to keep it)."))
+        with st.form("claude-key-form", clear_on_submit=True, border=False):
+            value = st.text_input("API key", type="password", placeholder="sk-ant-...")
+            b1, b2 = st.columns(2)
+            test = b1.form_submit_button("🔌 Test the key" if not have else "🔌 Test (the pasted key, or the one in use)")
+            use = b2.form_submit_button("Use this key", type="primary")
+        if test or (use and value.strip()):
+            with st.spinner("Sending Claude a one-word request..."):
+                ok, msg = hosting.test_claude_key(value)
+            ss.claude_key_test = (ok, msg)
+            # a valid key is kept even without credits (they can be added later); a wrong one never replaces the key
+            if use and value.strip() and (ok or "credits" in msg):
+                problem = hosting.save_claude_key(value.strip())
+                ss.claude_key_problem = ""
+                ss.claude_key_test = (ok, f"Key in use. {msg}" + (f" ({problem})" if problem else ""))
+            st.rerun()
+        if tested is not None:
+            (st.success if tested[0] else st.error)(tested[1])
 
 
 def _setup_steps(via: str, why: str) -> None:
