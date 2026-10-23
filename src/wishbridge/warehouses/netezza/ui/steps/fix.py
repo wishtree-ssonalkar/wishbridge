@@ -281,20 +281,29 @@ def _api_key_box() -> None:
     import os
 
     have = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    with st.expander("🔑 Anthropic API key" + (" - set (replace it here)" if have else " - paste it here"),
-                     expanded=not have):
-        st.caption("From console.anthropic.com > API keys. Never saved in the project. "
-                   + ("Kept in the workspace's Databricks secret." if hosting.is_app()
-                      else "Used until WishBridge closes (set ANTHROPIC_API_KEY to keep it)."))
+    tested = ss.get("claude_key_test")  # (works, message) of the last test
+    with st.expander("🔑 Anthropic API key" + (" - set (test or replace it here)" if have else " - paste it here"),
+                     expanded=not have or (tested is not None and not tested[0])):
+        st.markdown(hosting.KEY_HELP)
+        st.caption("Never saved in the project. " + ("Kept in the workspace's Databricks secret." if hosting.is_app()
+                   else "Used until WishBridge closes (set ANTHROPIC_API_KEY to keep it)."))
         with st.form("claude-key-form", clear_on_submit=True, border=False):
             value = st.text_input("API key", type="password", placeholder="sk-ant-...")
-            if st.form_submit_button("Use this key") and value.strip():
+            b1, b2 = st.columns(2)
+            test = b1.form_submit_button("🔌 Test the key" if not have else "🔌 Test (the pasted key, or the one in use)")
+            use = b2.form_submit_button("Use this key", type="primary")
+        if test or (use and value.strip()):
+            with st.spinner("Sending Claude a one-word request..."):
+                ok, msg = hosting.test_claude_key(value)
+            ss.claude_key_test = (ok, msg)
+            # a valid key is kept even without credits (they can be added later); a wrong one never replaces the key
+            if use and value.strip() and (ok or "credits" in msg):
                 problem = hosting.save_claude_key(value.strip())
                 ss.claude_key_problem = ""
-                ss.claude_key_msg = ("⚠️ Key in use - " + problem) if problem else "✅ Key in use."
-                st.rerun()
-        if ss.get("claude_key_msg"):
-            st.caption(ss.claude_key_msg)
+                ss.claude_key_test = (ok, f"Key in use. {msg}" + (f" ({problem})" if problem else ""))
+            st.rerun()
+        if tested is not None:
+            (st.success if tested[0] else st.error)(tested[1])
 
 
 def _setup_steps(via: str, why: str) -> None:
