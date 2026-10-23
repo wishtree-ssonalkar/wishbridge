@@ -9,6 +9,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from wishbridge import hosting
+
 from wishbridge.warehouses.redshift import ai
 from wishbridge.warehouses.redshift.convert import original_file
 from wishbridge.warehouses.redshift.staging import read_source

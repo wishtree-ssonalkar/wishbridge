@@ -288,3 +288,19 @@ def test_the_claude_key_comes_from_a_databricks_secret(in_app, monkeypatch):
 
     assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-test"
     monkeypatch.delenv("ANTHROPIC_API_KEY")
+
+
+def _setup_panel():
+    import streamlit as st  # noqa: F401
+    from wishbridge.warehouses.ssis.ui.steps import fix
+
+    fix._setup_steps("databricks", "Claude is not ready")
+
+
+def test_the_claude_setup_steps_render_in_the_app(in_app):
+    """The panel that crashed (NameError) in the app: it renders and says what the admin sets up."""
+    at = st_testing.AppTest.from_function(_setup_panel, default_timeout=60).run()
+    assert not at.exception
+    text = " ".join(m.value for m in at.markdown)
+    assert "Serving" in text and "API key" in text
+    assert any("ClaudeKeySecret" in c.value for c in at.code)

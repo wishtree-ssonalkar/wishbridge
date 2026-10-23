@@ -9,6 +9,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from wishbridge import hosting
+
 from wishbridge.warehouses.bigquery import ai
 from wishbridge.warehouses.bigquery.convert import original_file
 from wishbridge.warehouses.bigquery.staging import read_source
