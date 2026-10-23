@@ -123,6 +123,10 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
 
     vias = list(ai.VIA)  # the same choices everywhere; Claude Code says when it is not available here
     via = cfg.assist_via if cfg.assist_via in vias else "databricks"
+    if hosting.is_app() and via in ("claude-code", "auto"):  # set on the laptop: use what works in the app
+        import os as _os
+
+        via = "api" if _os.environ.get("ANTHROPIC_API_KEY") else "databricks"
     c1, c2 = st.columns([3, 2])
     chosen = c1.radio("Connect with", vias, index=vias.index(via), format_func=ai.VIA.get, horizontal=True,
                       key="claude-via")
@@ -282,6 +286,17 @@ def _setup_steps(via: str, why: str) -> None:
                 ss.pop("claude_code_test", None)
                 st.rerun()
             st.caption("Not installed? Install Claude Code from claude.com/claude-code, then restart WishBridge.")
+        elif hosting.is_app():
+            st.markdown(
+                "In the Databricks app Claude works in one of two ways - the workspace admin sets it up once:\n"
+                "1. **A Claude model in this workspace**: Databricks > **Serving** - enable a Claude foundation model "
+                "(e.g. databricks-claude-sonnet-4) and give the app's identity CAN QUERY; then choose *Databricks "
+                "workspace* here and **🔎 Find Claude models**.\n"
+                "2. **An Anthropic API key** (console.anthropic.com): store it as a Databricks secret and redeploy the "
+                "app with it - the key never goes into the code or the project:")
+            st.code("databricks secrets create-scope wishbridge\n"
+                    "databricks secrets put-secret wishbridge anthropic-api-key\n"
+                    ".\\deploy-databricks-app.ps1 ... -ClaudeKeySecret wishbridge/anthropic-api-key", language="bash")
         elif via == "databricks":
             st.markdown(
                 "Uses the Databricks login this project deploys with. Do this once per computer:\n"

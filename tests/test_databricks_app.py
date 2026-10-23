@@ -272,3 +272,19 @@ def test_people_get_the_schemas_the_app_creates(in_app, monkeypatch):
     assert hosting.share_schema(w, "test.salesdw") == []
     assert [c[1]["body"]["changes"][0]["principal"] for c in calls] == ["shubham@wishtree.example", "migration-team"]
     assert calls[0][0] == ("PATCH", "/api/2.1/unity-catalog/permissions/schema/test.salesdw")
+
+
+def test_the_claude_key_comes_from_a_databricks_secret(in_app, monkeypatch):
+    import base64
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("WISHBRIDGE_CLAUDE_SECRET", "wishbridge/anthropic-api-key")
+    asked = []
+    secrets = types.SimpleNamespace(get_secret=lambda scope, key: asked.append((scope, key)) or
+                                    types.SimpleNamespace(value=base64.b64encode(b"sk-ant-test").decode()))
+    assert hosting.load_claude_key(types.SimpleNamespace(secrets=secrets)) == ""
+    assert asked == [("wishbridge", "anthropic-api-key")]
+    import os
+
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-test"
+    monkeypatch.delenv("ANTHROPIC_API_KEY")

@@ -10,6 +10,8 @@ Deploy WishBridge as a Databricks App (option 3) into a workspace - Wishtree's f
   -TargetCatalogs  catalogs the app may create its test schemas in (it gets USE CATALOG + CREATE SCHEMA there)
   -ShareWith       group(s) that also get the test schemas the app creates, e.g. "wishtree-migration-team"
                    (the person using the app always gets them)
+  -ClaudeKeySecret scope/key of a Databricks secret holding an Anthropic API key, for Claude in the app
+                   (databricks secrets create-scope wishbridge; databricks secrets put-secret wishbridge anthropic-api-key)
   -AppName         default "wishbridge" (lower-case letters, digits and -)
 
 Run it again to deploy a new version of WishBridge: the app, its volume and its projects are kept.
@@ -21,6 +23,7 @@ param(
     [string]$ProjectsVolume = "/Volumes/workspace/wishbridge/projects",
     [string[]]$TargetCatalogs = @(),
     [string]$ShareWith = "",
+    [string]$ClaudeKeySecret = "",
     [string]$AppName = "wishbridge"
 )
 $ErrorActionPreference = "Stop"
@@ -81,6 +84,11 @@ Grant "catalog" $cat @("USE_CATALOG")
 Grant "schema" "$cat.$sch" @("USE_SCHEMA")
 Grant "volume" "$cat.$sch.$vol" @("READ_VOLUME", "WRITE_VOLUME")
 foreach ($c in $TargetCatalogs) { Grant "catalog" $c @("USE_CATALOG", "CREATE_SCHEMA") }
+if ($ClaudeKeySecret) {
+    $scope = $ClaudeKeySecret.Split("/")[0]
+    Dbx @("secrets", "put-acl", $scope, $sp, "READ") | Out-Null
+    Write-Host "    READ on secret scope $scope (Claude API key)"
+}
 
 Write-Host "5/6 Upload WishBridge"
 # a fixed build folder: `databricks sync` remembers what it sent, so a new version only uploads the changes
@@ -99,6 +107,7 @@ $yaml = Join-Path $stage "app.yaml"
 $text = Get-Content $yaml -Raw
 $text = [regex]::Replace($text, '(name: WISHBRIDGE_PROJECTS_VOLUME\s+value: )"[^"]*"', ('${1}"' + $ProjectsVolume + '"'))
 $text = [regex]::Replace($text, '(name: WISHBRIDGE_SHARE_WITH\s+value: )"[^"]*"', ('${1}"' + $ShareWith + '"'))
+$text = [regex]::Replace($text, '(name: WISHBRIDGE_CLAUDE_SECRET\s+value: )"[^"]*"', ('${1}"' + $ClaudeKeySecret + '"'))
 [System.IO.File]::WriteAllText($yaml, $text)
 # never upload code that does not compile
 $py = (Get-Command python -ErrorAction SilentlyContinue).Source
