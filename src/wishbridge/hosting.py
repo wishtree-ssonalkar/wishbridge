@@ -240,6 +240,24 @@ def load_claude_key(w=None) -> str:
         return f"the secret {scope}/{key} could not be read: {_first(e)}"
 
 
+def save_claude_key(value: str, w=None) -> str:
+    """Use this Anthropic API key from now on - never written to a project. On a laptop it lasts until WishBridge
+    closes; in the app it is also stored in the Databricks secret named in app.yaml, so it survives a restart.
+    Returns what went wrong, or ''."""
+    os.environ["ANTHROPIC_API_KEY"] = value
+    if not is_app():
+        return ""
+    if not os.environ.get(CLAUDE_SECRET_ENV, "").strip():
+        return "used until the app restarts: no Databricks secret is set up to keep it (deploy with -ClaudeKeySecret)"
+    scope, _, key = os.environ[CLAUDE_SECRET_ENV].strip().partition("/")
+    try:
+        w = w or workspace_client()
+        w.secrets.put_secret(scope=scope, key=key, string_value=value)
+        return ""
+    except Exception as e:  # noqa: BLE001 - no WRITE on the scope
+        return f"used until the app restarts: the secret {scope}/{key} could not be updated ({_first(e)})"
+
+
 # ----------------------------------------------------------------- the app's own check (instead of the laptop one)
 
 def check_app(w=None) -> list[dict[str, Any]]:

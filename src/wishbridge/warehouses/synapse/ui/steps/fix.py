@@ -124,11 +124,8 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
     from wishbridge import hosting
 
     vias = list(ai.VIA)  # the same choices everywhere; Claude Code says when it is not available here
-    via = cfg.assist_via if cfg.assist_via in vias else "databricks"
-    if hosting.is_app() and via in ("claude-code", "auto"):  # set on the laptop: use what works in the app
-        import os as _os
-
-        via = "api" if _os.environ.get("ANTHROPIC_API_KEY") else "databricks"
+    via = _first_via(cfg.assist_via if cfg.assist_via in vias else "databricks", cfg.assist_endpoint,
+                     "claude-via" in st.session_state)
     c1, c2 = st.columns([3, 2])
     chosen = c1.radio("Connect with", vias, index=vias.index(via), format_func=ai.VIA.get, horizontal=True,
                       key="claude-via")
@@ -195,6 +192,8 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
                 _setup_steps("claude-code", "Claude Code did not answer the test.")
         else:
             _setup_steps("claude-code", msg)
+    elif chosen == "api":
+        _api_key_box()
     backend, how = ai.assist_backend(chosen, cfg.profile, endpoint)
     found_none = ss.get("claude_endpoints") == []  # Find Claude models found nothing in this workspace
     if backend is None and chosen in ("databricks", "api") and (
@@ -260,6 +259,42 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
     if c2.button("🗑 Discard", key=f"claude-discard:{pick}"):
         ss.pop(key, None)
         st.rerun()
+
+
+def _first_via(via: str, endpoint: str, picked: bool) -> str:
+    """In the app, the project's choice may not work there: Claude Code is laptop-only, and the Databricks workspace
+    needs a chosen Claude model. Use the API key from the app's secret instead - until the person picks one."""
+    import os
+
+    if not hosting.is_app() or picked:
+        return via
+    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if via in ("claude-code", "auto"):
+        return "api" if has_key else "databricks"
+    if via == "databricks" and not endpoint and has_key:
+        return "api"
+    return via
+
+
+def _api_key_box() -> None:
+    """Paste an Anthropic API key here. It never goes into the project (see hosting.save_claude_key)."""
+    import os
+
+    have = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    with st.expander("🔑 Anthropic API key" + (" - set (replace it here)" if have else " - paste it here"),
+                     expanded=not have):
+        st.caption("From console.anthropic.com > API keys. Never saved in the project. "
+                   + ("Kept in the workspace's Databricks secret." if hosting.is_app()
+                      else "Used until WishBridge closes (set ANTHROPIC_API_KEY to keep it)."))
+        with st.form("claude-key-form", clear_on_submit=True, border=False):
+            value = st.text_input("API key", type="password", placeholder="sk-ant-...")
+            if st.form_submit_button("Use this key") and value.strip():
+                problem = hosting.save_claude_key(value.strip())
+                ss.claude_key_problem = ""
+                ss.claude_key_msg = ("⚠️ Key in use - " + problem) if problem else "✅ Key in use."
+                st.rerun()
+        if ss.get("claude_key_msg"):
+            st.caption(ss.claude_key_msg)
 
 
 def _setup_steps(via: str, why: str) -> None:

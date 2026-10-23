@@ -304,3 +304,58 @@ def test_the_claude_setup_steps_render_in_the_app(in_app):
     text = " ".join(m.value for m in at.markdown)
     assert "Serving" in text and "API key" in text
     assert any("ClaudeKeySecret" in c.value for c in at.code)
+
+
+def test_the_app_uses_its_claude_key_when_no_model_is_chosen(in_app, monkeypatch):
+    from wishbridge.warehouses.ssis.ui.steps import fix
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    assert fix._first_via("databricks", "", picked=False) == "api"
+    assert fix._first_via("claude-code", "", picked=False) == "api"
+    assert fix._first_via("databricks", "databricks-claude-sonnet-4", picked=False) == "databricks"
+    assert fix._first_via("databricks", "", picked=True) == "databricks"  # the person's own choice stays
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    assert fix._first_via("databricks", "", picked=False) == "databricks"
+    assert fix._first_via("claude-code", "", picked=False) == "databricks"
+
+
+def test_the_laptop_keeps_the_projects_claude_choice(monkeypatch):
+    from wishbridge.warehouses.ssis.ui.steps import fix
+
+    monkeypatch.delenv("WISHBRIDGE_HOSTED", raising=False)
+    monkeypatch.delenv("DATABRICKS_APP_NAME", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    assert fix._first_via("databricks", "", picked=False) == "databricks"
+
+
+def test_a_key_typed_in_the_app_goes_into_the_databricks_secret(in_app, monkeypatch):
+    stored = {}
+    in_app.secrets = types.SimpleNamespace(put_secret=lambda **kw: stored.update(kw))
+    monkeypatch.setenv("WISHBRIDGE_CLAUDE_SECRET", "wishbridge/anthropic-api-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # restored after the test
+    assert hosting.save_claude_key("sk-test") == ""
+    assert stored == {"scope": "wishbridge", "key": "anthropic-api-key", "string_value": "sk-test"}
+    assert __import__("os").environ["ANTHROPIC_API_KEY"] == "sk-test"
+
+
+def test_without_a_secret_the_typed_key_lasts_until_a_restart(in_app, monkeypatch):
+    monkeypatch.delenv("WISHBRIDGE_CLAUDE_SECRET", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # restored after the test
+    assert "until the app restarts" in hosting.save_claude_key("sk-test")
+
+
+def _key_panel():
+    from wishbridge.warehouses.ssis.ui.steps import fix
+    fix._api_key_box()
+
+
+def test_the_key_box_renders_and_never_writes_the_project(in_app, monkeypatch, tmp_path):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # restored after the test
+    monkeypatch.delenv("WISHBRIDGE_CLAUDE_SECRET", raising=False)
+    at = st_testing.AppTest.from_function(_key_panel, default_timeout=60).run()
+    assert not at.exception
+    at.text_input[0].input("sk-test-ui")
+    at.button[0].click().run()
+    assert not at.exception
+    assert __import__("os").environ["ANTHROPIC_API_KEY"] == "sk-test-ui"
+    assert not any("sk-test-ui" in p.read_text(errors="ignore") for p in tmp_path.rglob("*") if p.is_file())
