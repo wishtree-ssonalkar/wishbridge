@@ -17,7 +17,7 @@ SQL Server and Oracle are general database products, so the same software can ho
 application's data. Analyze runs a **fit check** that confirms the code is a warehouse and warns when it is not.
 
 **New to WishBridge? Start with the step-by-step [User Guide](docs/USER_GUIDE.md).**
-Running it in a Databricks workspace: [Databricks App](docs/DATABRICKS_APP.md). Changing or debugging it: [Architecture](docs/ARCHITECTURE.md).
+Running it in a Databricks workspace: [Databricks App](docs/DATABRICKS_APP.md). Changing or debugging it: [Architecture](docs/ARCHITECTURE.md) (with diagrams: docs/ARCHITECTURE.html).
 Prefer forms to commands? Double-click `Start WishBridge.cmd` (or run `wishbridge ui`) to open the WishBridge app
 in your browser: create a project, fill in the settings, upload code, press Start and review the results.
 
