@@ -11,6 +11,10 @@ env:
   # using the app. Empty: only that person.
   - name: WISHBRIDGE_SHARE_WITH
     value: ""
+  # Claude through an Anthropic API key kept as a Databricks secret: "scope/key" (empty: not used). The deploy
+  # script fills it in with -ClaudeKeySecret and lets the app read that secret.
+  - name: WISHBRIDGE_CLAUDE_SECRET
+    value: ""
   # The SQL warehouse given to the app as a resource named "sql-warehouse".
   - name: WISHBRIDGE_WAREHOUSE_ID
     valueFrom: "sql-warehouse"

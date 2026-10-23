@@ -217,6 +217,29 @@ def share_schema(w, full_name: str) -> list[str]:
     return problems
 
 
+# ----------------------------------------------------------------- Claude in the app
+
+CLAUDE_SECRET_ENV = "WISHBRIDGE_CLAUDE_SECRET"  # "scope/key" of a Databricks secret holding an Anthropic API key
+
+
+def load_claude_key(w=None) -> str:
+    """Databricks App: read the Anthropic API key from the Databricks secret named in app.yaml, once, into
+    ANTHROPIC_API_KEY (background runs inherit it). Returns what went wrong, or ''."""
+    if os.environ.get("ANTHROPIC_API_KEY") or not os.environ.get(CLAUDE_SECRET_ENV, "").strip():
+        return ""
+    scope, _, key = os.environ[CLAUDE_SECRET_ENV].strip().partition("/")
+    try:
+        import base64
+
+        w = w or workspace_client()
+        value = base64.b64decode(w.secrets.get_secret(scope=scope, key=key).value).decode("utf-8").strip()
+        if value:
+            os.environ["ANTHROPIC_API_KEY"] = value
+        return ""
+    except Exception as e:  # noqa: BLE001 - no secret, no permission
+        return f"the secret {scope}/{key} could not be read: {_first(e)}"
+
+
 # ----------------------------------------------------------------- the app's own check (instead of the laptop one)
 
 def check_app(w=None) -> list[dict[str, Any]]:

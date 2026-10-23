@@ -91,6 +91,8 @@ def app_check() -> None:
     from wishbridge import toolkit_setup
 
     toolkit_setup.ensure_started()  # analyze and convert in the app (installs in the background, once per start)
+    if "claude_key_problem" not in ss:
+        ss.claude_key_problem = hosting.load_claude_key()  # the Anthropic API key from a Databricks secret, if set
     rows = ss.app_check
     if all(r["ok"] for r in rows):
         st.success("✅ Running in Databricks")
@@ -109,6 +111,12 @@ def app_check() -> None:
         else:
             mark, text = "⏳", f"installing ({tk.get('step') or 'starting'}) - a few minutes after the app starts"
         st.markdown(f"{mark} **Migration toolkit** — {text}")
+        import os as _os
+
+        if _os.environ.get("ANTHROPIC_API_KEY"):
+            st.markdown("✅ **Claude** — API key from the workspace's secret")
+        elif ss.get("claude_key_problem"):
+            st.markdown(f"⚠️ **Claude** — {ss.claude_key_problem}")
         st.caption(" · ".join(f"{'✓' if ok else '✗'} {name}" for name, ok in toolkit_setup.parts().items()))
         if not toolkit_setup.ready() and toolkit_setup.log_tail():
             st.code(toolkit_setup.log_tail(), language="text")
