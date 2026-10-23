@@ -8,7 +8,8 @@ toolkit needs older versions of some packages than WishBridge), in the places th
   ~/.databricks/labs/remorph-transpilers/bladebridge/lib/.venv  the BladeBridge converter (+ lib/config.yml)
   ~/.databricks/labs/remorph-transpilers/databricks-morph-plugin/lib  the Morpheus converter (a Java program, from
                                                                   Maven Central, the version the laptop uses)
-  ~/.wishbridge/java                                             Java 21 for Morpheus (Eclipse Temurin, from Adoptium)
+  ~/.wishbridge/java-venv                                        Java 21 for Morpheus (the jdk4py package, from PyPI;
+                                                                  Eclipse Temurin from Adoptium when PyPI fails)
 
 It runs in the background when the app starts (a few minutes) and writes its progress to a status file. With all
 of it in place the app converts exactly like the laptop (same converters, same order).
@@ -36,6 +37,8 @@ MORPH_VERSION = "0.10.0"  # the version the laptop's install-transpile put in pl
 MORPH_URL = (f"https://repo.maven.apache.org/maven2/com/databricks/labs/databricks-morph-plugin/{MORPH_VERSION}/"
              f"databricks-morph-plugin-{MORPH_VERSION}.jar")
 JAVA_HOME = Path.home() / ".wishbridge" / "java"
+JAVA_VENV = Path.home() / ".wishbridge" / "java-venv"
+JDK4PY = "jdk4py==21.0.8.2"  # Java 21 (Morpheus needs 21 or newer), as a Python package: installs like the toolkit
 JAVA_URL = "https://api.adoptium.net/v3/binary/latest/21/ga/linux/{arch}/jre/hotspot/normal/eclipse"
 STATUS = Path.home() / ".wishbridge" / "toolkit_status.json"
 SETUP_VERSION = 3  # raise it when the setup changes: an app that installed an older one sets up again
@@ -63,8 +66,11 @@ def ready() -> bool:
 
 def java_bin() -> Path | None:
     """The app's own Java (for Morpheus), when it is installed."""
-    found = next(JAVA_HOME.glob("*/bin/java"), None) if JAVA_HOME.is_dir() else None
-    return found if found and found.is_file() else None
+    for root, pattern in ((JAVA_VENV, "**/jdk4py/java-runtime/bin/java"), (JAVA_HOME, "*/bin/java")):
+        found = next(root.glob(pattern), None) if root.is_dir() else None
+        if found and found.is_file():
+            return found
+    return None
 
 
 def morph_ready() -> bool:
@@ -101,7 +107,8 @@ def _download(url: str, dest: Path) -> None:
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
-    with urllib.request.urlopen(url, timeout=600) as r, open(tmp, "wb") as f:
+    req = urllib.request.Request(url, headers={"User-Agent": "WishBridge/1.0 (+https://github.com/wishtree-ssonalkar/wishbridge)"})
+    with urllib.request.urlopen(req, timeout=600) as r, open(tmp, "wb") as f:
         shutil.copyfileobj(r, f)
     tmp.replace(dest)
 
@@ -112,6 +119,14 @@ def _install_java() -> None:
 
     if java_bin():
         return
+    try:  # Java as a Python package, from PyPI - which the app reaches for everything else too
+        _venv(JAVA_VENV, JDK4PY)
+        if java_bin():
+            for j in JAVA_VENV.rglob("jdk4py/java-runtime/bin/*"):
+                j.chmod(0o755)
+            return
+    except Exception as e:  # noqa: BLE001 - try Adoptium next
+        _log(f"Java from PyPI failed ({e}); trying Adoptium")
     arch = {"x86_64": "x64", "amd64": "x64", "aarch64": "aarch64", "arm64": "aarch64"}.get(platform.machine().lower(), "x64")
     archive = JAVA_HOME.parent / "java-21.tar.gz"
     _download(JAVA_URL.format(arch=arch), archive)

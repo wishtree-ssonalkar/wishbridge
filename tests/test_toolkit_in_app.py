@@ -72,3 +72,12 @@ def test_the_toolkit_gets_the_apps_java(app_home, monkeypatch):
     java.write_text("", encoding="utf-8")
     monkeypatch.setattr(toolkit_setup, "JAVA_HOME", app_home / ".wishbridge" / "java")
     assert toolkit_setup.java_bin() == java
+
+
+def test_java_from_pypi_is_found(app_home, monkeypatch):
+    java = app_home / ".wishbridge" / "java-venv" / "lib" / "python3.11" / "site-packages" / "jdk4py" / "java-runtime" / "bin" / "java"
+    java.parent.mkdir(parents=True)
+    java.write_text("", encoding="utf-8")
+    monkeypatch.setattr(toolkit_setup, "JAVA_VENV", app_home / ".wishbridge" / "java-venv")
+    monkeypatch.setattr(toolkit_setup, "JAVA_HOME", app_home / "none")
+    assert toolkit_setup.java_bin() == java
