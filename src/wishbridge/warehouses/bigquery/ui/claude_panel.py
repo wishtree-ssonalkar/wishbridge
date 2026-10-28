@@ -139,7 +139,7 @@ def claude_problem_panel(cfg, raw, page: str, problems: list[str], targets: list
         return
     key, job_key = f"claude-problem:{page}", f"{ss.project}|problem:{page}"
     with st.container(border=True):
-        st.markdown("#### ✨ Ask Claude about this problem")
+        st.markdown("#### ✨ Ask AI about this problem")
         flash = ss.pop(f"claude-problem-flash:{page}", None)
         if flash:
             st.success(flash)

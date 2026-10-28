@@ -199,20 +199,20 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
     found_none = ss.get("claude_endpoints") == []  # Find Claude models found nothing in this workspace
     if backend is None and chosen in ("databricks", "api") and (
             hosting.is_app() or not (chosen == "databricks" and cfg.profile and not endpoint) or found_none):
-        _setup_steps(chosen, f"Claude is {how}.")
+        _setup_steps(chosen, f"The AI connection is {how}.")
     elif backend is None and chosen in ("codex", "gemini-cli"):
         _setup_steps(chosen, f"The connection is {how}.")
     if not signed_in:
         backend = None
     st.caption(f"Sends this file's original, the Databricks version above (with your unsaved edits) and the open "
-               f"issues - never data. " + (f"Uses {how}." if backend else "Claude is not connected yet - see above."))
+               f"issues - never data. " + (f"Uses {how}." if backend else "The AI is not connected yet - see above."))
     key = f"claude:{pick}"
-    scope = st.radio("What do you want Claude to do?", list(_SCOPES), format_func=lambda s: _scope_label(cfg, s, pick),
+    scope = st.radio("What do you want the AI to do?", list(_SCOPES), format_func=lambda s: _scope_label(cfg, s, pick),
                      horizontal=True, key="claude-scope")
     if scope == "ask":
         _ask_anything(cfg, raw, f, pick, orig, current, todo, backend, chosen, model, speed, endpoint)
         return
-    details = st.text_area("Extra details for Claude (optional)", key=f"claude-notes:{pick}", height=90,
+    details = st.text_area("Extra details for the AI (optional)", key=f"claude-notes:{pick}", height=90,
                            placeholder="e.g. a catalog or schema name to use, a call to remove, or how a step "
                                        "should behave.")
     if scope != "file":
@@ -220,7 +220,7 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
         return
     asked = ss.get(key)
     job_key = f"{ss.project}|{pick}"
-    if st.button("✨ Ask again" if asked else "✨ Ask Claude", disabled=backend is None or job_key in _JOBS,
+    if st.button("✨ Ask again" if asked else "✨ Ask AI", disabled=backend is None or job_key in _JOBS,
                  key=f"claude-ask:{pick}"):
         original = (read_source(orig) if orig is not None and orig.is_file()
                     else "(no original file: made from the table definitions read from the database)")
@@ -245,11 +245,11 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
     if asked.status != "ok":
         st.error(asked.notes + took)
         return
-    st.success(f"Claude's suggestion{took} is below. Check it before using it: nothing is saved until you choose.")
+    st.success(f"The AI's suggestion{took} is below. Check it before using it: nothing is saved until you choose.")
     if asked.notes:
         st.markdown(asked.notes)
     diff = "".join(difflib.unified_diff(current.splitlines(keepends=True), asked.sql.splitlines(keepends=True),
-                                        "current", "Claude's suggestion"))
+                                        "current", "AI suggestion"))
     st.code(diff or "(Claude suggests no changes)", language="diff")
     c1, c2 = st.columns(2)
     if c1.button("✅ Use this fix", type="primary", key=f"claude-use:{pick}", disabled=not diff):
@@ -541,7 +541,7 @@ def _fix_all(cfg, raw, scope, details, backend, chosen, model, speed, endpoint) 
     batch = _BATCHES.get(bkey)
     if batch is None:
         files = _batch_files(cfg, scope)
-        st.caption("Claude reviews and fixes every file in the list, 3 at a time. You then see one list with each "
+        st.caption("The AI reviews and fixes every file in the list, 3 at a time. You then see one list with each "
                    "file's changes, tick the ones to keep and save them in one go - nothing is saved before that.")
         if st.button(f"✨ Review and fix {len(files)} file{'' if len(files) == 1 else 's'}", type="primary", disabled=backend is None or not files,
                      key="claude-fix-all"):
@@ -591,7 +591,7 @@ def _batch_results(raw, bkey: str) -> None:
     same = [r for r, s in rows if s.status == "ok" and (not s.sql or s.sql == r["current"])]
     failed = [(r, s) for r, s in rows if s.status != "ok"]
     secs = (b["finished"] or time.time()) - b["started"]
-    st.success(f"Claude reviewed {len(rows)} of {b['total']} files in {secs:.0f} s: **{len(changed)} with fixes**, "
+    st.success(f"The AI reviewed {len(rows)} of {b['total']} files in {secs:.0f} s: **{len(changed)} with fixes**, "
                f"{len(same)} need no change, {len(failed)} could not be done. Untick any fix you don't want, then "
                "save them all at once.")
     for r, s in changed:
@@ -652,7 +652,7 @@ def _ask_anything(cfg, raw, f, pick, orig, current, todo, backend, chosen, model
                             placeholder="Ask anything about this project or the open file, e.g. Which files use the "
                                         "Orders table? / Explain what this package does / Why does this file need a "
                                         "fix? / Change the target schema in this file to sales")
-    st.caption(f"Claude sees the project background, the list of files with their status and open issues, the open "
+    st.caption(f"The AI sees the project background, the list of files with their status and open issues, the open "
                f"file ({pick}) and your last questions - code only, never data. Changes are shown first and saved only "
                "when you choose.")
     if st.button("💬 Ask", type="primary", disabled=backend is None or not question.strip() or job_key in _JOBS,
