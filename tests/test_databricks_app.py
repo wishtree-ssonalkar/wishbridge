@@ -449,3 +449,36 @@ def test_testing_a_key_says_what_is_wrong(monkeypatch, cls, status, message, ok,
     monkeypatch.setattr(anthropic, "Anthropic", Fake)
     works, msg = hosting.test_claude_key("sk-ant-api03-x")
     assert works is ok and says in msg
+
+
+@pytest.mark.parametrize("app", [True, False])
+def test_the_client_is_built_the_way_the_real_sdk_accepts(monkeypatch, app):
+    """The fakes elsewhere take any argument; this checks the calls against the real WorkspaceClient and Config."""
+    import inspect
+
+    import databricks.sdk
+    import databricks.sdk.config
+
+    real_client, real_config = databricks.sdk.WorkspaceClient, databricks.sdk.config.Config
+    built = []
+
+    def client(*a, **kw):
+        inspect.signature(real_client.__init__).bind(None, *a, **kw)  # raises on an argument it does not take
+        built.append(kw)
+        return types.SimpleNamespace()
+
+    def config(**kw):
+        inspect.signature(real_config.__init__).bind(None, **kw)
+        return ("config", kw)
+
+    monkeypatch.setattr(databricks.sdk, "WorkspaceClient", client)
+    monkeypatch.setattr(databricks.sdk.config, "Config", config)
+    if app:
+        monkeypatch.setenv("WISHBRIDGE_HOSTED", "1")
+    else:
+        monkeypatch.delenv("WISHBRIDGE_HOSTED", raising=False)
+        monkeypatch.delenv("DATABRICKS_APP_NAME", raising=False)
+    hosting.workspace_client("DEFAULT")
+    hosting.workspace_client("DEFAULT", http_timeout_seconds=900)  # how Fix code asks a served model
+    assert built[0] == ({} if app else {"profile": "DEFAULT"})
+    assert built[1] == {"config": ("config", {"http_timeout_seconds": 900, **({} if app else {"profile": "DEFAULT"})})}

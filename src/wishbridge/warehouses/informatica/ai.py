@@ -453,15 +453,30 @@ def databricks_claude_endpoints(profile: str) -> list[str]:
     return sorted(names) + sorted(others)
 
 
+def _answer_limit(error: str) -> int | None:
+    """The largest answer a served model allows, from its error ("max_new_tokens 32000 cannot be greater than
+    max_output_tokens 25000"); None when the error is about something else."""
+    if not re.search(r"max_(new_|output_|completion_)?tokens", error, re.IGNORECASE):
+        return None
+    numbers = [int(n) for n in re.findall(r"\b(\d{3,6})\b", error) if int(n) != 32000]
+    return min(numbers) if numbers else 8192
+
+
 def _ask_databricks(system: str, user: str, profile: str, endpoint: str) -> str:
     from wishbridge.hosting import workspace_client
     from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
 
+    messages = [ChatMessage(role=ChatMessageRole.SYSTEM, content=system),
+                ChatMessage(role=ChatMessageRole.USER, content=user)]
     try:
         w = workspace_client(profile=profile, http_timeout_seconds=900)
-        r = w.serving_endpoints.query(name=endpoint, max_tokens=32000, messages=[
-            ChatMessage(role=ChatMessageRole.SYSTEM, content=system),
-            ChatMessage(role=ChatMessageRole.USER, content=user)])
+        try:
+            r = w.serving_endpoints.query(name=endpoint, max_tokens=32000, messages=messages)
+        except Exception as e:  # noqa: BLE001 - each model has its own answer limit: ask again within it
+            limit = _answer_limit(str(e))
+            if not limit:
+                raise
+            r = w.serving_endpoints.query(name=endpoint, max_tokens=limit, messages=messages)
     except Exception as e:  # the SDK raises many types; the message says what is wrong
         raise AssistError(f"Databricks ({endpoint}, login {profile}): {_first_line(e)}") from e
     choice = (r.choices or [None])[0]

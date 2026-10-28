@@ -100,9 +100,10 @@ class _FakeWorkspace:
     """Stands in for databricks.sdk.WorkspaceClient: two served models, one answer."""
     asked = {}
 
-    def __init__(self, profile=None, **kw):
+    def __init__(self, profile=None, config=None, **kw):
         from types import SimpleNamespace as N
 
+        profile = profile or getattr(config, "profile", None)  # long requests pass their settings in a Config
         self.profile = profile
 
         def query(name, messages, max_tokens):
@@ -117,7 +118,11 @@ class _FakeWorkspace:
 def test_databricks_lists_claude_models_and_asks_with_the_project_login(monkeypatch):
     import databricks.sdk
 
+    import databricks.sdk.config
+    from types import SimpleNamespace
+
     monkeypatch.setattr(databricks.sdk, "WorkspaceClient", _FakeWorkspace)
+    monkeypatch.setattr(databricks.sdk.config, "Config", lambda **kw: SimpleNamespace(**kw))  # no real sign-in
     assert ai.databricks_claude_endpoints("DEFAULT") == ["databricks-claude-sonnet-4"]
     s = ai.ask_claude("SSIS", "notebook", "<DTS/>", "x = 1", [], "", "claude-opus-5-5",
                       via="databricks", profile="DEFAULT", endpoint="databricks-claude-sonnet-4")

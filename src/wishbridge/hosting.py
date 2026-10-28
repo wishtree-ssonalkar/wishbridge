@@ -35,9 +35,12 @@ def workspace_client(profile: str | None = None, **kwargs: Any):
     """The Databricks client: the saved login `profile` on a laptop, the app's own identity in a Databricks App."""
     from databricks.sdk import WorkspaceClient
 
-    if is_app():
-        return WorkspaceClient(**kwargs)
-    return WorkspaceClient(profile=profile, **kwargs)
+    login = {} if is_app() else {"profile": profile}
+    if not kwargs:
+        return WorkspaceClient(**login)
+    from databricks.sdk.config import Config  # settings such as http_timeout_seconds go through Config
+
+    return WorkspaceClient(config=Config(**login, **kwargs))
 
 
 def app_host() -> str:

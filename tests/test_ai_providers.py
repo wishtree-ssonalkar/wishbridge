@@ -174,3 +174,21 @@ def test_every_warehouse_offers_the_same_connections():
     for w in sorted(p.name for p in root.iterdir() if (p / "ai.py").is_file()):
         mod = importlib.import_module(f"wishbridge.warehouses.{w}.ai")
         assert list(mod.VIA) == list(ai.VIA), w
+
+
+def test_a_workspace_model_with_a_smaller_answer_limit_is_asked_again_within_it(monkeypatch):
+    from wishbridge import hosting
+
+    N = types.SimpleNamespace
+    asked = []
+
+    def query(name, max_tokens, messages):
+        asked.append(max_tokens)
+        if max_tokens > 25000:
+            raise RuntimeError("max_new_tokens 32000 cannot be greater than max_output_tokens 25000.")
+        return N(choices=[N(message=N(content="OK"), finish_reason="stop")])
+
+    monkeypatch.setattr(hosting, "workspace_client", lambda **kw: N(serving_endpoints=N(query=query)))
+    assert ai._ask_databricks("system", "user", "DEFAULT", "databricks-gpt-oss-120b") == "OK"
+    assert asked == [32000, 25000]
+    assert ai._answer_limit("ENDPOINT_NOT_FOUND: no such endpoint") is None
