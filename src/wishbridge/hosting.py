@@ -217,30 +217,22 @@ def share_schema(w, full_name: str) -> list[str]:
     return problems
 
 
-# ----------------------------------------------------------------- Claude in the app
+# ----------------------------------------------------------------- AI keys (Claude, Gemini, OpenAI)
 
-CLAUDE_SECRET_ENV = "WISHBRIDGE_CLAUDE_SECRET"  # "scope/key" of a Databricks secret holding an Anthropic API key
-
-
-def load_claude_key(w=None) -> str:
-    """Databricks App: read the Anthropic API key from the Databricks secret named in app.yaml, once, into
-    ANTHROPIC_API_KEY (background runs inherit it). Returns what went wrong, or ''."""
-    if os.environ.get("ANTHROPIC_API_KEY") or not os.environ.get(CLAUDE_SECRET_ENV, "").strip():
-        return ""
-    scope, _, key = os.environ[CLAUDE_SECRET_ENV].strip().partition("/")
-    try:
-        import base64
-
-        w = w or workspace_client()
-        value = base64.b64decode(w.secrets.get_secret(scope=scope, key=key).value).decode("utf-8").strip()
-        if value:
-            os.environ["ANTHROPIC_API_KEY"] = value
-        return ""
-    except Exception as e:  # noqa: BLE001 - no secret, no permission
-        return f"the secret {scope}/{key} could not be read: {_first(e)}"
+CLAUDE_SECRET_ENV = "WISHBRIDGE_CLAUDE_SECRET"  # "scope/key" of the Anthropic key's Databricks secret (older setting)
+AI_SCOPE_ENV = "WISHBRIDGE_AI_SECRET_SCOPE"  # Databricks secret scope holding the AI keys (one secret per provider)
 
 
-KEY_HELP = """**How to get an Anthropic API key**
+@dataclass
+class AiKey:
+    name: str      # who issues it
+    env: str       # where WishBridge reads it from
+    secret: str    # the secret's name in the scope
+    prefix: str    # how a real key starts ("" = not checked)
+    help: str
+
+
+_ANTHROPIC_HELP = """**How to get an Anthropic API key**
 1. Sign in at [platform.claude.com](https://platform.claude.com) (the Claude Console) with the company account.
 2. **Billing**: the account needs credits - the free evaluation plan with $0.00 cannot call Claude (*Credits > Add funds*).
 3. **API keys > Create key**: name it e.g. *wishbridge* and create it.
@@ -248,26 +240,90 @@ KEY_HELP = """**How to get an Anthropic API key**
    is only the key's ID; if the key was not copied, create a new one.
 5. Paste it below, **Test the key**, then **Use this key**."""
 
+_GEMINI_HELP = """**How to get a Gemini API key**
+1. Open [aistudio.google.com](https://aistudio.google.com) and sign in with the company Google account.
+2. **Get API key > Create API key** (pick or create a Google Cloud project).
+3. For client code use a project **with billing turned on**: on the free tier Google may use what is sent to improve
+   its products, and the limits are low.
+4. Copy the key, paste it below, **Test the key**, then **Use this key**."""
 
-def key_format_problem(value: str) -> str:
-    """Catch the usual mix-ups before asking Anthropic. '' when it looks like an API key."""
-    value = value.strip()
-    if value.startswith("apikey_"):
+_OPENAI_HELP = """**How to get an OpenAI (ChatGPT) API key**
+1. Sign in at [platform.openai.com](https://platform.openai.com) with the company account.
+2. **Billing**: add credits - the API is billed separately from a ChatGPT Plus / Team subscription.
+3. **API keys > Create new secret key**; copy it right away - it starts with `sk-` and is shown only once.
+4. Paste it below, **Test the key**, then **Use this key**."""
+
+AI_KEYS = {"api": AiKey("Anthropic (Claude)", "ANTHROPIC_API_KEY", "anthropic-api-key", "sk-ant-", _ANTHROPIC_HELP),
+           "gemini": AiKey("Google (Gemini)", "GEMINI_API_KEY", "gemini-api-key", "", _GEMINI_HELP),
+           "openai": AiKey("OpenAI (ChatGPT)", "OPENAI_API_KEY", "openai-api-key", "sk-", _OPENAI_HELP)}
+KEY_HELP = _ANTHROPIC_HELP
+
+
+def _key_secret(via: str) -> tuple[str, str] | None:
+    """(scope, key) of the Databricks secret that keeps this provider's key in the app, or None when none is set up."""
+    if via == "api" and os.environ.get(CLAUDE_SECRET_ENV, "").strip():
+        scope, _, key = os.environ[CLAUDE_SECRET_ENV].strip().partition("/")
+        return scope, key
+    scope = os.environ.get(AI_SCOPE_ENV, "").strip() or os.environ.get(CLAUDE_SECRET_ENV, "").partition("/")[0].strip()
+    return (scope, AI_KEYS[via].secret) if scope else None
+
+
+def load_keys(w=None) -> dict[str, str]:
+    """Databricks App: read the AI keys kept in the workspace's secrets into the environment (background runs inherit
+    them). Returns {provider: what went wrong}; a key that was never saved is not a problem."""
+    import base64
+
+    problems = {}
+    for via, k in AI_KEYS.items():
+        where = _key_secret(via)
+        if os.environ.get(k.env) or not where:
+            continue
+        try:
+            w = w or workspace_client()
+            value = base64.b64decode(w.secrets.get_secret(scope=where[0], key=where[1]).value).decode("utf-8").strip()
+            if value:
+                os.environ[k.env] = value
+        except Exception as e:  # noqa: BLE001 - not saved yet, or no permission
+            text = str(e).lower()
+            if not any(t in text for t in ("does not exist", "not found", "not_found")):
+                problems[via] = f"the secret {where[0]}/{where[1]} could not be read: {_first(e)}"
+    return problems
+
+
+def load_claude_key(w=None) -> str:
+    return load_keys(w).get("api", "")
+
+
+def key_format_problem(value: str, via: str = "api") -> str:
+    """Catch the usual mix-ups before asking the provider. '' when it looks like an API key."""
+    value, k = value.strip(), AI_KEYS[via]
+    if via == "api" and value.startswith("apikey_"):
         return ("That is the key's ID from the Console list, not the key. The key starts with sk-ant- and is shown "
                 "only once, when it is created - create a new key and copy it then.")
-    if not value.startswith("sk-ant-"):
-        return "An Anthropic API key starts with sk-ant-."
+    if not value or any(c.isspace() for c in value):
+        return "That does not look like an API key (empty, or it has spaces)."
+    if k.prefix and not value.startswith(k.prefix):
+        return f"An {k.name} API key starts with {k.prefix}."
     return ""
 
 
-def test_claude_key(value: str = "") -> tuple[bool, str]:
-    """Send Claude the smallest request (one token) with this key - or the key in use. (works, what happened)"""
-    value = value.strip() or os.environ.get("ANTHROPIC_API_KEY", "")
+def test_key(via: str, value: str = "") -> tuple[bool, str]:
+    """Send the smallest request with this key - or the key in use. (works, what happened)"""
+    k = AI_KEYS[via]
+    value = value.strip() or os.environ.get(k.env, "")
     if not value:
         return False, "No key yet: paste one first."
-    problem = key_format_problem(value)
+    problem = key_format_problem(value, via)
     if problem:
         return False, problem
+    if via == "api":
+        return _test_anthropic(value)
+    from wishbridge import ai_providers
+
+    return ai_providers.test(via, value)
+
+
+def _test_anthropic(value: str) -> tuple[bool, str]:
     import anthropic
 
     try:
@@ -291,22 +347,29 @@ def test_claude_key(value: str = "") -> tuple[bool, str]:
         return False, f"Claude could not be reached: {_first(e)}"
 
 
-def save_claude_key(value: str, w=None) -> str:
-    """Use this Anthropic API key from now on - never written to a project. On a laptop it lasts until WishBridge
-    closes; in the app it is also stored in the Databricks secret named in app.yaml, so it survives a restart.
-    Returns what went wrong, or ''."""
-    os.environ["ANTHROPIC_API_KEY"] = value
+def test_claude_key(value: str = "") -> tuple[bool, str]:
+    return test_key("api", value)
+
+
+def save_key(via: str, value: str, w=None) -> str:
+    """Use this key from now on - never written to a project. On a laptop it lasts until WishBridge closes; in the
+    app it is also stored in the workspace's Databricks secret, so it survives a restart. Returns what went wrong."""
+    os.environ[AI_KEYS[via].env] = value
     if not is_app():
         return ""
-    if not os.environ.get(CLAUDE_SECRET_ENV, "").strip():
-        return "used until the app restarts: no Databricks secret is set up to keep it (deploy with -ClaudeKeySecret)"
-    scope, _, key = os.environ[CLAUDE_SECRET_ENV].strip().partition("/")
+    where = _key_secret(via)
+    if not where:
+        return "used until the app restarts: no Databricks secret scope is set up to keep it (see DATABRICKS_APP.md)"
     try:
         w = w or workspace_client()
-        w.secrets.put_secret(scope=scope, key=key, string_value=value)
+        w.secrets.put_secret(scope=where[0], key=where[1], string_value=value)
         return ""
     except Exception as e:  # noqa: BLE001 - no WRITE on the scope
-        return f"used until the app restarts: the secret {scope}/{key} could not be updated ({_first(e)})"
+        return f"used until the app restarts: the secret {where[0]}/{where[1]} could not be updated ({_first(e)})"
+
+
+def save_claude_key(value: str, w=None) -> str:
+    return save_key("api", value, w)
 
 
 # ----------------------------------------------------------------- the app's own check (instead of the laptop one)

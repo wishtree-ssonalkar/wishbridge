@@ -92,7 +92,8 @@ def app_check() -> None:
 
     toolkit_setup.ensure_started()  # analyze and convert in the app (installs in the background, once per start)
     if "claude_key_problem" not in ss:
-        ss.claude_key_problem = hosting.load_claude_key()  # the Anthropic API key from a Databricks secret, if set
+        problems = hosting.load_keys()  # the AI keys kept in the workspace's Databricks secrets, if any
+        ss.claude_key_problem = "; ".join(f"{hosting.AI_KEYS[v].name}: {p}" for v, p in problems.items())
     rows = ss.app_check
     if all(r["ok"] for r in rows):
         st.success("✅ Running in Databricks")
@@ -113,10 +114,11 @@ def app_check() -> None:
         st.markdown(f"{mark} **Migration toolkit** — {text}")
         import os as _os
 
-        if _os.environ.get("ANTHROPIC_API_KEY"):
-            st.markdown("✅ **Claude** — API key from the workspace's secret")
-        elif ss.get("claude_key_problem"):
-            st.markdown(f"⚠️ **Claude** — {ss.claude_key_problem}")
+        keys = [k.name for k in hosting.AI_KEYS.values() if _os.environ.get(k.env)]
+        if keys:
+            st.markdown(f"✅ **AI keys** — {', '.join(keys)} (from the workspace's secrets)")
+        if ss.get("claude_key_problem"):
+            st.markdown(f"⚠️ **AI keys** — {ss.claude_key_problem}")
         st.caption(" · ".join(f"{'✓' if ok else '✗'} {name}" for name, ok in toolkit_setup.parts().items()))
         if not toolkit_setup.ready() and toolkit_setup.log_tail():
             st.code(toolkit_setup.log_tail(), language="text")

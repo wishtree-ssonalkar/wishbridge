@@ -15,6 +15,10 @@ env:
   # script fills it in with -ClaudeKeySecret and lets the app read that secret.
   - name: WISHBRIDGE_CLAUDE_SECRET
     value: ""
+  # The Databricks secret scope that keeps the AI keys pasted in Fix code (anthropic-api-key, gemini-api-key,
+  # openai-api-key) so they survive a restart. The deploy script creates it and lets the app write to it.
+  - name: WISHBRIDGE_AI_SECRET_SCOPE
+    value: "wishbridge"
   # The SQL warehouse given to the app as a resource named "sql-warehouse".
   - name: WISHBRIDGE_WAREHOUSE_ID
     valueFrom: "sql-warehouse"

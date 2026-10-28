@@ -274,20 +274,61 @@ def test_people_get_the_schemas_the_app_creates(in_app, monkeypatch):
     assert calls[0][0] == ("PATCH", "/api/2.1/unity-catalog/permissions/schema/test.salesdw")
 
 
-def test_the_claude_key_comes_from_a_databricks_secret(in_app, monkeypatch):
-    import base64
+@pytest.fixture
+def no_ai_keys(monkeypatch):
+    """No AI key in the environment; whatever a test sets is removed afterwards."""
+    for env in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.setenv(env, "")
+    monkeypatch.delenv("WISHBRIDGE_AI_SECRET_SCOPE", raising=False)
+    monkeypatch.delenv("WISHBRIDGE_CLAUDE_SECRET", raising=False)
 
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setenv("WISHBRIDGE_CLAUDE_SECRET", "wishbridge/anthropic-api-key")
-    asked = []
-    secrets = types.SimpleNamespace(get_secret=lambda scope, key: asked.append((scope, key)) or
-                                    types.SimpleNamespace(value=base64.b64encode(b"sk-ant-test").decode()))
-    assert hosting.load_claude_key(types.SimpleNamespace(secrets=secrets)) == ""
-    assert asked == [("wishbridge", "anthropic-api-key")]
+
+def test_the_ai_keys_come_from_the_databricks_secrets(in_app, monkeypatch, no_ai_keys):
+    import base64
     import os
 
-    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-test"
-    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    monkeypatch.setenv("WISHBRIDGE_AI_SECRET_SCOPE", "wishbridge")
+    asked = []
+
+    def get_secret(scope, key):
+        asked.append((scope, key))
+        if key == "openai-api-key":
+            raise RuntimeError("Secret does not exist with scope: wishbridge and key: openai-api-key")
+        return types.SimpleNamespace(value=base64.b64encode(f"value-of-{key}".encode()).decode())
+
+    assert hosting.load_keys(types.SimpleNamespace(secrets=types.SimpleNamespace(get_secret=get_secret))) == {}
+    assert asked == [("wishbridge", "anthropic-api-key"), ("wishbridge", "gemini-api-key"),
+                     ("wishbridge", "openai-api-key")]
+    assert os.environ["ANTHROPIC_API_KEY"] == "value-of-anthropic-api-key"
+    assert os.environ["GEMINI_API_KEY"] == "value-of-gemini-api-key"
+    assert os.environ["OPENAI_API_KEY"] == ""  # never saved: not a problem
+
+
+def test_the_older_claude_secret_setting_still_works(in_app, monkeypatch, no_ai_keys):
+    monkeypatch.setenv("WISHBRIDGE_CLAUDE_SECRET", "team/claude-key")
+    assert hosting._key_secret("api") == ("team", "claude-key")
+    assert hosting._key_secret("gemini") == ("team", "gemini-api-key")
+
+
+def test_a_secret_the_app_may_not_read_is_reported(in_app, monkeypatch, no_ai_keys):
+    monkeypatch.setenv("WISHBRIDGE_AI_SECRET_SCOPE", "wishbridge")
+
+    def get_secret(scope, key):
+        raise RuntimeError("PERMISSION_DENIED: no READ on scope wishbridge")
+
+    problems = hosting.load_keys(types.SimpleNamespace(secrets=types.SimpleNamespace(get_secret=get_secret)))
+    assert set(problems) == {"api", "gemini", "openai"} and "PERMISSION_DENIED" in problems["gemini"]
+
+
+def test_a_gemini_key_typed_in_the_app_goes_into_its_own_secret(in_app, monkeypatch, no_ai_keys):
+    import os
+
+    stored = {}
+    in_app.secrets = types.SimpleNamespace(put_secret=lambda **kw: stored.update(kw))
+    monkeypatch.setenv("WISHBRIDGE_AI_SECRET_SCOPE", "wishbridge")
+    assert hosting.save_key("gemini", "AQ.test") == ""
+    assert stored == {"scope": "wishbridge", "key": "gemini-api-key", "string_value": "AQ.test"}
+    assert os.environ["GEMINI_API_KEY"] == "AQ.test"
 
 
 def _setup_panel():
@@ -354,7 +395,7 @@ def test_the_key_box_renders_and_never_writes_the_project(in_app, monkeypatch, t
     monkeypatch.delenv("WISHBRIDGE_CLAUDE_SECRET", raising=False)
     at = st_testing.AppTest.from_function(_key_panel, default_timeout=60).run()
     assert not at.exception
-    monkeypatch.setattr(hosting, "test_claude_key", lambda v="": (True, "The key works - Claude answered."))
+    monkeypatch.setattr(hosting, "test_key", lambda via, v="": (True, "The key works - Claude answered."))
     at.text_input[0].input("sk-ant-test-ui")
     next(b for b in at.button if b.label == "Use this key").click().run()
     assert not at.exception
@@ -365,7 +406,7 @@ def test_the_key_box_renders_and_never_writes_the_project(in_app, monkeypatch, t
 def test_a_wrong_key_is_tested_and_never_replaces_the_one_in_use(in_app, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-good")
     monkeypatch.setenv("WISHBRIDGE_CLAUDE_SECRET", "")
-    monkeypatch.setattr(hosting, "test_claude_key", lambda v="": (False, "Anthropic does not accept this key"))
+    monkeypatch.setattr(hosting, "test_key", lambda via, v="": (False, "Anthropic does not accept this key"))
     at = st_testing.AppTest.from_function(_key_panel, default_timeout=60).run()
     at.text_input[0].input("sk-ant-wrong")
     next(b for b in at.button if b.label == "Use this key").click().run()

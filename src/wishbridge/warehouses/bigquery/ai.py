@@ -160,8 +160,15 @@ def _claude_code_exe() -> str | None:
     return exe
 
 
-VIA = {"databricks": "Databricks workspace (the project's login)", "claude-code": "Claude Code on this computer",
-       "api": "Claude API key (ANTHROPIC_API_KEY)"}
+VIA = {"databricks": "Databricks workspace model (Claude, GPT-OSS, Llama, ...)",
+       "claude-code": "Claude Code on this computer",
+       "api": "Claude API key",
+       "gemini": "Gemini API key",
+       "openai": "ChatGPT / OpenAI API key",
+       "codex": "Codex CLI on this computer",
+       "gemini-cli": "Gemini CLI on this computer"}
+KEY_VIAS = ("api", "gemini", "openai")  # an API key pasted in Fix code (hosting.AI_KEYS)
+CLI_VIAS = ("claude-code", "codex", "gemini-cli")  # a program the person signs in to on their laptop
 
 
 # Settings that send Claude Code somewhere else (a company gateway, a fixed model or token). WishBridge uses the
@@ -189,10 +196,24 @@ def assist_backend(via: str = "auto", profile: str = "", endpoint: str = "") -> 
             return None, "not available: the project has no Databricks login (Settings > Databricks workspace)"
         if not endpoint:
             return None, "not ready: choose the Claude model served in the workspace (Find Claude models)"
-        return "databricks", f"the Claude model `{endpoint}` in the Databricks workspace (login {profile})"
+        return "databricks", f"the model `{endpoint}` in the Databricks workspace (login {profile})"
     if via == "claude-code":
         return (("claude-code", "Claude Code on this computer") if _claude_code_exe() else
                 (None, "not available: Claude Code is not installed on this computer"))
+    if via in ("gemini", "openai"):
+        from wishbridge.hosting import AI_KEYS
+
+        env = AI_KEYS[via].env
+        return ((via, f"{VIA[via].removesuffix(' API key')} ({env})") if os.environ.get(env) else
+                (None, f"not available: no {VIA[via]} yet - paste it below"))
+    if via in ("codex", "gemini-cli"):
+        from wishbridge import ai_providers
+
+        program = VIA[via].removesuffix(" on this computer")
+        if is_app():
+            return None, f"not available in the Databricks app ({program} is on a laptop): use another connection"
+        return ((via, VIA[via]) if ai_providers.cli_exe(via) else
+                (None, f"not available: {program} is not installed on this computer"))
     if via == "api":
         return (("api", "the Claude API (ANTHROPIC_API_KEY)") if os.environ.get("ANTHROPIC_API_KEY") else
                 (None, "not available: ANTHROPIC_API_KEY is not set on this computer"))
@@ -330,17 +351,25 @@ def _send(backend: str, system: str, user: str, model: str, profile: str, endpoi
             return None, Suggestion(None, "Claude Code did not answer a quick check, so its sign-in on this computer "
                                           f"most likely needs renewing. ({msg})", "signin", time.time() - started)
         _CLAUDE_CODE_OK[model] = time.time()
+    from wishbridge import ai_providers
+
     try:
         if backend == "databricks":
             text = _ask_databricks(system, user, profile, endpoint)
         elif backend == "api":
             text = _ask_api(system, user, model, "medium" if fast else "high")
+        elif backend == "gemini":
+            text = ai_providers.ask_gemini(system, user, fast)
+        elif backend == "openai":
+            text = ai_providers.ask_openai(system, user, fast)
+        elif backend in ("codex", "gemini-cli"):
+            text = ai_providers.ask_cli(backend, system, user, timeout=300 if fast else 600, on_start=on_start)
         else:
             text = _ask_claude_code(system, user, model, "medium" if fast else "high",
                                     timeout=300 if fast else 600, on_start=on_start)
     except SignInError as e:
         return None, Suggestion(None, str(e), "signin", time.time() - started)
-    except AssistError as e:
+    except (AssistError, ai_providers.ProviderError) as e:
         return None, Suggestion(None, str(e), "failed", time.time() - started)
     if backend == "claude-code":
         _CLAUDE_CODE_OK[model] = time.time()
@@ -402,7 +431,8 @@ def _first_line(e: Exception) -> str:
 
 
 def databricks_claude_endpoints(profile: str) -> list[str]:
-    """The Claude models the workspace serves (Serving > foundation models, or an external Anthropic model)."""
+    """The chat models the workspace serves (Serving > foundation models, or an external model): Claude first,
+    then the others (GPT-OSS, Llama, Qwen, ...)."""
     from wishbridge.hosting import workspace_client
 
     try:
@@ -410,7 +440,7 @@ def databricks_claude_endpoints(profile: str) -> list[str]:
     except Exception as e:  # the SDK raises many types; the message says what is wrong
         raise AssistError(f"Could not reach the Databricks workspace with the login '{profile}': {_first_line(e)}. "
                           "If the login expired, sign in again in Settings > Databricks workspace.") from e
-    names = []
+    names, others = [], []
     for ep in endpoints:
         served = (ep.config.served_entities or []) if ep.config else []
         anthropic_external = any(getattr(getattr(s, "external_model", None), "provider", None) is not None
@@ -418,7 +448,9 @@ def databricks_claude_endpoints(profile: str) -> list[str]:
                                  == "anthropic" for s in served)
         if ep.name and ("claude" in ep.name.lower() or anthropic_external):
             names.append(ep.name)
-    return sorted(names)
+        elif ep.name and str(getattr(ep, "task", "") or "") == "llm/v1/chat":
+            others.append(ep.name)
+    return sorted(names) + sorted(others)
 
 
 def _ask_databricks(system: str, user: str, profile: str, endpoint: str) -> str:

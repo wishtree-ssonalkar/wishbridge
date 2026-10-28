@@ -12,6 +12,8 @@ Deploy WishBridge as a Databricks App (option 3) into a workspace - Wishtree's f
                    (the person using the app always gets them)
   -ClaudeKeySecret scope/key of a Databricks secret holding an Anthropic API key, for Claude in the app
                    (databricks secrets create-scope wishbridge; databricks secrets put-secret wishbridge anthropic-api-key)
+  -AiSecretScope   default "wishbridge": the secret scope that keeps the AI keys (Claude, Gemini, OpenAI) pasted
+                   in Fix code; created if missing, and the app may write to it
   -AppName         default "wishbridge" (lower-case letters, digits and -)
 
 Run it again to deploy a new version of WishBridge: the app, its volume and its projects are kept.
@@ -24,6 +26,7 @@ param(
     [string[]]$TargetCatalogs = @(),
     [string]$ShareWith = "",
     [string]$ClaudeKeySecret = "",
+    [string]$AiSecretScope = "wishbridge",
     [string]$AppName = "wishbridge"
 )
 $ErrorActionPreference = "Stop"
@@ -84,10 +87,11 @@ Grant "catalog" $cat @("USE_CATALOG")
 Grant "schema" "$cat.$sch" @("USE_SCHEMA")
 Grant "volume" "$cat.$sch.$vol" @("READ_VOLUME", "WRITE_VOLUME")
 foreach ($c in $TargetCatalogs) { Grant "catalog" $c @("USE_CATALOG", "CREATE_SCHEMA") }
-if ($ClaudeKeySecret) {
-    $scope = $ClaudeKeySecret.Split("/")[0]
+$scopes = @($AiSecretScope) + @(if ($ClaudeKeySecret) { $ClaudeKeySecret.Split("/")[0] }) | Where-Object { $_ } | Select-Object -Unique
+foreach ($scope in $scopes) {
+    if (-not (Dbx @("secrets", "list-secrets", $scope) -AllowFail)) { Dbx @("secrets", "create-scope", $scope) -AllowFail | Out-Null }
     Dbx @("secrets", "put-acl", $scope, $sp, "WRITE") | Out-Null  # WRITE: a key entered in the app is kept there
-    Write-Host "    WRITE on secret scope $scope (Claude API key)"
+    Write-Host "    WRITE on secret scope $scope (AI keys)"
 }
 
 Write-Host "5/6 Upload WishBridge"
@@ -108,6 +112,7 @@ $text = Get-Content $yaml -Raw
 $text = [regex]::Replace($text, '(name: WISHBRIDGE_PROJECTS_VOLUME\s+value: )"[^"]*"', ('${1}"' + $ProjectsVolume + '"'))
 $text = [regex]::Replace($text, '(name: WISHBRIDGE_SHARE_WITH\s+value: )"[^"]*"', ('${1}"' + $ShareWith + '"'))
 $text = [regex]::Replace($text, '(name: WISHBRIDGE_CLAUDE_SECRET\s+value: )"[^"]*"', ('${1}"' + $ClaudeKeySecret + '"'))
+$text = [regex]::Replace($text, '(name: WISHBRIDGE_AI_SECRET_SCOPE\s+value: )"[^"]*"', ('${1}"' + $AiSecretScope + '"'))
 [System.IO.File]::WriteAllText($yaml, $text)
 # never upload code that does not compile
 $py = (Get-Command python -ErrorAction SilentlyContinue).Source

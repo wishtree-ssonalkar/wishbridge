@@ -108,7 +108,7 @@ def _save_autofix(raw, **changes) -> None:
 def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
     """Ask Claude for a corrected version of this file; the person checks it and decides whether to use it."""
     st.divider()
-    st.markdown("#### ✨ Ask Claude to fix this file")
+    st.markdown("#### ✨ Ask AI to fix this file")
     flash = ss.pop("claude_flash", None)
     if flash:
         st.success(flash)
@@ -137,7 +137,7 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
         with c2:
             st.caption("The app's own Databricks identity." if hosting.is_app()
                        else f"Login **{cfg.profile}** - the one this project deploys with.")
-            if st.button("🔎 Find Claude models", key="claude-find"):
+            if st.button("🔎 Find AI models", key="claude-find"):
                 with st.spinner("Asking the workspace..."):
                     try:
                         ss.claude_endpoints = ai.databricks_claude_endpoints(cfg.profile)
@@ -146,11 +146,12 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
                         st.error(str(e))
         found = ss.get("claude_endpoints")
         if found == []:
-            st.warning("This workspace serves no Claude model. In Databricks open **Serving** and check the foundation "
-                       "models (e.g. databricks-claude-sonnet-4), or choose another connection.")
-        options = sorted(set((found or []) + ([endpoint] if endpoint else [])))
+            st.warning("This workspace serves no chat model. In Databricks open **Serving** and check the foundation "
+                       "models (e.g. databricks-claude-sonnet-4, databricks-gpt-oss-120b), or choose another "
+                       "connection.")
+        options = list(dict.fromkeys((found or []) + ([endpoint] if endpoint else [])))
         if options:
-            pick_ep = st.selectbox("Claude model in the workspace", options,
+            pick_ep = st.selectbox("Model in the workspace (Claude models first)", options,
                                    index=options.index(endpoint) if endpoint in options else 0, key="claude-endpoint")
             if pick_ep != endpoint:
                 _save_autofix(raw, endpoint=pick_ep)
@@ -192,13 +193,15 @@ def _claude_help(cfg, raw, f, pick, orig, current, todo, ovr) -> None:
                 _setup_steps("claude-code", "Claude Code did not answer the test.")
         else:
             _setup_steps("claude-code", msg)
-    elif chosen == "api":
-        _api_key_box()
+    elif chosen in hosting.AI_KEYS:
+        _api_key_box(chosen)
     backend, how = ai.assist_backend(chosen, cfg.profile, endpoint)
     found_none = ss.get("claude_endpoints") == []  # Find Claude models found nothing in this workspace
     if backend is None and chosen in ("databricks", "api") and (
             hosting.is_app() or not (chosen == "databricks" and cfg.profile and not endpoint) or found_none):
         _setup_steps(chosen, f"Claude is {how}.")
+    elif backend is None and chosen in ("codex", "gemini-cli"):
+        _setup_steps(chosen, f"The connection is {how}.")
     if not signed_in:
         backend = None
     st.caption(f"Sends this file's original, the Databricks version above (with your unsaved edits) and the open "
@@ -268,39 +271,40 @@ def _first_via(via: str, endpoint: str, picked: bool) -> str:
 
     if not hosting.is_app() or picked:
         return via
-    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    if via in ("claude-code", "auto"):
-        return "api" if has_key else "databricks"
-    if via == "databricks" and not endpoint and has_key:
-        return "api"
+    keyed = next((v for v, k in hosting.AI_KEYS.items() if os.environ.get(k.env)), None)  # Claude, Gemini, OpenAI
+    if via in ("claude-code", "auto", "codex", "gemini-cli"):  # laptop programs
+        return keyed or "databricks"
+    if via == "databricks" and not endpoint and keyed:
+        return keyed
     return via
 
 
-def _api_key_box() -> None:
-    """Paste an Anthropic API key here. It never goes into the project (see hosting.save_claude_key)."""
+def _api_key_box(via: str = "api") -> None:
+    """Paste an API key (Claude, Gemini or OpenAI) here. It never goes into the project (see hosting.save_key)."""
     import os
 
-    have = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    tested = ss.get("claude_key_test")  # (works, message) of the last test
-    with st.expander("🔑 Anthropic API key" + (" - set (test or replace it here)" if have else " - paste it here"),
+    k = hosting.AI_KEYS[via]
+    have = bool(os.environ.get(k.env))
+    tested = ss.get(f"ai_key_test:{via}")  # (works, message) of the last test
+    with st.expander(f"🔑 {k.name} API key" + (" - set (test or replace it here)" if have else " - paste it here"),
                      expanded=not have or (tested is not None and not tested[0])):
-        st.markdown(hosting.KEY_HELP)
+        st.markdown(k.help)
         st.caption("Never saved in the project. " + ("Kept in the workspace's Databricks secret." if hosting.is_app()
-                   else "Used until WishBridge closes (set ANTHROPIC_API_KEY to keep it)."))
-        with st.form("claude-key-form", clear_on_submit=True, border=False):
-            value = st.text_input("API key", type="password", placeholder="sk-ant-...")
+                   else f"Used until WishBridge closes (set {k.env} to keep it)."))
+        with st.form(f"ai-key-form-{via}", clear_on_submit=True, border=False):
+            value = st.text_input("API key", type="password", placeholder=(k.prefix + "...") if k.prefix else "")
             b1, b2 = st.columns(2)
             test = b1.form_submit_button("🔌 Test the key" if not have else "🔌 Test (the pasted key, or the one in use)")
             use = b2.form_submit_button("Use this key", type="primary")
         if test or (use and value.strip()):
-            with st.spinner("Sending Claude a one-word request..."):
-                ok, msg = hosting.test_claude_key(value)
-            ss.claude_key_test = (ok, msg)
+            with st.spinner("Sending a one-word request..."):
+                ok, msg = hosting.test_key(via, value)
+            ss[f"ai_key_test:{via}"] = (ok, msg)
             # a valid key is kept even without credits (they can be added later); a wrong one never replaces the key
-            if use and value.strip() and (ok or "credits" in msg):
-                problem = hosting.save_claude_key(value.strip())
+            if use and value.strip() and (ok or "credits" in msg or "billing" in msg):
+                problem = hosting.save_key(via, value.strip())
                 ss.claude_key_problem = ""
-                ss.claude_key_test = (ok, f"Key in use. {msg}" + (f" ({problem})" if problem else ""))
+                ss[f"ai_key_test:{via}"] = (ok, f"Key in use. {msg}" + (f" ({problem})" if problem else ""))
             st.rerun()
         if tested is not None:
             (st.success if tested[0] else st.error)(tested[1])
@@ -333,6 +337,13 @@ def _setup_steps(via: str, why: str) -> None:
                 ss.pop("claude_code_test", None)
                 st.rerun()
             st.caption("Not installed? Install Claude Code from claude.com/claude-code, then restart WishBridge.")
+        elif via in ("codex", "gemini-cli"):
+            from wishbridge import ai_providers
+
+            program, install, sign_in = ai_providers.CLI[via]
+            st.markdown(f"Install it once on this computer (needs Node.js), sign in, then restart WishBridge. It runs "
+                        f"read-only in an empty folder: it only sees what Fix code sends.")
+            st.code(f"{install}\n{sign_in}", language="bash")
         elif hosting.is_app():
             st.markdown(
                 "In the Databricks app Claude works in one of two ways - the workspace admin sets it up once:\n"
