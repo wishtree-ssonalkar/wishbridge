@@ -154,3 +154,15 @@ def test_deploy_uses_the_hand_fix_without_converting_again(cfg):
     run_deploy(cfg, wh=wh)
     assert any("main.dev.Fixed" in c for c in wh.calls)
     assert not any("missing_table" in c for c in wh.calls)  # the converted file was not used
+
+
+def test_deploy_creates_the_schemas_of_the_schema_map(cfg):
+    """sap -> main.dev_sap, dw -> main.dev_dw: those schemas are created too (they used to be missing)."""
+    cfg.schema_map = {"sap": "main.dev_sap", "dw": "main.dev_dw"}
+    wh = FakeWarehouse()
+    run_deploy(cfg, wh=wh)
+    assert wh.calls[:3] == ["CREATE SCHEMA IF NOT EXISTS main.dev", "CREATE SCHEMA IF NOT EXISTS main.dev_dw",
+                            "CREATE SCHEMA IF NOT EXISTS main.dev_sap"]
+    cfg.schema_map = {"sap": "main.prod_sap"}
+    with pytest.raises(SqlError, match="production"):
+        run_deploy(cfg, wh=FakeWarehouse())

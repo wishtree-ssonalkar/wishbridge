@@ -133,6 +133,12 @@ def run_deploy(cfg: ProjectConfig, execute_dml: bool = False, allow_prod: bool =
     # The table scripts are rebuilt for today's target (the catalog may have changed since the assessment), and the
     # warehouse's own schemas (dw, stg, ...) are mapped to the target in every statement.
     smap = deploy_schema_map(cfg)
+    for target in sorted({t for t in smap.values() if t.count(".") == 1} - {cfg.target_schema}):
+        # schemas named in Settings (e.g. sap -> main.sap_raw) are created too, with the same production guard
+        if looks_like_prod(target) and not allow_prod:
+            raise SqlError(f"Target {target} (schema_map) looks like production. Map it to a dev schema or pass "
+                           f"--allow-prod.")
+        wh.run(f"CREATE SCHEMA IF NOT EXISTS {target}")
     fresh: dict[str, Path] = {}
     rebuilt: dict[str, int] = {}
     if (load_state(cfg).get("inventory") or {}).get("tables"):
