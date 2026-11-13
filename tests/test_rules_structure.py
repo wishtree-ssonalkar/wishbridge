@@ -70,3 +70,26 @@ def test_partition_by_expression_is_flagged():
 def test_unload_and_vacuum_get_guidance():
     f = detect("-- FIXME: REDSHIFT: Databricks SQL has no equivalent to the UNLOAD command, and it cannot be translated\n", "redshift")
     assert f[0].severity == "error" and "INSERT OVERWRITE DIRECTORY" in f[0].message
+
+
+def test_patindex_position_is_not_always_one():
+    """PATINDEX('%[^0]%', x) (strip leading zeros) was converted to REGEXP_INSTR(x, '(?i).*[^0].*'): always 1."""
+    src = ("SELECT SUBSTR(m.MATNR, REGEXP_INSTR(m.MATNR, '(?i).*[^0].*'), 18), "
+           "SUBSTR(x, REGEXP_INSTR(CAST(x AS STRING), '.*[^0].*'), 50) FROM t")
+    out, f = apply_rules(src, {}, "mssql")
+    assert "REGEXP_INSTR(m.MATNR, '(?i)[^0]')" in out
+    assert "REGEXP_INSTR(CAST(x AS STRING), '[^0]')" in out
+    assert "patindex-position" in {x.rule for x in f if x.fixed}
+    same, _ = apply_rules("SELECT REGEXP_INSTR(x, '[0-9]+') FROM t", {}, "mssql")
+    assert same == "SELECT REGEXP_INSTR(x, '[0-9]+') FROM t"
+
+
+def test_create_schema_guard_is_removed_before_conversion():
+    from wishbridge.warehouses.sqlserver.staging import prepare_tsql
+
+    src = ("IF SCHEMA_ID('sap') IS NULL EXEC('CREATE SCHEMA sap');\nGO\n"
+           "IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = N'dw') EXEC('CREATE SCHEMA [dw]')\n"
+           "CREATE TABLE sap.MARA (MATNR CHAR(18) NOT NULL);\n")
+    out, notes = prepare_tsql(src)
+    assert "SCHEMA_ID" not in out and "sys.schemas" not in out and "CREATE TABLE sap.MARA" in out
+    assert any("CREATE SCHEMA" in n["message"] for n in notes)

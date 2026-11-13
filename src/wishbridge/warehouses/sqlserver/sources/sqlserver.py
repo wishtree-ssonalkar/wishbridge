@@ -47,6 +47,12 @@ PREP: list[tuple[str, str, re.Pattern, str, str]] = [
     ("temporal-period", "warning", re.compile(r",?\s*PERIOD\s+FOR\s+SYSTEM_TIME\s*\([^)]*\)", I), "", ""),
     ("temporal-versioning", "warning",
      re.compile(r"\s*WITH\s*\(\s*SYSTEM_VERSIONING\s*=\s*ON(?:\s*\([^()]*\))?\s*\)", I), "", ""),
+    ("create-schema-guard", "info",
+     re.compile(r"^[ \t]*IF\s+(?:SCHEMA_ID\s*\(\s*N?'[^']+'\s*\)\s+IS\s+NULL|NOT\s+EXISTS\s*\(\s*SELECT\s+[^()]*?"
+                r"\bFROM\s+sys\.schemas\s+WHERE\s+name\s*=\s*N?'[^']+'\s*\))\s*(?:BEGIN\s+)?EXEC(?:UTE)?\s*\(?\s*"
+                r"N?'CREATE\s+SCHEMA\s+[^']*'\s*\)?[ \t]*;?[ \t]*(?:END[ \t]*;?)?[ \t]*\r?\n?", I | M), "",
+     "Removed IF SCHEMA_ID(...) IS NULL EXEC('CREATE SCHEMA ...'): the converter cannot translate it (the whole file "
+     "fails), and WishBridge creates the target schemas itself (schema_map)"),
 ]
 
 # Procedures, views, functions and triggers stored in the database (dbcode.py)

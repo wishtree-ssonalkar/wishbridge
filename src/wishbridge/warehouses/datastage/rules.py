@@ -368,6 +368,22 @@ def _fix_bool_compare(sql: str, bool_columns: set[str] | frozenset[str]) -> tupl
                          f"Compared BOOLEAN columns (BIT on the source) with true/false instead of 1/0 ({len(hits)}x)", True)]
 
 
+# PATINDEX('%[^0]%', x) (the position of the first non-zero, used to strip leading zeros from material numbers)
+# comes out of the converter as REGEXP_INSTR(x, '(?i).*[^0].*'), which always returns 1: a silent wrong result.
+# Without the leading .* REGEXP_INSTR returns the position of the pattern, as PATINDEX does (0 when not found).
+_PATINDEX = re.compile(r"(REGEXP_INSTR\s*\((?:[^'()]|\([^()]*\))*?,\s*')((?:\(\?i\))?)\.\*([^']*?)(?:\.\*)?'", I)
+
+
+def _fix_patindex(sql: str) -> tuple[str, list[Finding]]:
+    hits = [m.start() for m in _PATINDEX.finditer(sql)]
+    if not hits:
+        return sql, []
+    return _PATINDEX.sub(r"\1\2\3'", sql), [Finding(
+        "patindex-position", INFO, line_of(sql, hits[0]),
+        f"PATINDEX became REGEXP_INSTR with a leading .* (always 1): removed it so the position is right, e.g. when "
+        f"stripping leading zeros ({len(hits)}x)", True)]
+
+
 def apply_rules(sql: str, schema_map: dict[str, str] | None = None, dialect: str | None = None,
                 bool_columns: set[str] | frozenset[str] = frozenset()) -> tuple[str, list[Finding]]:
     findings: list[Finding] = []
@@ -382,7 +398,7 @@ def apply_rules(sql: str, schema_map: dict[str, str] | None = None, dialect: str
         sql, hits = _sub_code(sql, pat, repl)
         if hits and sql != before:
             findings.append(Finding(rule, INFO, line_of(before, hits[0]), f"{msg} ({len(hits)}x)", True))
-    for fixer in (_fix_dangling_comment, _fix_empty_create, _fix_explicit_null):
+    for fixer in (_fix_dangling_comment, _fix_empty_create, _fix_explicit_null, _fix_patindex):
         sql, f = fixer(sql)
         findings += f
     sql, f = _fix_empty_alter(sql, schema_map or {})
