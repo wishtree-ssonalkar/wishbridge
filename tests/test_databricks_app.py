@@ -347,7 +347,7 @@ def test_the_claude_setup_steps_render_in_the_app(in_app):
     assert any("ClaudeKeySecret" in c.value for c in at.code)
 
 
-def test_the_app_uses_its_claude_key_when_no_model_is_chosen(in_app, monkeypatch):
+def test_the_app_uses_its_claude_key_when_no_model_is_chosen(in_app, monkeypatch, no_ai_keys):
     from wishbridge.warehouses.ssis.ui.steps import fix
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
