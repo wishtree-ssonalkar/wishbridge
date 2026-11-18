@@ -285,10 +285,15 @@ _SESSION_SETTINGS = re.compile(
     r"|USE\s+\[?\w+\]?\s*;?|GO\b)[ \t]*$", I | M)
 
 
+# `IF SCHEMA_ID('x') IS NULL EXEC('CREATE SCHEMA x')` is removed on purpose before conversion (staging, rule
+# "create-schema-guard"): it is not a statement that was lost.
+_SCHEMA_GUARD = next(p for k, _s, p, _r, _m in _sources.sqlserver.PREP if k == "create-schema-guard")
+
+
 def dropped_statement_check(source_sql: str, converted_sql: str, findings: list[Finding]) -> Finding | None:
     """Warn when the converted file has fewer statements than the source and the gap is not explained by notes."""
     notes = sum(1 for f in findings if f.rule in ("converter-note", "empty-create"))
-    source_sql = _SESSION_SETTINGS.sub("", source_sql)
+    source_sql = _SCHEMA_GUARD.sub("", _SESSION_SETTINGS.sub("", source_sql))
     missing = count_statements(source_sql) - count_statements(converted_sql) - notes
     if missing > 0:
         return Finding("dropped-statements", WARNING, 1,

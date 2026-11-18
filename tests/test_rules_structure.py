@@ -107,3 +107,11 @@ def test_blank_comparison_keeps_sql_servers_trailing_space_rule():
     assert "blank-compare" in {x.rule for x in f if x.fixed}
     same, found = apply_rules(src, {}, "oracle")  # Oracle treats '' as NULL and has its own rules: not changed here
     assert "RTRIM(IFNULL(i.LOEKZ" not in same and "blank-compare" not in {x.rule for x in found}
+
+
+def test_a_removed_schema_guard_is_not_reported_as_a_lost_statement():
+    """The guard is removed on purpose before conversion; the 'statement missing' warning must not cry wolf."""
+    source = "IF SCHEMA_ID('sap') IS NULL EXEC('CREATE SCHEMA sap');\nGO\nCREATE TABLE sap.A (x INT);\n"
+    converted = "CREATE TABLE sap.A (x INT);\n"
+    assert dropped_statement_check(source, converted, []) is None
+    assert dropped_statement_check("CREATE TABLE sap.A (x INT);\nCREATE TABLE sap.B (y INT);\n", converted, []) is not None
