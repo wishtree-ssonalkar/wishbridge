@@ -93,3 +93,17 @@ def test_create_schema_guard_is_removed_before_conversion():
     out, notes = prepare_tsql(src)
     assert "SCHEMA_ID" not in out and "sys.schemas" not in out and "CREATE TABLE sap.MARA" in out
     assert any("CREATE SCHEMA" in n["message"] for n in notes)
+
+
+def test_blank_comparison_keeps_sql_servers_trailing_space_rule():
+    """SQL Server: ' ' = '' is true. Databricks: false. `ISNULL(flag, '') = ''` silently matched nothing there."""
+    src = ("INSERT INTO t SELECT * FROM s i WHERE IFNULL(i.LOEKZ, '') = '' AND i.X <> '' OR d.Y != '' "
+           "AND z = 'a'; UPDATE t SET c = ''; SELECT '... WHERE a = ''' AS text; -- WHERE b = ''")
+    out, f = apply_rules(src, {}, "mssql")
+    assert "WHERE RTRIM(IFNULL(i.LOEKZ, '')) = ''" in out
+    assert "AND RTRIM(i.X) <> ''" in out and "OR RTRIM(d.Y) != ''" in out
+    assert "SET c = ''" in out and "z = 'a'" in out  # an assignment and a comparison with text are left alone
+    assert "'... WHERE a = '''" in out and "-- WHERE b = ''" in out  # inside a string and a comment: untouched
+    assert "blank-compare" in {x.rule for x in f if x.fixed}
+    same, found = apply_rules(src, {}, "oracle")  # Oracle treats '' as NULL and has its own rules: not changed here
+    assert "RTRIM(IFNULL(i.LOEKZ" not in same and "blank-compare" not in {x.rule for x in found}

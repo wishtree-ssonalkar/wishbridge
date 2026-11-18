@@ -384,6 +384,33 @@ def _fix_patindex(sql: str) -> tuple[str, list[Finding]]:
         f"stripping leading zeros ({len(hits)}x)", True)]
 
 
+# SQL Server ignores trailing spaces when it compares text (' ' = '' is true), and CHAR columns are padded with
+# spaces, so `WHERE ISNULL(flag, '') = ''` keeps every row whose flag is blank. Databricks compares text exactly:
+# the converted `IFNULL(flag, '') = ''` is false for ' ' and the statement silently loads or finds NOTHING.
+# RTRIM(...) gives back SQL Server's answer. Only comparisons (after WHERE, AND, OR, ON, WHEN, HAVING, IF) are
+# rewritten, never assignments such as SET x = ''.
+_BLANK_COMPARE = re.compile(
+    r"(\b(?:WHERE|AND|OR|ON|WHEN|HAVING|IF)\s+\(?\s*)((?:IFNULL|COALESCE|ISNULL|NVL)\s*\([^()]*?,\s*''\s*\)"
+    r"|[A-Za-z_][\w.`]*)(\s*)(=|<>|!=)(\s*'')", I)
+
+
+def _fix_blank_compare(sql: str) -> tuple[str, list[Finding]]:
+    code = mask(sql)  # a match inside a string or a comment is not code: leave it alone
+
+    def in_code(m: re.Match) -> bool:
+        return code[m.start(1):m.end(1)] == m.group(1) and code[m.start(4):m.end(4)] == m.group(4)
+
+    hits = [m for m in _BLANK_COMPARE.finditer(sql) if in_code(m)]
+    if not hits:
+        return sql, []
+    for m in reversed(hits):
+        sql = sql[:m.start()] + f"{m.group(1)}RTRIM({m.group(2)}){m.group(3)}{m.group(4)}{m.group(5)}" + sql[m.end():]
+    return sql, [Finding(
+        "blank-compare", INFO, line_of(sql, hits[0].start()),
+        f"Comparison with empty text: SQL Server ignores trailing spaces (a CHAR column is padded), Databricks does "
+        f"not - wrapped the left side in RTRIM so the same rows match ({len(hits)}x)", True)]
+
+
 def apply_rules(sql: str, schema_map: dict[str, str] | None = None, dialect: str | None = None,
                 bool_columns: set[str] | frozenset[str] = frozenset()) -> tuple[str, list[Finding]]:
     findings: list[Finding] = []
@@ -400,6 +427,9 @@ def apply_rules(sql: str, schema_map: dict[str, str] | None = None, dialect: str
             findings.append(Finding(rule, INFO, line_of(before, hits[0]), f"{msg} ({len(hits)}x)", True))
     for fixer in (_fix_dangling_comment, _fix_empty_create, _fix_explicit_null, _fix_patindex):
         sql, f = fixer(sql)
+        findings += f
+    if _applies(TSQL, dialect):  # SQL Server and Synapse compare text this way; the other sources do not
+        sql, f = _fix_blank_compare(sql)
         findings += f
     sql, f = _fix_empty_alter(sql, schema_map or {})
     findings += f
