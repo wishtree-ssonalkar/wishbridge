@@ -282,7 +282,7 @@ def count_statements(sql: str) -> int:
 _SESSION_SETTINGS = re.compile(
     r"^[ \t]*(?:SET\s+(?:NOCOUNT|ANSI_\w+|QUOTED_IDENTIFIER|XACT_ABORT|ARITHABORT|CONCAT_NULL_YIELDS_NULL|"
     r"NUMERIC_ROUNDABORT|IMPLICIT_TRANSACTIONS|DEADLOCK_PRIORITY|LOCK_TIMEOUT|TRANSACTION\s+ISOLATION\s+LEVEL)\b[^;\n]*;?"
-    r"|USE\s+\[?\w+\]?\s*;?|GO\b)[ \t]*$", I | M)
+    r"|USE\s+\[?\w+\]?\s*;?|GO\b)[ \t]*\r?$", I | M)  # \r: a file with Windows line endings
 
 
 # `IF SCHEMA_ID('x') IS NULL EXEC('CREATE SCHEMA x')` is removed on purpose before conversion (staging, rule

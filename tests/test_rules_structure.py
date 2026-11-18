@@ -115,3 +115,8 @@ def test_a_removed_schema_guard_is_not_reported_as_a_lost_statement():
     converted = "CREATE TABLE sap.A (x INT);\n"
     assert dropped_statement_check(source, converted, []) is None
     assert dropped_statement_check("CREATE TABLE sap.A (x INT);\nCREATE TABLE sap.B (y INT);\n", converted, []) is not None
+
+
+def test_a_trailing_go_in_a_file_with_windows_line_endings_is_not_a_lost_statement():
+    source = "IF SCHEMA_ID('sap') IS NULL EXEC('CREATE SCHEMA sap');\r\nGO\r\nCREATE TABLE sap.A (x INT);\r\nGO\r\n"
+    assert dropped_statement_check(source, "CREATE TABLE sap.A (x INT);\n", []) is None
